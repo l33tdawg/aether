@@ -1,0 +1,85 @@
+flow:
+  - node: FileReaderNode
+  - node: StaticAnalysisNode
+  - node: PatternAnalysisNode
+  - node: CrossChainAnalysisNode
+  - node: LLMAnalysisNode
+  - node: ReportNode
+
+tools:
+  - name: slither
+    type: static_analysis
+    enabled: true
+    config:
+      exclude_dependencies: false
+      exclude_informational: false
+      timeout: 600
+      output_format: json
+
+  - name: mythril
+    type: symbolic_execution
+    enabled: true
+    config:
+      solc_json: true
+      output: json
+      timeout: 600
+
+  - name: pattern
+    type: vulnerability_patterns
+    enabled: true
+    patterns: [reentrancy, access_control, integer_overflow, price_manipulation, cross_chain, economic_attacks]
+
+  - name: llm_gpt
+    type: reasoning
+    enabled: true
+    model: gpt-4
+    config:
+      temperature: 0.1
+      max_tokens: 4000
+      system_prompt: |
+        You are an expert smart contract security auditor specializing in DeFi protocols and cross-chain systems.
+        Analyze the provided Solidity code for:
+        1. Cross-chain vulnerabilities (LayerZero, Arbitrum bridge)
+        2. Reward calculation manipulation and precision loss
+        3. Access control bypasses in upgradeable contracts
+        4. Economic attack vectors in staking mechanisms
+        5. Reentrancy in staking/withdrawal functions
+        6. Price manipulation in ChainLink integration
+        7. Integer overflow/underflow in calculations
+        8. State consistency issues across chains
+        9. Fee manipulation and economic exploits
+        10. Upgradeable contract risks
+        Provide specific line numbers, detailed explanations, and potential exploit scenarios.
+
+node_configs:
+  FileReaderNode:
+    include_line_numbers: true
+    extract_metadata: true
+    include_interfaces: true
+
+  StaticAnalysisNode:
+    tools: [slither, mythril]
+    severity_threshold: low
+    output_format: structured
+    include_dependencies: true
+
+  PatternAnalysisNode:
+    patterns: [reentrancy, access_control, integer_overflow, price_manipulation, cross_chain, economic_attacks]
+    confidence_threshold: 0.6
+    include_exploit_suggestions: true
+
+  CrossChainAnalysisNode:
+    focus_areas: [layerzero, arbitrum_bridge, message_validation, state_consistency]
+    include_attack_scenarios: true
+
+  LLMAnalysisNode:
+    analysis_types: [vulnerability_detection, economic_analysis, cross_chain_security, upgrade_risks]
+    confidence_threshold: 0.7
+    include_exploit_paths: true
+
+  ReportNode:
+    format: markdown
+    include_details: true
+    output_sections: [summary, vulnerabilities, exploits, fixes, recommendations, risk_assessment]
+    include_pocs: true
+    include_cross_chain_analysis: true

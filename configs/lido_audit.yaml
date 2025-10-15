@@ -1,0 +1,110 @@
+flow:
+  - node: FileReaderNode
+  - node: StaticAnalysisNode
+  - node: LLMAnalysisNode
+  - decision:
+      condition: high_severity_count > 0
+      then_branch:
+        - node: FixGeneratorNode
+        - node: ValidationNode
+        - node: ExploitValidatorNode
+        - node: AetherFuzzRunner
+      else_branch:
+        - node: ExploitValidatorNode
+        - node: AetherFuzzRunner
+  - node: ReportNode
+
+tools:
+  - name: slither
+    type: static_analysis
+    output_format: json
+    enabled: true
+    config:
+      exclude_dependencies: false
+      exclude_informational: false
+      timeout: 600
+      detectors: ["all"]
+
+  - name: mythril
+    type: symbolic_execution
+    enabled: true
+    config:
+      solc_json: true
+      output: json
+      timeout: 600
+      execution_timeout: 300
+
+  - name: llm_gpt
+    type: reasoning
+    enabled: true
+    model: gpt-5-chat-latest
+    config:
+      temperature: 0.2
+      max_tokens: 4000
+      system_prompt: |
+        You are an expert smart contract security auditor specializing in DeFi protocols, liquid staking, and Ethereum infrastructure. 
+        Analyze the provided Solidity code for Lido-specific vulnerabilities:
+        
+        1. Critical vulnerabilities: reentrancy, access control, arithmetic issues
+        2. Liquid staking risks: slashing conditions, validator management, reward distribution
+        3. Oracle manipulation: price feed attacks, MEV extraction, sandwich attacks
+        4. Governance attacks: voting manipulation, proposal execution, emergency stops
+        5. Token economics: stETH minting/burning, exchange rate manipulation, yield farming
+        6. Node operator risks: validator key management, slashing penalties, reward distribution
+        7. Upgrade risks: proxy patterns, implementation changes, storage collisions
+        
+        Focus on high-impact vulnerabilities that could lead to:
+        - Direct theft of user funds (up to $2M bounty)
+        - Permanent freezing of funds
+        - Protocol insolvency
+        - Governance manipulation
+        
+        Provide specific line numbers and detailed explanations with confidence scores.
+        Consider the Immunefi bug bounty scope and reward structure.
+
+node_configs:
+  FileReaderNode:
+    include_line_numbers: true
+    max_file_size: 1000000
+    
+  StaticAnalysisNode:
+    enable_pattern_detection: true
+    enable_slither: true
+    enable_mythril: true
+    pattern_config:
+      reentrancy_patterns: true
+      access_control_patterns: true
+      arithmetic_patterns: true
+      oracle_patterns: true
+      governance_patterns: true
+      
+  LLMAnalysisNode:
+    focus_areas:
+      - "liquid_staking_risks"
+      - "oracle_manipulation"
+      - "governance_attacks"
+      - "validator_management"
+      - "token_economics"
+    analysis_depth: "comprehensive"
+    
+  ExploitValidatorNode:
+    generate_poc: true
+    validate_exploits: true
+    max_exploit_attempts: 10
+    
+  AetherFuzzRunner:
+    max_runs: 1000
+    timeout: 300
+    focus_functions:
+      - "submit"
+      - "withdraw"
+      - "transfer"
+      - "approve"
+      - "mint"
+      - "burn"
+      
+  ReportNode:
+    include_poc: true
+    include_fix_suggestions: true
+    include_impact_analysis: true
+    format: "comprehensive"

@@ -1,0 +1,157 @@
+flow:
+  - node: FileReaderNode
+  - node: StaticAnalysisNode
+  - node: LLMAnalysisNode
+  - node: EnhancedExploitabilityNode
+  - node: ReportNode
+
+tools:
+  - name: slither
+    type: static_analysis
+    output_format: json
+    enabled: true
+    config:
+      exclude_dependencies: true
+      exclude_informational: true
+      timeout: 300
+
+  - name: mythril
+    type: symbolic_execution
+    enabled: true
+    config:
+      solc_json: true
+      output: json
+      timeout: 300
+
+  - name: llm_gpt
+    type: reasoning
+    enabled: true
+    model: gpt-4
+    config:
+      temperature: 0.2
+      max_tokens: 2000
+      system_prompt: |
+        You are an expert smart contract security auditor specializing in DeFi protocols and zkSync Layer 2 security.
+        Analyze the provided Solidity code for Uniswap V3 specific vulnerabilities:
+        1. Concentrated liquidity manipulation attacks
+        2. Tick math vulnerabilities
+        3. Position manager exploits
+        4. Router vulnerabilities
+        5. Factory security issues
+        6. Multicall attacks
+        7. Permit2 vulnerabilities
+        8. Migrator security flaws
+        9. Quoter exploits
+        10. NFT descriptor issues
+        11. zkSync specific vulnerabilities
+        12. Layer 2 security issues
+        13. Bridge interaction flaws
+        14. Gas optimization attacks
+        15. State transition vulnerabilities
+        Provide specific line numbers and detailed explanations for Immunefi bug bounty submission.
+
+node_configs:
+  FileReaderNode:
+    include_line_numbers: true
+    extract_metadata: true
+
+  StaticAnalysisNode:
+    tools: [slither, mythril]
+    severity_threshold: medium
+    output_format: structured
+
+  LLMAnalysisNode:
+    analysis_types: [vulnerability_detection, gas_optimization, access_control, defi_specific, zksync_specific]
+    confidence_threshold: 0.7
+
+  EnhancedExploitabilityNode:
+    validation_methods: [static_analysis, pattern_matching, context_analysis, simulation, ai_reasoning]
+    confidence_threshold: 0.6
+    generate_poc: true
+    include_attack_vectors: true
+    include_prerequisites: true
+
+  ReportNode:
+    format: markdown
+    include_details: true
+    output_sections: [summary, vulnerabilities, exploitability, fixes, recommendations, immunefi_submission]
+
+# Immunefi-specific configuration
+immunefi_config:
+  program_name: "Uniswap on zkSync"
+  max_bounty: "$20,000"
+  currency: "USDC"
+  network: "zkSync Era"
+  
+  # Assets in scope from Immunefi
+  assets_in_scope:
+    - "Permit2"
+    - "NonfungiblePositionManager"
+    - "UniswapInterfaceMulticall"
+    - "UniversalRouter"
+    - "V3Migrator"
+    - "NFTDescriptor"
+    - "QuoterV2"
+    - "UnsupportedProtocol"
+    - "UniswapV3Factory"
+    - "SwapRouter02"
+    - "TransparentUpgradeableProxy"
+    - "ProxyAdmin"
+  
+  # Impacts in scope
+  impacts_in_scope:
+    critical:
+      - "Manipulation of governance voting result deviating from voted outcome"
+      - "Direct theft of any user funds, whether at-rest or in-motion, other than unclaimed yield"
+      - "Permanent freezing of funds"
+      - "Protocol insolvency"
+    
+    high:
+      - "Theft of unclaimed yield"
+      - "Temporary freezing of funds for more than 24 hours"
+    
+    medium:
+      - "Smart contract unable to operate due to lack of token funds"
+      - "Block stuffing"
+      - "Griefing (e.g. no profit motive for an attacker, but damage to the users or the protocol)"
+      - "Theft of gas"
+      - "Unbounded gas consumption"
+    
+    low:
+      - "Contract fails to deliver promised returns, but doesn't lose value"
+  
+  # Out of scope items
+  out_of_scope:
+    - "Any issues related to the Ethereum network, the Uniswap protocol, or any other third-party"
+    - "Incorrect data supplied by third party oracles (not to exclude oracle manipulation/flash loan attacks)"
+    - "Impacts requiring basic economic and governance attacks (e.g. 51% attack)"
+    - "Lack of liquidity impacts"
+    - "Impacts from Sybil attacks"
+    - "Impacts involving centralization risks"
+
+# zkSync-specific considerations
+zksync_config:
+  network_type: "Layer 2 Rollup"
+  consensus_mechanism: "zk-STARKs"
+  focus_areas:
+    - "State transition vulnerabilities"
+    - "Bridge interaction flaws"
+    - "Gas optimization attacks"
+    - "zk-proof verification issues"
+    - "Layer 2 specific attack vectors"
+    - "Cross-layer interaction vulnerabilities"
+
+# Audit execution settings
+execution:
+  parallel_analysis: true
+  timeout_per_tool: 300
+  max_retries: 3
+  verbose_output: true
+  
+# Output configuration
+output:
+  format: "markdown"
+  include_source_code: false
+  include_bytecode_analysis: false
+  generate_poc_templates: true
+  create_exploit_scripts: false

@@ -1,0 +1,513 @@
+#!/usr/bin/env python3
+"""
+AetherAudit + AetherFuzz: Agentic Smart Contract Auditing & Fuzzing Framework
+
+Main entry point for the CLI interface.
+"""
+
+import argparse
+import asyncio
+import sys
+from pathlib import Path
+from typing import Optional
+
+from cli.main import AetherCLI
+
+
+def main():
+    """Main entry point for Aether CLI."""
+    parser = argparse.ArgumentParser(
+        description="AetherAudit + AetherFuzz: Agentic Smart Contract Auditing & Fuzzing Framework",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aether audit contracts/MyToken.sol --flow configs/audit.yaml
+  aether fuzz contracts/MyToken.sol --max-runs 1000
+  aether run contracts/MyToken.sol --end-to-end
+        """
+    )
+
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # Audit command
+    audit_parser = subparsers.add_parser('audit', help='Run static analysis and AI audit')
+    audit_parser.add_argument('contract', help='Path to smart contract file or directory')
+    audit_parser.add_argument('--flow', default='configs/default_audit.yaml', help='YAML flow configuration file')
+    audit_parser.add_argument('--output', '-o', help='Output directory for reports')
+    audit_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    audit_parser.add_argument('--enhanced', action='store_true', help='Use enhanced audit engine with improved accuracy')
+    audit_parser.add_argument('--phase3', action='store_true', help='Enable Phase 3 AI features (AI ensemble, learning system, formal verification)')
+    audit_parser.add_argument('--ai-ensemble', action='store_true', help='Use enhanced AI ensemble with specialized GPT-5-mini agents')
+    audit_parser.add_argument('--foundry', action='store_true', help='Enable Foundry validation with PoC generation for bug bounty submissions')
+    audit_parser.add_argument('--llm-validation', action='store_true', help='Enable LLM-based false positive filtering and Foundry test generation')
+    audit_parser.add_argument('--enhanced-reports', action='store_true', help='Generate enhanced reports with dashboards, compliance, and multiple formats')
+    audit_parser.add_argument('--compliance-only', action='store_true', help='Generate only compliance reports (SOC2, PCI-DSS, GDPR, etc.)')
+    audit_parser.add_argument('--export-formats', nargs='+', choices=['json', 'xml', 'excel', 'pdf'], default=['json'], help='Export formats for results (default: json)')
+
+    # Fuzz command
+    fuzz_parser = subparsers.add_parser('fuzz', help='Run dynamic fuzzing and exploit validation')
+    fuzz_parser.add_argument('contract', help='Path to smart contract file or directory')
+    fuzz_parser.add_argument('--max-runs', type=int, default=1000, help='Maximum fuzzing runs')
+    fuzz_parser.add_argument('--timeout', type=int, default=300, help='Fuzzing timeout in seconds')
+    fuzz_parser.add_argument('--output', '-o', help='Output directory for fuzz results')
+    fuzz_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+
+    # Run command (full pipeline)
+    run_parser = subparsers.add_parser('run', help='Run full audit + fuzz pipeline')
+    run_parser.add_argument('contract', help='Path to smart contract file or directory')
+    run_parser.add_argument('--end-to-end', action='store_true', help='Run complete audit-fix-fuzz cycle')
+    run_parser.add_argument('--enhanced', action='store_true', help='Use enhanced audit engine with improved accuracy')
+    run_parser.add_argument('--phase3', action='store_true', help='Enable Phase 3 AI features (AI ensemble, learning system, formal verification)')
+    run_parser.add_argument('--ai-ensemble', action='store_true', help='Use enhanced AI ensemble with specialized GPT-5-mini agents')
+    run_parser.add_argument('--enhanced-reports', action='store_true', help='Generate enhanced reports with dashboards, compliance, and multiple formats')
+    run_parser.add_argument('--compliance-only', action='store_true', help='Generate only compliance reports (SOC2, PCI-DSS, GDPR, etc.)')
+    run_parser.add_argument('--export-formats', nargs='+', choices=['json', 'xml', 'excel', 'pdf'], default=['json'], help='Export formats for results (default: json)')
+    run_parser.add_argument('--flow', default='configs/full_pipeline.yaml', help='YAML flow configuration')
+    run_parser.add_argument('--output', '-o', help='Output directory for complete report')
+    run_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    run_parser.add_argument('--foundry', action='store_true', help='Enable Foundry validation with PoC generation for bug bounty submissions')
+
+    # Foundry command (bug bounty validation)
+    foundry_parser = subparsers.add_parser('foundry', help='Run Foundry validation with PoC generation for bug bounty submissions')
+    # Fork verify command
+    fork_parser = subparsers.add_parser('fork-verify', help='Run generated Foundry tests against an anvil fork')
+    fork_parser.add_argument('output', help='Output directory containing vulnerability_* suites')
+    fork_parser.add_argument('--rpc-url', required=True, help='RPC URL to fork (e.g., https://mainnet.infura.io/v3/KEY)')
+    fork_parser.add_argument('--block', type=int, help='Optional fork block number')
+    foundry_parser.add_argument('contract', help='Path to smart contract file or directory')
+    foundry_parser.add_argument('--output', '-o', help='Output directory for Foundry tests and PoCs')
+    foundry_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+
+    # Generate Foundry PoCs post-report
+    genf_parser = subparsers.add_parser('generate-foundry', help='Generate Foundry PoCs from results.json or report')
+    genf_parser.add_argument('--from-results', help='Path to structured results.json (preferred)')
+    genf_parser.add_argument('--from-report', help='Path to audit_report.md (fallback parser)')
+    genf_parser.add_argument('--out', help='Output directory for generated suites')
+    genf_parser.add_argument('--max-items', type=int, default=20, help='Max findings to generate tests for')
+    genf_parser.add_argument('--min-severity', default='low', help='Min severity filter (low|medium|high|critical)')
+    genf_parser.add_argument('--types', help='CSV of vulnerability types to include (match title/category)')
+    genf_parser.add_argument('--only-consensus', action='store_true', help='Restrict to consensus findings only')
+    genf_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+
+    # Console command (interactive CLI)
+    console_parser = subparsers.add_parser('console', help='Launch interactive Metasploit-style console')
+    console_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+
+    # Config command
+    config_parser = subparsers.add_parser('config', help='Manage configuration settings')
+    config_parser.add_argument('--set-etherscan-key', help='Set Etherscan API key')
+    config_parser.add_argument('--set-openai-key', help='Set OpenAI API key')
+    config_parser.add_argument('--show', action='store_true', help='Show current configuration')
+    config_parser.add_argument('--test-etherscan', action='store_true', help='Test Etherscan API connection')
+    config_parser.add_argument('--list-networks', action='store_true', help='List supported EVM networks')
+    config_parser.add_argument('--test-network', help='Test API connection for specific network')
+    config_parser.add_argument('--clear-etherscan-cache', action='store_true', help='Clear Etherscan contract cache')
+    config_parser.add_argument('--etherscan-cache-stats', action='store_true', help='Show Etherscan cache statistics')
+    # Triage/consensus settings
+    config_parser.add_argument('--triage-min-severity', help='Set triage minimum severity (low|medium|high|critical)')
+    config_parser.add_argument('--triage-min-confidence', type=float, help='Set triage minimum confidence (0.0-1.0)')
+    config_parser.add_argument('--triage-max-items', type=int, help='Set triage max items overall')
+    config_parser.add_argument('--triage-max-per-type', type=int, help='Set triage max items per type')
+    config_parser.add_argument('--llm-only-consensus', action='store_true', help='Restrict LLM validation to AI ensemble consensus findings')
+    config_parser.add_argument('--no-llm-only-consensus', action='store_true', help='Disable consensus-only restriction for LLM')
+    config_parser.add_argument('--llm-triage-min-severity', help='Set LLM triage minimum severity (low|medium|high|critical)')
+    config_parser.add_argument('--llm-triage-min-confidence', type=float, help='Set LLM triage minimum confidence (0.0-1.0)')
+    config_parser.add_argument('--llm-triage-max-items', type=int, help='Set LLM triage max items overall')
+    config_parser.add_argument('--llm-triage-max-per-type', type=int, help='Set LLM triage max items per type')
+    config_parser.add_argument('--foundry-only-consensus', action='store_true', help='Restrict Foundry collection to AI ensemble consensus findings')
+    config_parser.add_argument('--no-foundry-only-consensus', action='store_true', help='Disable consensus-only restriction for Foundry')
+    config_parser.add_argument('--foundry-max-items', type=int, help='Set Foundry max items to collect')
+
+    # Fetch command (enhanced multi-chain integration)
+    fetch_parser = subparsers.add_parser('fetch', help='Fetch contract source code from multiple blockchain networks')
+    fetch_parser.add_argument('address', nargs='?', help='Contract address to fetch')
+    fetch_parser.add_argument('--network', help='Network to fetch from (ethereum, polygon, arbitrum, optimism, bsc, base, polygon_zkevm, avalanche, fantom)')
+    fetch_parser.add_argument('--output', '-o', help='Output directory for contract source')
+    fetch_parser.add_argument('--validate-functions', help='CSV of expected function names to validate ABI against')
+    fetch_parser.add_argument('--no-cache', action='store_true', help='Skip cache and force fresh fetch')
+    fetch_parser.add_argument('--list-networks', action='store_true', help='List all supported networks')
+    fetch_parser.add_argument('--test-network', metavar='NETWORK', help='Test connection to specific network')
+
+    # Database command
+    db_parser = subparsers.add_parser('db', help='Database management and queries')
+    db_parser.add_argument('--stats', action='store_true', help='Show database statistics')
+    db_parser.add_argument('--list-audits', type=int, nargs='?', const=20, metavar='LIMIT', help='List recent audits (default: 20)')
+    db_parser.add_argument('--audit-details', metavar='AUDIT_ID', help='Show details for specific audit')
+    db_parser.add_argument('--export', choices=['json'], default='json', help='Export database data (default: json)')
+    db_parser.add_argument('--vacuum', action='store_true', help='Optimize database by rebuilding it')
+    db_parser.add_argument('--delete-audit', metavar='AUDIT_ID', help='Delete specific audit and related data')
+
+    # Version command
+    subparsers.add_parser('version', help='Show version information')
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    # Handle special cases that don't need full CLI initialization
+    if args.command == 'fetch' and args.list_networks:
+        # List networks without initializing full CLI
+        from core.etherscan_fetcher import EtherscanFetcher
+        from core.config_manager import ConfigManager
+
+        config_manager = ConfigManager()
+        fetcher = EtherscanFetcher(config_manager)
+
+        all_networks = fetcher.get_all_supported_networks()
+        print("📋 Supported Networks:")
+        for network in all_networks:
+            print(f"  • {network}")
+        return 0
+
+    # Initialize CLI
+    cli = AetherCLI()
+
+    try:
+        if args.command == 'audit':
+            result = asyncio.run(cli.run_audit(
+                contract_path=args.contract,
+                flow_config=args.flow,
+                output_dir=args.output,
+                verbose=args.verbose,
+                enhanced=args.enhanced,
+                phase3=args.phase3,
+                ai_ensemble=args.ai_ensemble,
+                enhanced_reports=args.enhanced_reports,
+                compliance_only=args.compliance_only,
+                export_formats=args.export_formats,
+                foundry=args.foundry,
+                llm_validation=args.llm_validation
+            ))
+            # For CLI, return 0 for success, handle results internally
+            if args.verbose and result:
+                # Compute summary from returned structure (prefer reportnode.summary)
+                total_vulnerabilities = 0
+                high_severity = 0
+
+                if isinstance(result, dict):
+                    reportnode = result.get('reportnode')
+                    if isinstance(reportnode, dict):
+                        summary = reportnode.get('summary', {})
+                        if isinstance(summary, dict) and summary:
+                            total_vulnerabilities = int(summary.get('total_vulnerabilities', 0) or 0)
+                            high_severity = int(summary.get('high_severity_count', 0) or 0)
+                        else:
+                            results_obj = reportnode.get('results', {}) if isinstance(reportnode.get('results'), dict) else {}
+                            vulns = results_obj.get('vulnerabilities', []) if isinstance(results_obj, dict) else []
+                            total_vulnerabilities = len(vulns)
+                            high_severity = len([v for v in vulns if isinstance(v, dict) and v.get('severity', '').lower() in ['high', 'critical']])
+
+                    # Fallback: aggregate vulnerabilities from any node outputs
+                    if total_vulnerabilities == 0:
+                        all_vulns = []
+                        for value in result.values():
+                            if isinstance(value, dict) and isinstance(value.get('vulnerabilities'), list):
+                                all_vulns.extend(value['vulnerabilities'])
+                        if all_vulns:
+                            total_vulnerabilities = len(all_vulns)
+                            high_severity = len([v for v in all_vulns if isinstance(v, dict) and v.get('severity', '').lower() in ['high', 'critical']])
+
+                print(f"\n📋 Audit Results Summary:")
+                print(f"   Total vulnerabilities: {total_vulnerabilities}")
+                if high_severity > 0:
+                    print(f"   ⚠️  High severity issues: {high_severity}")
+                else:
+                    print(f"   ✅ No critical issues found")
+            return 0
+        elif args.command == 'console':
+            # Launch the Metasploit-style console
+            from cli.console import main as console_main
+            return console_main()
+        elif args.command == 'interactive':
+            # Launch the interactive console (alias for console)
+            from cli.console import main as console_main
+            return console_main()
+        elif args.command == 'fuzz':
+            result = asyncio.run(cli.run_fuzz(
+                contract_path=args.contract,
+                max_runs=args.max_runs,
+                timeout=args.timeout,
+                output_dir=args.output,
+                verbose=args.verbose
+            ))
+            return 0
+        elif args.command == 'run':
+            result = asyncio.run(cli.run_full_pipeline(
+                contract_path=args.contract,
+                end_to_end=args.end_to_end,
+                flow_config=args.flow,
+                output_dir=args.output,
+                verbose=args.verbose,
+                enhanced=args.enhanced,
+                phase3=args.phase3,
+                ai_ensemble=args.ai_ensemble,
+                enhanced_reports=args.enhanced_reports,
+                compliance_only=args.compliance_only,
+                export_formats=args.export_formats,
+                foundry=args.foundry
+            ))
+            return 0
+        elif args.command == 'foundry':
+            result = asyncio.run(cli.run_foundry_validation(
+                contract_path=args.contract,
+                output_dir=args.output,
+                verbose=args.verbose
+            ))
+            return 0
+        elif args.command == 'generate-foundry':
+            rc = asyncio.run(cli.run_generate_foundry(
+                from_results=args.from_results,
+                from_report=args.from_report,
+                out_dir=args.out,
+                max_items=args.max_items,
+                min_severity=args.min_severity,
+                types_filter=args.types,
+                only_consensus=args.only_consensus,
+                verbose=args.verbose
+            ))
+            return rc
+        elif args.command == 'config':
+            if args.set_etherscan_key:
+                cli.config_manager.set_etherscan_key(args.set_etherscan_key)
+                return 0
+            elif args.set_openai_key:
+                cli.config_manager.set_openai_key(args.set_openai_key)
+                return 0
+            elif args.show:
+                cli.config_manager.show_config()
+                return 0
+            elif args.test_etherscan:
+                success = cli.etherscan_fetcher.test_api_connection()
+                return 0 if success else 1
+            elif args.list_networks:
+                cli.etherscan_fetcher.list_supported_networks()
+                return 0
+            elif args.test_network:
+                success = cli.etherscan_fetcher.test_api_connection(args.test_network)
+                return 0 if success else 1
+            elif args.clear_etherscan_cache:
+                count = cli.etherscan_fetcher.clear_cache()
+                print(f"Cleared {count} cached entries")
+                return 0
+            elif args.etherscan_cache_stats:
+                stats = cli.etherscan_fetcher.get_cache_stats()
+                print(f"Cache stats: {stats['total_cached_contracts']} contracts, {stats['total_cache_size_bytes']} bytes")
+                print(f"Cache directory: {stats['cache_directory']}")
+                return 0
+            elif args.command == 'fetch':
+                # Handle enhanced multi-chain fetch command
+
+                # Address is required for all other operations
+                if not args.address:
+                    print("❌ Contract address is required for fetch operations")
+                    return 1
+
+                address = args.address
+
+                # Test network connection if requested
+                if args.test_network:
+                    network = args.test_network
+                    if not cli.etherscan_fetcher.set_network(network):
+                        return 1
+
+                    # Import blockchain manager for testing
+                    from core.blockchain_abstraction import BlockchainManager
+                    blockchain_manager = BlockchainManager(cli.config_manager.config.etherscan_api_key)
+
+                    if asyncio.run(blockchain_manager.test_connection(network)):
+                        print(f"✅ Network connection test successful for {network}")
+                        return 0
+                    else:
+                        print(f"❌ Network connection test failed for {network}")
+                        return 1
+
+                # Set network if specified
+                if args.network:
+                    if not cli.etherscan_fetcher.set_network(args.network):
+                        return 1
+
+                # Parse expected functions if provided
+                expected_functions = None
+                if args.validate_functions:
+                    expected_functions = [f.strip() for f in args.validate_functions.split(',')]
+
+                # Fetch contract
+                if args.no_cache:
+                    # Clear cache for this address first
+                    cli.etherscan_fetcher.clear_cache()
+
+                contract_data = cli.etherscan_fetcher.fetch_contract_for_poc_generation(address, expected_functions)
+
+                if not contract_data.get('success'):
+                    print(f"❌ Failed to fetch contract: {contract_data.get('error')}")
+                    return 1
+
+                # Save to output directory if specified
+                output_dir = args.output or "temp_contracts"
+                try:
+                    file_path = cli.etherscan_fetcher.save_contract_source(contract_data, output_dir)
+                    print(f"✅ Contract saved to: {file_path}")
+                    print(f"🔗 Explorer URL: {contract_data.get('explorer_url', 'N/A')}")
+                    return 0
+                except Exception as e:
+                    print(f"❌ Failed to save contract: {e}")
+                    return 1
+            elif args.command == 'db':
+                # Handle database commands
+                from core.database_manager import DatabaseManager
+
+                db = DatabaseManager()
+
+                if args.stats:
+                    stats = db.get_audit_statistics()
+                    print(f"📊 Database Statistics:")
+                    print(f"  Total Audits: {stats.get('total_audits', 0)}")
+                    print(f"  Total Vulnerabilities: {stats.get('total_vulnerabilities', 0)}")
+                    print(f"  Learning Patterns: {stats.get('learning_patterns_count', 0)}")
+                    print(f"  Average Execution Time: {stats.get('average_execution_time', 0):.2f}s")
+                    print(f"  Recent Audits (30d): {stats.get('recent_audits_30d', 0)}")
+
+                    # Show severity distribution
+                    severity_dist = stats.get('vulnerabilities_by_severity', {})
+                    if severity_dist:
+                        print(f"  Severity Distribution: {severity_dist}")
+
+                    # Show database info
+                    db_info = db.get_database_info()
+                    print(f"  Database Size: {db_info.get('database_size_bytes', 0)} bytes")
+                    print(f"  SQLite Version: {db_info.get('sqlite_version', 'Unknown')}")
+
+                elif args.list_audits:
+                    audits = db.get_audit_results(limit=args.list_audits)
+                    print(f"📋 Recent Audits ({len(audits)}):")
+                    for audit in audits:
+                        print(f"  {audit['id'][:8]}... | {audit['contract_name']} | {audit['network']} | "
+                              f"{audit['total_vulnerabilities']} vulns | {audit['created_at']}")
+
+                elif args.audit_details:
+                    audit = db.get_audit_result(args.audit_details)
+                    if audit:
+                        print(f"📋 Audit Details ({args.audit_details[:8]}...):")
+                        print(f"  Contract: {audit['contract_name']} ({audit['contract_address']})")
+                        print(f"  Network: {audit['network']}")
+                        print(f"  Type: {audit['audit_type']}")
+                        print(f"  Vulnerabilities: {audit['total_vulnerabilities']}")
+                        print(f"  Execution Time: {audit['execution_time']:.2f}s")
+                        print(f"  Status: {audit['status']}")
+                        print(f"  Created: {audit['created_at']}")
+
+                        # Show findings
+                        findings = db.get_vulnerability_findings(audit['id'])
+                        if findings:
+                            print(f"  Findings ({len(findings)}):")
+                            for finding in findings[:5]:  # Show first 5
+                                print(f"    - {finding['vulnerability_type']} ({finding['severity']})")
+                            if len(findings) > 5:
+                                print(f"    ... and {len(findings) - 5} more")
+                    else:
+                        print(f"❌ Audit not found: {args.audit_details}")
+
+                elif args.export:
+                    data = db.export_data(args.export)
+                    if data:
+                        output_file = f"aetheraudit_export_{int(time.time())}.json"
+                        with open(output_file, 'w') as f:
+                            f.write(data)
+                        print(f"✅ Database exported to: {output_file}")
+                    else:
+                        print("❌ Export failed")
+
+                elif args.vacuum:
+                    if db.vacuum_database():
+                        print("✅ Database optimized successfully")
+                    else:
+                        print("❌ Database optimization failed")
+
+                elif args.delete_audit:
+                    if db.delete_audit_result(args.delete_audit):
+                        print(f"✅ Audit {args.delete_audit[:8]}... deleted")
+                    else:
+                        print(f"❌ Failed to delete audit: {args.delete_audit}")
+
+                else:
+                    print("Database commands: --stats, --list-audits, --audit-details, --export, --vacuum, --delete-audit")
+
+                return 0
+            else:
+                # Apply triage/consensus settings if provided
+                cfg = cli.config_manager.config
+                updated = False
+                if args.triage_min_severity:
+                    cfg.triage_min_severity = args.triage_min_severity
+                    updated = True
+                if args.triage_min_confidence is not None:
+                    cfg.triage_min_confidence = args.triage_min_confidence
+                    updated = True
+                if args.triage_max_items is not None:
+                    cfg.triage_max_items = args.triage_max_items
+                    updated = True
+                if args.triage_max_per_type is not None:
+                    cfg.triage_max_per_type = args.triage_max_per_type
+                    updated = True
+                if args.llm_only_consensus:
+                    cfg.llm_only_consensus = True
+                    updated = True
+                if args.no_llm_only_consensus:
+                    cfg.llm_only_consensus = False
+                    updated = True
+                if args.llm_triage_min_severity:
+                    cfg.llm_triage_min_severity = args.llm_triage_min_severity
+                    updated = True
+                if args.llm_triage_min_confidence is not None:
+                    cfg.llm_triage_min_confidence = args.llm_triage_min_confidence
+                    updated = True
+                if args.llm_triage_max_items is not None:
+                    cfg.llm_triage_max_items = args.llm_triage_max_items
+                    updated = True
+                if args.llm_triage_max_per_type is not None:
+                    cfg.llm_triage_max_per_type = args.llm_triage_max_per_type
+                    updated = True
+                if args.foundry_only_consensus:
+                    cfg.foundry_only_consensus = True
+                    updated = True
+                if args.no_foundry_only_consensus:
+                    cfg.foundry_only_consensus = False
+                    updated = True
+                if args.foundry_max_items is not None:
+                    cfg.foundry_max_items = args.foundry_max_items
+                    updated = True
+
+                if updated:
+                    cli.config_manager.save_config()
+                    print("✅ Configuration updated")
+                    return 0
+
+                config_parser.print_help()
+                return 1
+        elif args.command == 'version':
+            cli.show_version()
+            return 0
+        elif args.command == 'fork-verify':
+            from core.fork_verifier import run_fork_verification
+            results = run_fork_verification(args.output, args.rpc_url, args.block)
+            ok = results.get('aggregate', {}).get('total_failed', 0) == 0
+            print(json.dumps(results, indent=2))
+            return 0 if ok else 1
+
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+        return 1
+    except Exception as e:
+        print(f"Error: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

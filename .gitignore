@@ -1,0 +1,172 @@
+# AetherAudit Project - .gitignore
+# Comprehensive gitignore for smart contract vulnerability research platform
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and debugging
+*.log
+debug_output.log
+foundry_poc_generation.log
+*.out
+*.pid
+*.seed
+*.pid.lock
+
+# Audit results and temporary files
+output/
+temp_contracts/
+temp_aragon_apps/
+temp_morpheus_contracts/
+test_output/
+simple_test_output/
+simple_test_output_final/
+test_debug_output/
+test_final/
+test_gpt5_mini/
+test_improved/
+test_improvements/
+test_intelligent_repair/
+test_quota_check/
+test_with_llm/
+test_with_llm_credits/
+test_comprehensive_deps/
+
+# Test projects and external contracts
+test_forge_project/
+pinto-protocol/
+smartbugs-curated/
+EtherStore/
+2025-10-sequence/
+contracts/
+
+# Foundry build artifacts and cache
+out/
+cache/
+broadcast/
+
+# Slither analysis results
+slither_output.json
+
+# Sample and temporary data files
+sample_results.json
+simple_results.json
+simple_test_contract.sol
+temp_test_contract.sol
+test_compilation_loop.py
+test_database_integration.py
+test_enhanced_etherscan.py
+test_enhanced_system.py
+test_foundry_poc_generator.py
+test_full_pipeline.py
+test_llm_integration.py
+test_stub_generation.py
+
+# Hybra audit results and batches
+hybra_audit_batches/
+hybra_audit_results/
+hybra_clpool_output/
+hybra_comprehensive_test/
+hybra_contracts/
+hybra_enhanced_test/
+hybra_governance_output/
+hybra_llm_validated/
+hybra_test_output/
+
+# Backup files
+*.backup
+*.bak
+
+# Node.js (if any)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Database files (SQLite, etc.)
+*.db
+*.sqlite
+*.sqlite3
+
+# Documentation builds
+docs/_build/
+*.pdf
+*.html
+*.xlsx
+
+# Temporary files
+*.tmp
+*.temp
+
+# Project specific patterns
+# Keep these directories (core project files)
+!core/
+!cli/
+!configs/
+!scripts/
+!tests/
+!utils/
+!docs/
+!data/
+
+# Keep essential files
+!README.md
+!requirements.txt
+!main.py
+!aether_console.py
+!fetch_and_audit.py
+!foundry.lock
+!foundry.toml

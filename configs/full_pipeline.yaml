@@ -1,0 +1,92 @@
+flow:
+  - node: FileReaderNode
+  - node: StaticAnalysisNode
+  - node: LLMAnalysisNode
+  - decision:
+      condition: high_severity_count > 0
+      then_branch:
+        - node: FixGeneratorNode
+        - node: ValidationNode
+        - node: ExploitValidatorNode
+        - node: AetherFuzzRunner
+      else_branch:
+        - node: ExploitValidatorNode
+        - node: AetherFuzzRunner
+  - node: ReportNode
+
+tools:
+  - name: slither
+    type: static_analysis
+    output_format: json
+    enabled: true
+    config:
+      exclude_dependencies: true
+      exclude_informational: true
+      timeout: 300
+
+  - name: mythril
+    type: symbolic_execution
+    enabled: true
+    config:
+      solc_json: true
+      output: json
+      timeout: 300
+
+  - name: llm_gpt
+    type: reasoning
+    enabled: true
+    model: gpt-5-chat-latest
+    config:
+      temperature: 0.2
+      max_tokens: 2000
+      system_prompt: |
+        You are an expert smart contract security auditor. Analyze the provided Solidity code for:
+        1. Security vulnerabilities and attack vectors
+        2. Gas optimization opportunities
+        3. Code quality and best practices
+        4. Access control issues
+        5. Input validation problems
+        Provide specific line numbers and detailed explanations.
+
+  - name: aetherfuzz
+    type: dynamic_validation
+    enabled: true
+    config:
+      max_runs: 1000
+      timeout: 300
+      engine: foundry
+      coverage_enabled: true
+
+node_configs:
+  FileReaderNode:
+    include_line_numbers: true
+    extract_metadata: true
+
+  StaticAnalysisNode:
+    tools: [slither, mythril]
+    severity_threshold: medium
+    output_format: structured
+
+  LLMAnalysisNode:
+    analysis_types: [vulnerability_detection, gas_optimization, access_control]
+    confidence_threshold: 0.7
+
+  FixGeneratorNode:
+    fix_types: [security, gas_optimization]
+    include_explanations: true
+    max_fixes_per_issue: 3
+
+  ValidationNode:
+    retest_tools: [slither]
+    validation_threshold: 0.8
+
+  AetherFuzzRunner:
+    max_runs: 1000
+    timeout: 300
+    seed_generation: intelligent
+    coverage_tracking: true
+
+  ReportNode:
+    format: markdown
+    include_details: true
+    output_sections: [summary, audit_results, fuzz_results, fixes, recommendations]

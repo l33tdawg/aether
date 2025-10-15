@@ -1,0 +1,66 @@
+flow:
+  - node: FileReaderNode
+  - node: StaticAnalysisNode
+  - node: LLMAnalysisNode
+  - node: EnhancedExploitabilityNode
+  - node: ReportNode
+
+tools:
+  - name: slither
+    type: static_analysis
+    output_format: json
+    enabled: true
+    config:
+      exclude_dependencies: true
+      exclude_informational: true
+      timeout: 300
+
+  - name: mythril
+    type: symbolic_execution
+    enabled: true
+    config:
+      solc_json: true
+      output: json
+      timeout: 300
+
+  - name: llm_gpt
+    type: reasoning
+    enabled: true
+    model: gpt-5-chat-latest
+    config:
+      temperature: 0.2
+      max_tokens: 2000
+      system_prompt: |
+        You are an expert smart contract security auditor. Analyze the provided Solidity code for:
+        1. Security vulnerabilities and attack vectors
+        2. Gas optimization opportunities
+        3. Code quality and best practices
+        4. Access control issues
+        5. Input validation problems
+        Provide specific line numbers and detailed explanations.
+
+node_configs:
+  FileReaderNode:
+    include_line_numbers: true
+    extract_metadata: true
+
+  StaticAnalysisNode:
+    tools: [slither, mythril]
+    severity_threshold: medium
+    output_format: structured
+
+  LLMAnalysisNode:
+    analysis_types: [vulnerability_detection, gas_optimization, access_control]
+    confidence_threshold: 0.7
+
+  EnhancedExploitabilityNode:
+    validation_methods: [static_analysis, pattern_matching, context_analysis, simulation, ai_reasoning]
+    confidence_threshold: 0.6
+    generate_poc: true
+    include_attack_vectors: true
+    include_prerequisites: true
+
+  ReportNode:
+    format: markdown
+    include_details: true
+    output_sections: [summary, vulnerabilities, exploitability, fixes, recommendations]

@@ -1,0 +1,119 @@
+flow:
+  - node: FileReaderNode
+  - node: StaticAnalysisNode
+  - node: LLMAnalysisNode
+  - decision:
+      condition: high_severity_count > 0
+      then_branch:
+        - node: FixGeneratorNode
+        - node: ValidationNode
+        - node: ExploitValidatorNode
+        - node: AetherFuzzRunner
+      else_branch:
+        - node: ExploitValidatorNode
+        - node: AetherFuzzRunner
+  - node: ReportNode
+
+tools:
+  - name: slither
+    type: static_analysis
+    output_format: json
+    enabled: true
+    config:
+      exclude_dependencies: false
+      exclude_informational: false
+      timeout: 600
+      detectors: ["all"]
+
+  - name: mythril
+    type: symbolic_execution
+    enabled: true
+    config:
+      solc_json: true
+      output: json
+      timeout: 600
+      execution_timeout: 300
+
+  - name: llm_gpt
+    type: reasoning
+    enabled: true
+    model: gpt-5-chat-latest
+    config:
+      temperature: 0.2
+      max_tokens: 2000
+      system_prompt: |
+        You are an expert smart contract security auditor specializing in DeFi protocols, 
+        diamond patterns, and leveraged trading platforms. Analyze the provided Solidity code for:
+        1. Critical vulnerabilities: reentrancy, access control, arithmetic issues
+        2. DeFi-specific risks: liquidation logic, oracle manipulation, flash loan attacks
+        3. Diamond pattern issues: storage collisions, facet conflicts, upgrade risks
+        4. Trading platform risks: position management, margin calculations, slippage
+        5. Token economics: minting/burning logic, staking mechanisms, governance
+        Focus on high-impact vulnerabilities that could lead to fund loss or protocol insolvency.
+        Provide specific line numbers and detailed explanations with confidence scores.
+
+node_configs:
+  FileReaderNode:
+    include_line_numbers: true
+    extract_metadata: true
+    recursive_search: true
+
+  StaticAnalysisNode:
+    tools: [slither, mythril]
+    severity_threshold: low
+    output_format: structured
+    focus_patterns: 
+      - reentrancy
+      - access_control
+      - arithmetic
+      - oracle_manipulation
+      - liquidation_logic
+      - diamond_patterns
+
+  LLMAnalysisNode:
+    analysis_types: [vulnerability_detection, defi_risks, diamond_patterns, trading_logic]
+    confidence_threshold: 0.6
+    llm_confirm_threshold: 0.7
+    focus_areas:
+      - leveraged_trading
+      - diamond_architecture
+      - token_economics
+      - governance_mechanisms
+
+  FixGeneratorNode:
+    fix_types: [security, gas_optimization, defi_specific]
+    include_explanations: true
+    max_fixes_per_issue: 3
+    prioritize_critical: true
+
+  ValidationNode:
+    retest_tools: [slither]
+    validation_threshold: 0.8
+    require_recompilation: true
+
+  AetherFuzzRunner:
+    max_runs: 2000
+    timeout: 600
+    seed_generation: intelligent
+    coverage_tracking: true
+    focus_functions:
+      - openPosition
+      - closePosition
+      - liquidatePosition
+      - deposit
+      - withdraw
+      - stake
+      - unstake
+
+  ExploitValidatorNode:
+    generate_pocs: true
+    validate_exploits: true
+    focus_severities: [critical, high]
+    include_gas_estimates: true
+
+  ReportNode:
+    format: markdown
+    include_details: true
+    output_sections: [summary, vulnerabilities, exploits, fixes, recommendations]
+    bug_bounty_format: true
+    immunefi_compatible: true

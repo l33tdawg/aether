@@ -1,0 +1,243 @@
+flow:
+  - node: FileReaderNode
+  - node: StaticAnalysisNode
+  - node: LLMAnalysisNode
+  - decision:
+      condition: critical_or_high_severity_count > 0
+      then_branch:
+        - node: FixGeneratorNode
+        - node: ValidationNode
+        - node: ExploitValidatorNode
+        - node: AetherFuzzRunner
+      else_branch:
+        - node: ExploitValidatorNode
+        - node: AetherFuzzRunner
+  - node: ReportNode
+
+tools:
+  - name: slither
+    type: static_analysis
+    output_format: json
+    enabled: true
+    config:
+      exclude_dependencies: false
+      exclude_informational: false
+      timeout: 600
+      detectors: [
+        # Critical vulnerabilities for Immunefi bounties
+        "reentrancy",
+        "arbitrary-low-level-call",
+        "delegatecall-loop",
+        "incorrect-exp",
+        "divide-before-multiply",
+        "unchecked-low-level-call",
+        "wrong-exp",
+        "integer-overflow",
+        "integer-underflow",
+
+        # Access control issues
+        "arbitrary-send-erc20",
+        "functions-that-call-contracts",
+        "msg-value-in-loop",
+        "multiple-sends-in-loop",
+        "suicidal",
+        "state-variable-shadowing",
+
+        # Oracle and price manipulation
+        "price-manipulation",
+        "timestamp-dependency",
+
+        # Lending protocol specific
+        "liquidation-manipulation",
+        "flash-loan",
+        "interest-rate-manipulation",
+        "collateral-manipulation"
+      ]
+
+  - name: mythril
+    type: symbolic_execution
+    enabled: true
+    config:
+      solc_json: true
+      output: json
+      timeout: 600
+      modules: [
+        "ether-thief",
+        "suicide",
+        "state-change-external",
+        "integer-overflow",
+        "unchecked-calls"
+      ]
+
+  - name: llm_gpt
+    type: reasoning
+    enabled: true
+    model: gpt-5-chat-latest
+    config:
+      temperature: 0.1
+      max_tokens: 3000
+      system_prompt: |
+        You are an elite smart contract security auditor specializing in DeFi protocols for bug bounty programs.
+
+        IMMUNEFI BOUNTY CONTEXT - AAVE:
+        - Critical ($50K-$1M): Direct theft of funds, permanent locking, governance manipulation
+        - High ($10K-$75K): Treasury theft, temporary locking, major logic flaws
+        - Medium ($10K): Contract logic issues, access control problems
+        - Low ($1K): Minor issues, gas inefficiencies
+
+        FOCUS AREAS FOR AAVE:
+        1. LENDING POOL LOGIC: Interest accrual, liquidations, flash loans, reserve management
+        2. ORACLE INTEGRATIONS: Price manipulation, stale data, incorrect implementations
+        3. GOVERNANCE: Voting manipulation, proposal hijacking, access control bypasses
+        4. GHO STABILITY: Mint/burn mechanisms, bucket systems, stewards
+        5. CROSS-CHAIN: CCIP bridge logic, token pool implementations
+
+        ATTACK VECTORS TO PRIORITIZE:
+        - Flash loan attacks and sandwich attacks
+        - Oracle price manipulation and frontrunning
+        - Liquidation manipulation and griefing
+        - Interest rate manipulation
+        - Governance proposal manipulation
+        - Cross-chain bridge exploits
+        - Reentrancy in complex state changes
+        - Access control bypasses in multi-sig systems
+
+        Analyze for:
+        1. Fund theft possibilities (direct or indirect)
+        2. Permanent fund locking scenarios
+        3. Governance manipulation vectors
+        4. Oracle dependency exploits
+        5. Cross-chain interaction vulnerabilities
+        6. State manipulation in lending logic
+
+        Provide specific exploit scenarios with step-by-step reproduction.
+
+  - name: aetherfuzz
+    type: dynamic_validation
+    enabled: true
+    config:
+      max_runs: 5000
+      timeout: 900
+      engine: foundry
+      coverage_enabled: true
+      corpus_size: 100
+      mutation_engines: [
+        "basic",
+        "address",
+        "integer",
+        "bytes",
+        "array"
+      ]
+      # Aave-specific fuzzing targets
+      target_functions: [
+        "supply",
+        "withdraw",
+        "borrow",
+        "repay",
+        "liquidate",
+        "flashLoan",
+        "setUserUseReserveAsCollateral",
+        "mint",
+        "burn",
+        "transfer"
+      ]
+      # Focus on stateful scenarios
+      stateful_fuzzing: true
+      invariant_checks: [
+        "total_supply_invariant",
+        "collateral_balance_invariant",
+        "debt_balance_invariant",
+        "liquidation_threshold_invariant"
+      ]
+
+node_configs:
+  FileReaderNode:
+    include_line_numbers: true
+    extract_metadata: true
+    parse_imports: true
+    extract_inheritance: true
+
+  StaticAnalysisNode:
+    tools: [slither, mythril]
+    severity_threshold: low
+    output_format: structured
+    focus_areas: [
+      "access_control",
+      "arithmetic",
+      "reentrancy",
+      "oracle_manipulation",
+      "liquidation_logic",
+      "governance",
+      "cross_chain"
+    ]
+    enable_ml_enhancement: true
+    ml_confidence_threshold: 0.7
+
+  LLMAnalysisNode:
+    analysis_types: [
+      "vulnerability_detection",
+      "exploit_scenario_generation",
+      "impact_assessment",
+      "gas_optimization",
+      "access_control_review"
+    ]
+    confidence_threshold: 0.8
+    focus_on_immunefi_criteria: true
+    generate_exploit_pocs: true
+
+  FixGeneratorNode:
+    fix_types: [security, gas_optimization]
+    include_explanations: true
+    max_fixes_per_issue: 5
+    prioritize_immunefi_impact: true
+
+  ValidationNode:
+    retest_tools: [slither, mythril]
+    validation_threshold: 0.9
+    check_exploit_feasibility: true
+
+  ExploitValidatorNode:
+    generate_pocs: true
+    validate_exploit_impact: true
+    estimate_bounty_value: true
+    poc_languages: [solidity, javascript]
+
+  AetherFuzzRunner:
+    max_runs: 5000
+    timeout: 900
+    seed_generation: intelligent
+    coverage_tracking: true
+    crash_detection: true
+    invariant_violation_detection: true
+    stateful_fuzzing: true
+    # Aave-specific invariants
+    custom_invariants: [
+      "lending_pool_health",
+      "collateralization_ratio",
+      "oracle_price_validity",
+      "liquidation_thresholds",
+      "flash_loan_integrity",
+      "interest_rate_stability"
+    ]
+    # Enable ML-enhanced fuzzing
+    ml_guided_fuzzing: true
+    ml_confidence_threshold: 0.7
+
+  ReportNode:
+    format: markdown
+    include_details: true
+    output_sections: [
+      "executive_summary",
+      "immunefi_bounty_assessment",
+      "critical_findings",
+      "high_findings",
+      "medium_findings",
+      "low_findings",
+      "audit_results",
+      "fuzz_results",
+      "exploit_pocs",
+      "fixes_and_recommendations",
+      "gas_optimizations"
+    ]
+    include_bounty_impact_assessment: true
+    include_exploit_walkthroughs: true
