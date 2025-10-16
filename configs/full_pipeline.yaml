@@ -7,10 +7,10 @@ flow:
       then_branch:
         - node: FixGeneratorNode
         - node: ValidationNode
-        - node: ExploitValidatorNode
+        - node: EnhancedExploitabilityNode
         - node: AetherFuzzRunner
       else_branch:
-        - node: ExploitValidatorNode
+        - node: EnhancedExploitabilityNode
         - node: AetherFuzzRunner
   - node: ReportNode
 
@@ -35,7 +35,7 @@ tools:
   - name: llm_gpt
     type: reasoning
     enabled: true
-    model: gpt-5-chat-latest
+    model: gpt-4o
     config:
       temperature: 0.2
       max_tokens: 2000
@@ -80,6 +80,12 @@ node_configs:
     retest_tools: [slither]
     validation_threshold: 0.8
 
+  EnhancedExploitabilityNode:
+    validation_methods: [static_analysis, pattern_matching, context_analysis, simulation]
+    confidence_threshold: 0.7
+    generate_poc: true
+    include_attack_vectors: true
+
   AetherFuzzRunner:
     max_runs: 1000
     timeout: 300
@@ -89,4 +95,4 @@ node_configs:
   ReportNode:
     format: markdown
     include_details: true
-    output_sections: [summary, audit_results, fuzz_results, fixes, recommendations]
+    output_sections: [summary, audit_results, fuzz_results, exploitability, fixes, recommendations]

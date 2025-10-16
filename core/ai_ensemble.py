@@ -180,12 +180,18 @@ Return a JSON array of vulnerabilities found. Each finding should include:
 Focus on DeFi-specific issues and real-world exploit scenarios.
 """
 
-            # Get OpenAI API key
-            api_key = self.config.config.openai_api_key
+            # Get OpenAI API key - check multiple sources for robustness
+            import os
+            api_key = os.getenv("OPENAI_API_KEY")  # First check environment variable
+            
             if not api_key:
-                raise Exception("OpenAI API key not configured")
+                # Fall back to config manager
+                api_key = self.config.config.openai_api_key
+            
+            if not api_key:
+                raise Exception("OpenAI API key not found in environment (OPENAI_API_KEY) or config file (~/.aether/config.yaml)")
 
-            # Call GPT-5-mini
+            # Call GPT-4o-mini
             import openai
             client = openai.OpenAI(api_key=api_key)
 
@@ -316,9 +322,16 @@ Return a JSON array of gas optimization opportunities. Each optimization should 
 Focus on high-impact optimizations that provide significant gas savings.
 """
 
-            api_key = self.config.config.openai_api_key
+            # Get OpenAI API key - check multiple sources for robustness
+            import os
+            api_key = os.getenv("OPENAI_API_KEY")  # First check environment variable
+            
             if not api_key:
-                raise Exception("OpenAI API key not configured")
+                # Fall back to config manager
+                api_key = self.config.config.openai_api_key
+            
+            if not api_key:
+                raise Exception("OpenAI API key not found in environment (OPENAI_API_KEY) or config file (~/.aether/config.yaml)")
 
             import openai
             client = openai.OpenAI(api_key=api_key)
@@ -445,9 +458,16 @@ Return a JSON array of best practice issues. Each finding should include:
 Focus on actionable improvements that enhance security and maintainability.
 """
 
-            api_key = self.config.config.openai_api_key
+            # Get OpenAI API key - check multiple sources for robustness
+            import os
+            api_key = os.getenv("OPENAI_API_KEY")  # First check environment variable
+            
             if not api_key:
-                raise Exception("OpenAI API key not configured")
+                # Fall back to config manager
+                api_key = self.config.config.openai_api_key
+            
+            if not api_key:
+                raise Exception("OpenAI API key not found in environment (OPENAI_API_KEY) or config file (~/.aether/config.yaml)")
 
             import openai
             client = openai.OpenAI(api_key=api_key)
@@ -527,7 +547,26 @@ class EnhancedAIEnsemble:
         logger.info(f"Initialized Enhanced AI Ensemble with {len(self.agents)} specialized agents")
 
     async def analyze_contract_ensemble(self, contract_content: str, contract_path: str = "") -> ConsensusResult:
-        """Run all specialized agents and generate consensus results"""
+        """Run all specialized agents and generate consensus results
+        
+        🔍 DEBUGGING INFO:
+        This method now provides detailed insights into why model_agreement may be 0.0:
+        
+        1. **Agent Failures**: Shows which agents failed and why (usually missing OpenAI API key)
+        2. **No Findings**: Shows when agents completed but found no vulnerabilities  
+        3. **No Consensus**: Shows when agents found vulnerabilities but didn't agree (different types/severity)
+        4. **Consensus Success**: Shows when 2+ agents agreed on the same finding
+        
+        ⚠️  COMMON ISSUE - Model Agreement = 0.0 Causes:
+        - All agents fail (missing OPENAI_API_KEY) → all return empty findings
+        - Agents find different vulnerabilities → no overlap between agents  
+        - Agents are disabled or return empty results
+        
+        ✅ SOLUTION:
+        - Set OPENAI_API_KEY environment variable: export OPENAI_API_KEY="your-key"
+        - Or configure via: aether config --openai-key "your-key"
+        - Check debug output for which agents are failing and why
+        """
         start_time = time.time()
 
         try:
@@ -543,12 +582,30 @@ class EnhancedAIEnsemble:
             # Process results and filter out exceptions
             valid_results = []
             for i, result in enumerate(results):
+                agent_name = self.agents[i].agent_name if i < len(self.agents) else "unknown"
+                
                 if isinstance(result, Exception):
-                    logger.error(f"Agent {self.agents[i].agent_name} failed: {result}")
+                    logger.error(f"❌ Agent {agent_name} failed with exception: {result}")
+                    print(f"❌ AI Agent '{agent_name}' failed: {str(result)[:100]}")
                     continue
 
-                if isinstance(result, ModelResult) and result.findings:
-                    valid_results.append(result)
+                if isinstance(result, ModelResult):
+                    if result.findings:
+                        valid_results.append(result)
+                        logger.info(f"✅ Agent {agent_name} found {len(result.findings)} findings")
+                        print(f"✅ AI Agent '{agent_name}' found {len(result.findings)} findings")
+                    else:
+                        if result.confidence == 0.0 and result.metadata.get('error'):
+                            logger.warning(f"⚠️  Agent {agent_name} returned no findings - Error: {result.metadata.get('error')}")
+                            print(f"⚠️  AI Agent '{agent_name}' failed: {result.metadata.get('error', 'Unknown error')[:100]}")
+                        else:
+                            logger.info(f"ℹ️  Agent {agent_name} completed but found no vulnerabilities")
+                            print(f"ℹ️  AI Agent '{agent_name}' found no vulnerabilities in the contract")
+
+            print(f"\n📊 AI Ensemble Summary:")
+            print(f"   Total agents: {len(self.agents)}")
+            print(f"   Successful agents: {len(valid_results)}")
+            print(f"   Failed/No findings: {len(self.agents) - len(valid_results)}")
 
             # Generate consensus analysis
             consensus = self._generate_consensus(valid_results)
@@ -565,6 +622,7 @@ class EnhancedAIEnsemble:
 
         except Exception as e:
             logger.error(f"Enhanced ensemble analysis failed: {e}")
+            print(f"❌ AI Ensemble analysis failed: {e}")
             processing_time = time.time() - start_time
 
             return ConsensusResult(
@@ -578,6 +636,8 @@ class EnhancedAIEnsemble:
     def _generate_consensus(self, results: List[ModelResult]) -> Dict[str, Any]:
         """Generate consensus from multiple agent results"""
         if not results:
+            logger.warning("No valid AI agent results to generate consensus from")
+            print("⚠️  No AI agents produced valid results - skipping consensus generation")
             return {
                 'findings': [],
                 'agreement': 0.0,
@@ -586,15 +646,24 @@ class EnhancedAIEnsemble:
 
         # Collect all findings
         all_findings = []
+        findings_by_agent = {}
         for result in results:
+            findings_by_agent[result.model_name] = len(result.findings)
             all_findings.extend(result.findings)
 
         if not all_findings:
+            logger.info("AI agents found no vulnerabilities to reach consensus on")
+            print("ℹ️  AI agents analyzed contract but found no vulnerabilities to create consensus")
             return {
                 'findings': [],
                 'agreement': 0.0,
                 'confidence': 0.0
             }
+
+        # Log findings by each agent
+        print(f"\n📋 Findings by Agent:")
+        for agent_name, count in findings_by_agent.items():
+            print(f"   - {agent_name}: {count} findings")
 
         # Group findings by similarity (simplified approach)
         consensus_findings = []
@@ -614,6 +683,9 @@ class EnhancedAIEnsemble:
                 consensus_finding = self._merge_similar_findings(similar_findings)
                 consensus_findings.append(consensus_finding)
                 processed_findings.add(finding_key)
+                logger.info(f"✅ Consensus reached on: {finding_key} (agreement: {len(similar_findings)} agents)")
+            else:
+                logger.debug(f"No consensus for: {finding_key} (only {len(similar_findings)} agent(s) found it)")
 
         # Calculate overall agreement and confidence
         total_agents = len(self.agents)
@@ -621,6 +693,13 @@ class EnhancedAIEnsemble:
 
         # Weight by agent confidence
         avg_confidence = sum(r.confidence for r in results) / len(results) if results else 0.0
+
+        if consensus_findings:
+            logger.info(f"🎯 Consensus reached: {len(consensus_findings)} findings from {len(all_findings)} total findings ({agreement_score:.1%} agreement)")
+        else:
+            logger.warning(f"❌ No consensus reached: {len(all_findings)} findings found but no multi-agent agreement (different vulnerability types/severity per agent)")
+            print(f"❌ AI Consensus: {len(all_findings)} findings but NO multi-agent agreement")
+            print(f"   Requires at least 2 agents to agree on same vulnerability type, severity, and line")
 
         return {
             'findings': consensus_findings,
@@ -645,7 +724,9 @@ class EnhancedAIEnsemble:
         consensus_finding = base_finding.copy()
         consensus_finding['confidence'] = avg_confidence
         consensus_finding['consensus_count'] = len(similar_findings)
-
+        # Track which models agreed on this finding
+        consensus_finding['models'] = []
+        
         return consensus_finding
 
     def get_learning_patterns(self) -> Dict[str, Any]:

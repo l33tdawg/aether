@@ -63,6 +63,10 @@ class ReportGenerator:
                     tool = 'Enhanced Detector'
                     description = vuln.description
                     category = getattr(vuln, 'category', '') or 'Unknown'
+                    # Extract SWC ID
+                    swc_id = getattr(vuln, 'swc_id', '') or ''
+                    if swc_id and swc_id != 'Unknown':
+                        category = f"{category} ({swc_id})"
                     # Location mapping (prefer file path if available)
                     file_path = ''
                     try:

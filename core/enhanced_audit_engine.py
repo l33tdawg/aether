@@ -232,12 +232,12 @@ class EnhancedAetherAuditEngine:
                 consensus_findings.append({
                     'type': finding['type'],
                     'severity': finding['severity'],
-                    'confidence': finding['consensus_confidence'],
+                    'confidence': finding.get('confidence', 0.85),
                     'description': finding['description'],
                     'line': finding.get('line', 0),
                     'swc_id': finding.get('swc_id', ''),
-                    'models': finding['models'],
-                    'model_count': finding['model_count'],
+                    'models': finding.get('models', []),
+                    'model_count': finding.get('consensus_count', 0),
                     'source': 'ai_ensemble'
                 })
             
@@ -726,15 +726,31 @@ class EnhancedAetherAuditEngine:
             if 'foundry_validation' not in validated_results:
                 validated_results['foundry_validation'] = {}
             
-            validated_results['foundry_validation'].update({
-                'submission': submission,
-                'vulnerabilities_validated': len(submission.vulnerabilities),
-                'foundry_tests_generated': len(submission.foundry_tests),
-                'exploit_pocs_generated': len(submission.exploit_pocs),
-                'confidence_score': submission.confidence_score
-            })
+            # Handle both dict and object types for submission
+            if isinstance(submission, dict):
+                validated_results['foundry_validation'].update({
+                    'submission': submission,
+                    'vulnerabilities_validated': len(submission.get('vulnerabilities', [])),
+                    'foundry_tests_generated': len(submission.get('foundry_tests', [])),
+                    'exploit_pocs_generated': len(submission.get('exploit_pocs', [])),
+                    'confidence_score': submission.get('confidence_score', 0.0)
+                })
+            else:
+                # Object with attributes
+                validated_results['foundry_validation'].update({
+                    'submission': submission,
+                    'vulnerabilities_validated': len(getattr(submission, 'vulnerabilities', [])),
+                    'foundry_tests_generated': len(getattr(submission, 'foundry_tests', [])),
+                    'exploit_pocs_generated': len(getattr(submission, 'exploit_pocs', [])),
+                    'confidence_score': getattr(submission, 'confidence_score', 0.0)
+                })
             
-            print(f"✅ Foundry validation completed: {len(submission.vulnerabilities)} vulnerabilities validated")
+            # Handle both dict and object types for print statement
+            if isinstance(submission, dict):
+                vuln_count = len(submission.get('vulnerabilities', []))
+            else:
+                vuln_count = len(getattr(submission, 'vulnerabilities', []))
+            print(f"✅ Foundry validation completed: {vuln_count} vulnerabilities validated")
             
         except Exception as e:
             print(f"⚠️ Foundry validation failed: {e}")

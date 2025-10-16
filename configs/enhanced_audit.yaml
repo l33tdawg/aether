@@ -3,6 +3,12 @@ flow:
   - node: StaticAnalysisNode
   - node: LLMAnalysisNode
   - node: EnhancedExploitabilityNode
+  - decision:
+      condition: high_severity_count > 0
+      then_branch:
+        - node: FixGeneratorNode
+        - node: ValidationNode
+      else_branch: []
   - node: ReportNode
 
 tools:
@@ -11,9 +17,9 @@ tools:
     output_format: json
     enabled: true
     config:
-      exclude_dependencies: true
-      exclude_informational: true
-      timeout: 300
+      exclude_dependencies: false
+      exclude_informational: false
+      timeout: 600
 
   - name: mythril
     type: symbolic_execution
@@ -21,46 +27,90 @@ tools:
     config:
       solc_json: true
       output: json
-      timeout: 300
+      timeout: 600
 
   - name: llm_gpt
     type: reasoning
     enabled: true
-    model: gpt-5-chat-latest
+    model: gpt-4o
     config:
-      temperature: 0.2
-      max_tokens: 2000
+      temperature: 0.1
+      max_tokens: 3000
       system_prompt: |
-        You are an expert smart contract security auditor. Analyze the provided Solidity code for:
-        1. Security vulnerabilities and attack vectors
+        You are a senior smart contract security auditor with expertise in DeFi protocols.
+        Analyze the provided Solidity code for:
+        1. Critical security vulnerabilities and attack vectors
         2. Gas optimization opportunities
         3. Code quality and best practices
-        4. Access control issues
-        5. Input validation problems
-        Provide specific line numbers and detailed explanations.
+        4. Access control and permission issues
+        5. Input validation and sanitization problems
+        6. Reentrancy and state management issues
+        7. Economic/incentive design flaws
+        8. Integration risks with external protocols
+        Provide specific line numbers, severity levels, and detailed exploitation scenarios.
 
 node_configs:
   FileReaderNode:
     include_line_numbers: true
     extract_metadata: true
+    analyze_imports: true
 
   StaticAnalysisNode:
     tools: [slither, mythril]
-    severity_threshold: medium
+    severity_threshold: low
     output_format: structured
+    enhanced_mode: true
 
   LLMAnalysisNode:
-    analysis_types: [vulnerability_detection, gas_optimization, access_control]
-    confidence_threshold: 0.7
+    analysis_types: 
+      - vulnerability_detection
+      - gas_optimization
+      - access_control
+      - state_management
+      - economic_design
+    confidence_threshold: 0.75
+    llm_confirm_threshold: 0.75
+    use_consensus: true
 
   EnhancedExploitabilityNode:
-    validation_methods: [static_analysis, pattern_matching, context_analysis, simulation, ai_reasoning]
-    confidence_threshold: 0.6
+    validation_methods: 
+      - static_analysis
+      - pattern_matching
+      - context_analysis
+      - simulation
+    confidence_threshold: 0.75
     generate_poc: true
     include_attack_vectors: true
     include_prerequisites: true
+    exploit_categories:
+      - oracle_manipulation
+      - flash_loan
+      - reentrancy
+      - access_control
+      - arithmetic
+      - governance
+
+  FixGeneratorNode:
+    fix_types: [security, gas_optimization]
+    include_explanations: true
+    max_fixes_per_issue: 3
+    validate_fixes: true
+
+  ValidationNode:
+    retest_tools: [slither]
+    validation_threshold: 0.8
+    use_enhanced_detector: true
 
   ReportNode:
     format: markdown
     include_details: true
-    output_sections: [summary, vulnerabilities, exploitability, fixes, recommendations]
+    include_severity_scoring: true
+    include_impact_assessment: true
+    output_sections: 
+      - summary
+      - vulnerabilities
+      - exploitability_analysis
+      - fixes
+      - gas_optimizations
+      - recommendations
+      - risk_assessment

@@ -640,6 +640,7 @@ class AetherCLI:
                 )
 
             # Generate report
+            report_generator = ReportGenerator()
             output_dir_provided_by_user = output_dir is not None
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
@@ -654,20 +655,21 @@ class AetherCLI:
             # Define full_output_dir for enhanced reports and bug bounty submission
             full_output_dir = None
             contract_name = self._extract_contract_name_from_results(results)
-            if not output_dir_provided_by_user:
-                # Create timestamped output directory with contract name
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                full_output_dir = f"output/full_{contract_name}_{timestamp}"
-                os.makedirs(full_output_dir, exist_ok=True)
-
-                comprehensive_report_path = os.path.join(full_output_dir, f"{contract_name}-comprehensive_report.md")
-
-                # Transform flow results into expected report structure for comprehensive report
-                report_data = self._transform_results_for_report(results)
-                report_generator.generate_comprehensive_report(report_data, comprehensive_report_path)
+            # Create standardized per-contract directory regardless of base output_dir
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if output_dir_provided_by_user:
+                full_output_dir = os.path.join(output_dir, f"{contract_name}_{timestamp}")
             else:
-                # Transform flow results for enhanced reports even when output_dir is provided
-                report_data = self._transform_results_for_report(results)
+                full_output_dir = f"output/full_{contract_name}_{timestamp}"
+            os.makedirs(full_output_dir, exist_ok=True)
+
+            comprehensive_report_path = os.path.join(full_output_dir, f"{contract_name}-comprehensive_report.md")
+
+            # Transform flow results into expected report structure and write comprehensive report
+            report_data = self._transform_results_for_report(results)
+            report_generator.generate_comprehensive_report(report_data, comprehensive_report_path)
+            # Also standardize basic audit report path inside the standardized directory
+            report_path = os.path.join(full_output_dir, "audit_report.md")
 
             # Determine if bug bounty submission should be generated
             # Generate when enhanced reports are requested or foundry validation is used
@@ -700,8 +702,8 @@ class AetherCLI:
                         print("✅ Generated enhanced reports:")
                         print(f"   📄 Markdown: {report_files.get('markdown', 'N/A')}")
                         print(f"   🌐 Dashboard: {report_files.get('dashboard', 'N/A')}")
-                        print(f"   📊 Visualizations: {report_files.get('visualizations', 'N/A')}")
-                        print(f"   📈 Risk Assessment: {report_files.get('risk_assessment', 'N/A')}")
+                        print(f"   📊 Excel: {report_files.get('excel', 'N/A')}")
+                        print(f"   📋 PDF: {report_files.get('pdf', 'N/A')}")
 
                         # Export results in requested formats
                         if export_formats:
