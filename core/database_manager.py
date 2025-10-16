@@ -228,6 +228,521 @@ class DatabaseManager:
             self.console.print(f"[red]❌ Failed to save audit result: {e}[/red]")
             return False
 
+class AetherDatabase:
+    """SQLite database for GitHub audit orchestration (projects/contracts/results/cache/errors/stats).
+
+    This class is additive and does not interfere with the existing DatabaseManager used by
+    other parts of the system. It uses a distinct database file by default to avoid schema conflicts.
+    """
+
+    def __init__(self, db_path: Optional[Union[str, Path]] = None):
+        self.console = Console()
+        default_path = Path.home() / '.aether' / 'aether_github_audit.db'
+        self.db_path = Path(db_path) if db_path else default_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.execute('PRAGMA journal_mode = WAL')
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def init_schema(self) -> None:
+        """Create tables required by the GitHub audit workflow if they do not exist."""
+        with self._connect() as conn:
+            # projects
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS projects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT UNIQUE NOT NULL,
+                    repo_name TEXT NOT NULL,
+                    owner TEXT,
+                    framework TEXT,
+                    cloned_at DATETIME,
+                    last_updated DATETIME,
+                    last_analyzed DATETIME,
+                    cache_path TEXT,
+                    build_status TEXT,
+                    build_log TEXT,
+                    solc_version TEXT,
+                    is_private BOOLEAN DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(owner, repo_name)
+                )
+            ''')
+
+            # contracts
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS contracts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    file_path TEXT NOT NULL,
+                    contract_name TEXT,
+                    solc_version TEXT,
+                    discovered_at DATETIME,
+                    line_count INTEGER,
+                    dependencies TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, file_path)
+                )
+            ''')
+
+            # analysis_results
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS analysis_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contract_id INTEGER NOT NULL,
+                    analysis_type TEXT NOT NULL,
+                    findings TEXT,
+                    analyzed_at DATETIME,
+                    status TEXT,
+                    error_log TEXT,
+                    analysis_duration_ms INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+                    UNIQUE(contract_id, analysis_type)
+                )
+            ''')
+
+            # build_artifacts
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS build_artifacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    artifact_path TEXT,
+                    artifact_hash TEXT,
+                    solc_version TEXT,
+                    dependencies_hash TEXT,
+                    created_at DATETIME,
+                    last_accessed DATETIME,
+                    size_mb REAL,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id)
+                )
+            ''')
+
+            # analysis_errors
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS analysis_errors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER,
+                    contract_id INTEGER,
+                    error_type TEXT,
+                    error_message TEXT,
+                    tool_that_failed TEXT,
+                    contract_path TEXT,
+                    full_error_log TEXT,
+                    occurred_at DATETIME,
+                    status TEXT,
+                    resolution_notes TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(project_id) REFERENCES projects(id),
+                    FOREIGN KEY(contract_id) REFERENCES contracts(id)
+                )
+            ''')
+
+            # project_statistics
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS project_statistics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL UNIQUE,
+                    total_contracts INTEGER,
+                    total_findings INTEGER,
+                    critical_findings INTEGER,
+                    high_findings INTEGER,
+                    medium_findings INTEGER,
+                    low_findings INTEGER,
+                    fallback_analyses INTEGER,
+                    failed_analyses INTEGER,
+                    analysis_time_seconds REAL,
+                    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                )
+            ''')
+
+            # audit_results (for enhanced audit engine compatibility)
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS audit_results (
+                    id TEXT PRIMARY KEY,
+                    contract_address TEXT NOT NULL,
+                    contract_name TEXT NOT NULL,
+                    network TEXT NOT NULL,
+                    audit_type TEXT NOT NULL,
+                    total_vulnerabilities INTEGER NOT NULL,
+                    high_severity_count INTEGER NOT NULL,
+                    critical_severity_count INTEGER NOT NULL,
+                    false_positives INTEGER NOT NULL,
+                    execution_time REAL NOT NULL,
+                    created_at REAL NOT NULL,
+                    metadata TEXT NOT NULL,
+                    status TEXT NOT NULL
+                )
+            ''')
+
+            # vulnerability_findings (for enhanced audit engine compatibility)
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS vulnerability_findings (
+                    id TEXT PRIMARY KEY,
+                    audit_result_id TEXT NOT NULL,
+                    vulnerability_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    description TEXT NOT NULL,
+                    line_number INTEGER NOT NULL,
+                    swc_id TEXT,
+                    file_path TEXT NOT NULL,
+                    contract_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    validation_confidence REAL NOT NULL,
+                    validation_reasoning TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    FOREIGN KEY (audit_result_id) REFERENCES audit_results (id) ON DELETE CASCADE
+                )
+            ''')
+
+            # learning_patterns (for enhanced audit engine compatibility)
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS learning_patterns (
+                    id TEXT PRIMARY KEY,
+                    pattern_type TEXT NOT NULL,
+                    contract_pattern TEXT NOT NULL,
+                    vulnerability_type TEXT NOT NULL,
+                    original_classification TEXT NOT NULL,
+                    corrected_classification TEXT NOT NULL,
+                    confidence_threshold REAL NOT NULL,
+                    reasoning TEXT NOT NULL,
+                    source_audit_id TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    usage_count INTEGER NOT NULL DEFAULT 0,
+                    success_rate REAL NOT NULL DEFAULT 0.0,
+                    FOREIGN KEY (source_audit_id) REFERENCES audit_results (id) ON DELETE CASCADE
+                )
+            ''')
+
+            # audit_metrics (for enhanced audit engine compatibility)
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS audit_metrics (
+                    id TEXT PRIMARY KEY,
+                    audit_result_id TEXT NOT NULL,
+                    total_findings INTEGER NOT NULL,
+                    confirmed_findings INTEGER NOT NULL,
+                    false_positives INTEGER NOT NULL,
+                    accuracy_score REAL NOT NULL,
+                    precision_score REAL NOT NULL,
+                    recall_score REAL NOT NULL,
+                    f1_score REAL NOT NULL,
+                    execution_time REAL NOT NULL,
+                    llm_calls INTEGER NOT NULL,
+                    cache_hits INTEGER NOT NULL,
+                    created_at REAL NOT NULL,
+                    FOREIGN KEY (audit_result_id) REFERENCES audit_results (id) ON DELETE CASCADE
+                )
+            ''')
+
+            # helpful indexes
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_contracts_project ON contracts(project_id)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_results_contract ON analysis_results(contract_id)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_project ON analysis_errors(project_id)')
+
+    # Project operations
+    def get_project(self, github_url: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute('SELECT * FROM projects WHERE url = ?', (github_url,)).fetchone()
+            return dict(row) if row else None
+
+    def create_project(self, url: str, repo_name: str, framework: Optional[str] = None, owner: Optional[str] = None, cache_path: Optional[str] = None) -> Dict[str, Any]:
+        with self._connect() as conn:
+            conn.execute('''
+                INSERT OR IGNORE INTO projects (url, repo_name, owner, framework, cloned_at, cache_path)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            ''', (url, repo_name, owner, framework, cache_path))
+            row = conn.execute('SELECT * FROM projects WHERE url = ?', (url,)).fetchone()
+            return dict(row) if row else {}
+
+    def update_project(self, project_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        columns = ', '.join([f"{k} = ?" for k in fields.keys()])
+        values = list(fields.values()) + [project_id]
+        with self._connect() as conn:
+            conn.execute(f'UPDATE projects SET {columns} WHERE id = ?', values)
+
+    # Contract operations
+    def get_contracts(self, project_id: int) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute('SELECT * FROM contracts WHERE project_id = ? ORDER BY id', (project_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_contract(self, project_id: int, file_path: str, info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        info = info or {}
+        with self._connect() as conn:
+            conn.execute('''
+                INSERT INTO contracts (project_id, file_path, contract_name, solc_version, discovered_at, line_count, dependencies)
+                VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?)
+                ON CONFLICT(project_id, file_path) DO UPDATE SET
+                    contract_name = excluded.contract_name,
+                    solc_version = excluded.solc_version,
+                    line_count = excluded.line_count,
+                    dependencies = excluded.dependencies
+            ''', (
+                project_id,
+                file_path,
+                info.get('contract_name'),
+                info.get('solc_version'),
+                info.get('discovered_at'),
+                info.get('line_count'),
+                json.dumps(info.get('dependencies', []))
+            ))
+            row = conn.execute('SELECT * FROM contracts WHERE project_id = ? AND file_path = ?', (project_id, file_path)).fetchone()
+            return dict(row) if row else {}
+
+    # Analysis results
+    def get_analysis_results(self, contract_id: int) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute('SELECT * FROM analysis_results WHERE contract_id = ?', (contract_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_analysis_result(self, contract_id: int, analysis_type: str, findings: Dict[str, Any], status: str, error_log: Optional[str] = None, analysis_duration_ms: Optional[int] = None, analyzed_at: Optional[str] = None) -> None:
+        with self._connect() as conn:
+            conn.execute('''
+                INSERT INTO analysis_results (contract_id, analysis_type, findings, analyzed_at, status, error_log, analysis_duration_ms)
+                VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?)
+                ON CONFLICT(contract_id, analysis_type) DO UPDATE SET
+                    findings = excluded.findings,
+                    analyzed_at = excluded.analyzed_at,
+                    status = excluded.status,
+                    error_log = excluded.error_log,
+                    analysis_duration_ms = excluded.analysis_duration_ms
+            ''', (
+                contract_id,
+                analysis_type,
+                json.dumps(findings),
+                analyzed_at,
+                status,
+                error_log,
+                analysis_duration_ms
+            ))
+
+    # Build artifacts
+    def get_build_artifacts(self, project_id: int) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute('SELECT * FROM build_artifacts WHERE project_id = ?', (project_id,)).fetchone()
+            return dict(row) if row else None
+
+    def save_build_artifacts(self, project_id: int, artifact_path: str, artifact_hash: str, solc_version: Optional[str] = None, dependencies_hash: Optional[str] = None, size_mb: Optional[float] = None) -> None:
+        with self._connect() as conn:
+            conn.execute('''
+                INSERT INTO build_artifacts (project_id, artifact_path, artifact_hash, solc_version, dependencies_hash, created_at, last_accessed, size_mb)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    artifact_path = excluded.artifact_path,
+                    artifact_hash = excluded.artifact_hash,
+                    solc_version = excluded.solc_version,
+                    dependencies_hash = excluded.dependencies_hash,
+                    last_accessed = excluded.last_accessed,
+                    size_mb = excluded.size_mb
+            ''', (project_id, artifact_path, artifact_hash, solc_version, dependencies_hash, size_mb))
+
+    # Errors
+    def log_error(self, error_info: Dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute('''
+                INSERT INTO analysis_errors (project_id, contract_id, error_type, error_message, tool_that_failed, contract_path, full_error_log, occurred_at, status, resolution_notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?)
+            ''', (
+                error_info.get('project_id'),
+                error_info.get('contract_id'),
+                error_info.get('error_type'),
+                error_info.get('error_message'),
+                error_info.get('tool_that_failed'),
+                error_info.get('contract_path'),
+                error_info.get('full_error_log'),
+                error_info.get('occurred_at'),
+                error_info.get('status'),
+                error_info.get('resolution_notes')
+            ))
+
+    def get_error_patterns(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute('''
+                SELECT error_type, COUNT(*) as frequency
+                FROM analysis_errors
+                GROUP BY error_type
+                ORDER BY frequency DESC
+                LIMIT 50
+            ''').fetchall()
+            return [dict(r) for r in rows]
+
+    # Stats
+    def get_project_statistics(self, project_id: int) -> Dict[str, Any]:
+        with self._connect() as conn:
+            # Calculate derived stats
+            total_contracts = conn.execute('SELECT COUNT(*) FROM contracts WHERE project_id = ?', (project_id,)).fetchone()[0]
+            total_findings = 0
+            critical = 0
+            high = 0
+            medium = 0
+            low = 0
+            failed = conn.execute('SELECT COUNT(*) FROM analysis_results WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = ?) AND status = "failed"', (project_id,)).fetchone()[0]
+            fallback = conn.execute('SELECT COUNT(*) FROM analysis_results WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = ?) AND status = "fallback"', (project_id,)).fetchone()[0]
+
+            # Attempt to aggregate severities if findings JSON contains a standard structure
+            rows = conn.execute('SELECT findings FROM analysis_results WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = ?)', (project_id,)).fetchall()
+            for r in rows:
+                try:
+                    f = json.loads(r[0]) if r[0] else {}
+                    sev = f.get('severity_counts') or {}
+                    total_findings += int(f.get('total_findings', 0))
+                    critical += int(sev.get('critical', 0))
+                    high += int(sev.get('high', 0))
+                    medium += int(sev.get('medium', 0))
+                    low += int(sev.get('low', 0))
+                except Exception:
+                    continue
+
+            stats = {
+                'project_id': project_id,
+                'total_contracts': total_contracts,
+                'total_findings': total_findings,
+                'critical_findings': critical,
+                'high_findings': high,
+                'medium_findings': medium,
+                'low_findings': low,
+                'fallback_analyses': fallback,
+                'failed_analyses': failed,
+            }
+
+            # Upsert into project_statistics
+            conn.execute('''
+                INSERT INTO project_statistics (project_id, total_contracts, total_findings, critical_findings, high_findings, medium_findings, low_findings, fallback_analyses, failed_analyses, analysis_time_seconds, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    total_contracts = excluded.total_contracts,
+                    total_findings = excluded.total_findings,
+                    critical_findings = excluded.critical_findings,
+                    high_findings = excluded.high_findings,
+                    medium_findings = excluded.medium_findings,
+                    low_findings = excluded.low_findings,
+                    fallback_analyses = excluded.fallback_analyses,
+                    failed_analyses = excluded.failed_analyses,
+                    last_updated = excluded.last_updated
+            ''', (
+                project_id,
+                stats['total_contracts'],
+                stats['total_findings'],
+                stats['critical_findings'],
+                stats['high_findings'],
+                stats['medium_findings'],
+                stats['low_findings'],
+                stats['fallback_analyses'],
+                stats['failed_analyses']
+            ))
+
+            return stats
+
+    def is_analysis_complete(self, project_id: int) -> bool:
+        with self._connect() as conn:
+            total = conn.execute('SELECT COUNT(*) FROM contracts WHERE project_id = ?', (project_id,)).fetchone()[0]
+            analyzed = conn.execute('''
+                SELECT COUNT(DISTINCT contract_id) FROM analysis_results
+                WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = ?)
+            ''', (project_id,)).fetchone()[0]
+            return total > 0 and analyzed >= total
+
+    def save_audit_result(self, audit_result: AuditResult) -> bool:
+        """Save audit result to database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO audit_results
+                    (id, contract_address, contract_name, network, audit_type,
+                     total_vulnerabilities, high_severity_count, critical_severity_count,
+                     false_positives, execution_time, created_at, metadata, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    audit_result.id,
+                    audit_result.contract_address,
+                    audit_result.contract_name,
+                    audit_result.network,
+                    audit_result.audit_type,
+                    audit_result.total_vulnerabilities,
+                    audit_result.high_severity_count,
+                    audit_result.critical_severity_count,
+                    audit_result.false_positives,
+                    audit_result.execution_time,
+                    audit_result.created_at,
+                    json.dumps(audit_result.metadata),
+                    audit_result.status
+                ))
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save audit result: {e}[/red]")
+            return False
+
+    def update_audit_result(self, audit_result: AuditResult) -> bool:
+        """Update existing audit result."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    UPDATE audit_results
+                    SET contract_address = ?, contract_name = ?, network = ?, audit_type = ?,
+                        total_vulnerabilities = ?, high_severity_count = ?, critical_severity_count = ?,
+                        false_positives = ?, execution_time = ?, created_at = ?, metadata = ?, status = ?
+                    WHERE id = ?
+                ''', (
+                    audit_result.contract_address,
+                    audit_result.contract_name,
+                    audit_result.network,
+                    audit_result.audit_type,
+                    audit_result.total_vulnerabilities,
+                    audit_result.high_severity_count,
+                    audit_result.critical_severity_count,
+                    audit_result.false_positives,
+                    audit_result.execution_time,
+                    audit_result.created_at,
+                    json.dumps(audit_result.metadata),
+                    audit_result.status,
+                    audit_result.id
+                ))
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to update audit result: {e}[/red]")
+            return False
+
+    def save_audit_metrics(self, metrics: AuditMetrics) -> bool:
+        """Save audit metrics to database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO audit_metrics
+                    (id, audit_result_id, total_findings, confirmed_findings,
+                     false_positives, accuracy_score, precision_score, recall_score,
+                     f1_score, execution_time, llm_calls, cache_hits, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    metrics.id,
+                    metrics.audit_result_id,
+                    metrics.total_findings,
+                    metrics.confirmed_findings,
+                    metrics.false_positives,
+                    metrics.accuracy_score,
+                    metrics.precision_score,
+                    metrics.recall_score,
+                    metrics.f1_score,
+                    metrics.execution_time,
+                    metrics.llm_calls,
+                    metrics.cache_hits,
+                    metrics.created_at
+                ))
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save audit metrics: {e}[/red]")
+            return False
+
     def save_vulnerability_findings(self, findings: List[VulnerabilityFinding]) -> bool:
         """Save vulnerability findings to database."""
         if not findings:
@@ -531,6 +1046,181 @@ class DatabaseManager:
             return True
         except Exception as e:
             self.console.print(f"[red]❌ Failed to delete audit result: {e}[/red]")
+            return False
+
+    def find_audit_by_contract(self, contract_path: str, contract_name: str, contract_address: str = "unknown") -> Optional[Dict[str, Any]]:
+        """Find existing audit result for the same contract."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute('''
+                    SELECT * FROM audit_results
+                    WHERE (contract_name = ? OR contract_address = ?)
+                    AND metadata LIKE ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ''', (contract_name, contract_address, f'%{contract_path}%'))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to find audit by contract: {e}[/red]")
+            return None
+
+    def save_vulnerability_findings(self, findings: List[VulnerabilityFinding]) -> bool:
+        """Save vulnerability findings to database."""
+        if not findings:
+            return True
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.executemany('''
+                    INSERT OR REPLACE INTO vulnerability_findings
+                    (id, audit_result_id, vulnerability_type, severity, confidence,
+                     description, line_number, swc_id, file_path, contract_name,
+                     status, validation_confidence, validation_reasoning,
+                     created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', [
+                    (
+                        finding.id,
+                        finding.audit_result_id,
+                        finding.vulnerability_type,
+                        finding.severity,
+                        finding.confidence,
+                        finding.description,
+                        finding.line_number,
+                        finding.swc_id,
+                        finding.file_path,
+                        finding.contract_name,
+                        finding.status,
+                        finding.validation_confidence,
+                        finding.validation_reasoning,
+                        finding.created_at,
+                        finding.updated_at
+                    ) for finding in findings
+                ])
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save vulnerability findings: {e}[/red]")
+            return False
+
+    def save_learning_pattern(self, pattern: LearningPattern) -> bool:
+        """Save learning pattern to database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO learning_patterns
+                    (id, pattern_type, contract_pattern, vulnerability_type, original_classification,
+                     corrected_classification, confidence_threshold, reasoning, source_audit_id,
+                     created_at, usage_count, success_rate)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    pattern.id,
+                    pattern.pattern_type,
+                    pattern.contract_pattern,
+                    pattern.vulnerability_type,
+                    pattern.original_classification,
+                    pattern.corrected_classification,
+                    pattern.confidence_threshold,
+                    pattern.reasoning,
+                    pattern.source_audit_id,
+                    pattern.created_at,
+                    pattern.usage_count,
+                    pattern.success_rate
+                ))
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save learning pattern: {e}[/red]")
+            return False
+
+    def save_audit_result(self, audit_result: AuditResult) -> bool:
+        """Save audit result to database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO audit_results
+                    (id, contract_address, contract_name, network, audit_type,
+                     total_vulnerabilities, high_severity_count, critical_severity_count,
+                     false_positives, execution_time, created_at, metadata, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    audit_result.id,
+                    audit_result.contract_address,
+                    audit_result.contract_name,
+                    audit_result.network,
+                    audit_result.audit_type,
+                    audit_result.total_vulnerabilities,
+                    audit_result.high_severity_count,
+                    audit_result.critical_severity_count,
+                    audit_result.false_positives,
+                    audit_result.execution_time,
+                    audit_result.created_at,
+                    json.dumps(audit_result.metadata),
+                    audit_result.status
+                ))
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save audit result: {e}[/red]")
+            return False
+
+    def update_audit_result(self, audit_result: AuditResult) -> bool:
+        """Update existing audit result."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    UPDATE audit_results
+                    SET contract_address = ?, contract_name = ?, network = ?, audit_type = ?,
+                        total_vulnerabilities = ?, high_severity_count = ?, critical_severity_count = ?,
+                        false_positives = ?, execution_time = ?, created_at = ?, metadata = ?, status = ?
+                    WHERE id = ?
+                ''', (
+                    audit_result.contract_address,
+                    audit_result.contract_name,
+                    audit_result.network,
+                    audit_result.audit_type,
+                    audit_result.total_vulnerabilities,
+                    audit_result.high_severity_count,
+                    audit_result.critical_severity_count,
+                    audit_result.false_positives,
+                    audit_result.execution_time,
+                    audit_result.created_at,
+                    json.dumps(audit_result.metadata),
+                    audit_result.status,
+                    audit_result.id
+                ))
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to update audit result: {e}[/red]")
+            return False
+
+    def save_audit_metrics(self, metrics: AuditMetrics) -> bool:
+        """Save audit metrics to database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO audit_metrics
+                    (id, audit_result_id, total_findings, confirmed_findings,
+                     false_positives, accuracy_score, precision_score, recall_score,
+                     f1_score, execution_time, llm_calls, cache_hits, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    metrics.id,
+                    metrics.audit_result_id,
+                    metrics.total_findings,
+                    metrics.confirmed_findings,
+                    metrics.false_positives,
+                    metrics.accuracy_score,
+                    metrics.precision_score,
+                    metrics.recall_score,
+                    metrics.f1_score,
+                    metrics.execution_time,
+                    metrics.llm_calls,
+                    metrics.cache_hits,
+                    metrics.created_at
+                ))
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save audit metrics: {e}[/red]")
             return False
 
     def vacuum_database(self) -> bool:

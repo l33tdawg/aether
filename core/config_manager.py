@@ -58,6 +58,7 @@ class AetherConfig:
     # API settings (for LLM features)
     openai_api_key: str = ""
     openai_model: str = "gpt-4"
+    gemini_api_key: str = ""
     max_tokens: int = 4000
     
     # Triage/LLM settings

@@ -22,6 +22,8 @@ from core.basescan_fetcher import BasescanFetcher
 from core.config_manager import ConfigManager
 from utils.file_handler import FileHandler
 from core.llm_foundry_generator import LLMFoundryGenerator
+from core.github_auditor import GitHubAuditor, AuditOptions as GitHubAuditOptions
+from core.audit_result_formatter import AuditResultFormatter
 
 
 class AetherCLI:
@@ -524,6 +526,71 @@ class AetherCLI:
                 import traceback
                 traceback.print_exc()
             return 1
+
+    def run_github_audit_command(
+        self,
+        github_url: str,
+        scope: Optional[str] = None,
+        min_severity: Optional[str] = None,
+        output: Optional[str] = None,
+        fmt: str = 'display',
+        fresh: bool = False,
+        reanalyze: bool = False,
+        retry_failed: bool = False,
+        clear_cache: bool = False,
+        skip_build: bool = False,
+        no_cache: bool = False,
+        verbose: bool = False,
+        dry_run: bool = False,
+        github_token: Optional[str] = None
+    ) -> int:
+        auditor = GitHubAuditor()
+        options = GitHubAuditOptions(
+            scope=[s.strip() for s in scope.split(',')] if scope else None,
+            min_severity=min_severity,
+            output_format=fmt,
+            output_file=output,
+            fresh=fresh,
+            reanalyze=reanalyze,
+            retry_failed=retry_failed,
+            clear_cache=clear_cache,
+            skip_build=skip_build,
+            no_cache=no_cache,
+            verbose=verbose,
+            dry_run=dry_run,
+            github_token=github_token,
+        )
+
+        result = auditor.audit(github_url, options)
+        formatter = AuditResultFormatter()
+        project_info = {
+            'url': github_url,
+            'framework': result.framework,
+            'repo_name': result.project_path.name,
+        }
+        if fmt == 'json':
+            payload = formatter.format_for_json(result.findings)
+            if output:
+                import json as _json
+                with open(output, 'w') as f:
+                    _json.dump(payload, f, indent=2)
+                print(f"📊 JSON written: {output}")
+            else:
+                print(payload)
+        elif fmt == 'immunefi':
+            md = formatter.format_for_immunefi(result.findings, project_info)
+            if output:
+                with open(output, 'w') as f:
+                    f.write(md)
+                print(f"📄 Immunefi report written: {output}")
+            else:
+                print(md)
+        else:
+            print("🚀 GitHub audit completed")
+            print(f"📁 Repo: {result.project_path}")
+            print(f"🧰 Framework: {result.framework or 'unknown'}")
+            print(formatter.format_for_display(result.findings))
+        return 0
 
     async def run_audit(
         self,

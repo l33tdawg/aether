@@ -51,8 +51,12 @@ class LLMFalsePositiveFilter:
             try:
                 logger.info(f"Validating vulnerability {i+1}/{len(vulnerabilities)}: {vuln.get('vulnerability_type', 'unknown')}")
                 
+                # Use code snippet from vulnerability if available, otherwise use contract code
+                vuln_code = vuln.get('code_snippet', contract_code)
+                vuln_contract_name = vuln.get('contract_name', contract_name)
+
                 validation_result = await self._validate_single_vulnerability(
-                    vuln, contract_code, contract_name
+                    vuln, vuln_code, vuln_contract_name
                 )
                 
                 if not validation_result.is_false_positive:
@@ -145,8 +149,13 @@ class LLMFalsePositiveFilter:
         
         # Extract relevant code around the vulnerability
         line_number = vulnerability.get('line_number', 0)
-        context_lines = self._extract_code_context(contract_code, line_number, 10)
-        
+
+        # Use the provided code snippet if available, otherwise extract context
+        if vulnerability.get('code_snippet'):
+            context_lines = vulnerability['code_snippet']
+        else:
+            context_lines = self._extract_code_context(contract_code, line_number, 10)
+
         return {
             'vulnerability': vulnerability,
             'contract_name': contract_name,
@@ -155,7 +164,8 @@ class LLMFalsePositiveFilter:
             'description': vulnerability.get('description', ''),
             'line_number': line_number,
             'code_context': context_lines,
-            'contract_code': contract_code
+            'contract_code': contract_code,
+            'has_code_snippet': 'code_snippet' in vulnerability
         }
     
     def _extract_code_context(self, contract_code: str, line_number: int, context_size: int = 10) -> str:

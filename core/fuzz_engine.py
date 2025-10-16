@@ -477,8 +477,10 @@ class AetherFuzzEngine:
     def _check_foundry_availability(self) -> bool:
         """Check if Foundry is available."""
         try:
+            from core.file_handler import get_tool_env
+            env = get_tool_env()
             result = subprocess.run(['forge', '--version'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10, env=env)
             return result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
@@ -486,8 +488,10 @@ class AetherFuzzEngine:
     def _check_forge_availability(self) -> bool:
         """Check if Forge is available."""
         try:
+            from core.file_handler import get_tool_env
+            env = get_tool_env()
             result = subprocess.run(['forge', '--version'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10, env=env)
             return result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
@@ -495,8 +499,10 @@ class AetherFuzzEngine:
     def _check_anvil_availability(self) -> bool:
         """Check if Anvil is available."""
         try:
+            from core.file_handler import get_tool_env
+            env = get_tool_env()
             result = subprocess.run(['anvil', '--version'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10, env=env)
             return result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False

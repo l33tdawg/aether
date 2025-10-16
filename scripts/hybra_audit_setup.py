@@ -41,7 +41,11 @@ class HybraAuditSetup:
 
         # Check Foundry
         try:
-            subprocess.run(["forge", "--version"], check=True, capture_output=True)
+            env = os.environ.copy()
+            foundry_bin = os.path.expanduser("~/.foundry/bin")
+            if os.path.exists(foundry_bin):
+                env['PATH'] = f"{foundry_bin}:{env.get('PATH', '')}"
+            subprocess.run(["forge", "--version"], check=True, capture_output=True, env=env)
             print("✅ Foundry found")
         except subprocess.CalledProcessError:
             print("❌ Foundry is required but not found")

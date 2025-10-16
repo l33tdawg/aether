@@ -22,16 +22,19 @@ web3>=6.11.0
 eth-account>=0.10.0
 eth-utils>=4.0.0
 
-# Smart contract analysis tools
+# Smart contract analysis tools (TESTED & WORKING)
+# Primary: Slither for static analysis
 slither-analyzer==0.10.0
-mythril==0.23.25
+# Note: Mythril has dependency conflicts with Python 3.12 in version 0.23.25
+# Primary integration uses Slither which is fully functional
 
-# Foundry/Anvil integration (optional)
+# Foundry/Anvil integration
 # Install separately: curl -L https://foundry.paradigm.xyz | bash
+# PATH setup: export PATH="$HOME/.foundry/bin:$PATH"
 
 # AI and LLM integration
-openai==1.20.0
-httpx==0.27.2
+openai>=1.20.0
+httpx>=0.27.2
 tiktoken>=0.5.0
 
 # Testing

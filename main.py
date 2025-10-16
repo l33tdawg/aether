@@ -31,7 +31,7 @@ Examples:
 
     # Audit command
     audit_parser = subparsers.add_parser('audit', help='Run static analysis and AI audit')
-    audit_parser.add_argument('contract', help='Path to smart contract file or directory')
+    audit_parser.add_argument('contract', help='Path to smart contract file/directory or GitHub URL')
     audit_parser.add_argument('--flow', default='configs/default_audit.yaml', help='YAML flow configuration file')
     audit_parser.add_argument('--output', '-o', help='Output directory for reports')
     audit_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
@@ -43,6 +43,18 @@ Examples:
     audit_parser.add_argument('--enhanced-reports', action='store_true', help='Generate enhanced reports with dashboards, compliance, and multiple formats')
     audit_parser.add_argument('--compliance-only', action='store_true', help='Generate only compliance reports (SOC2, PCI-DSS, GDPR, etc.)')
     audit_parser.add_argument('--export-formats', nargs='+', choices=['json', 'xml', 'excel', 'pdf'], default=['json'], help='Export formats for results (default: json)')
+    # GitHub audit options (activated when argument is a GitHub URL)
+    audit_parser.add_argument('--scope', help='Filter to specific contracts (comma-separated) [GitHub audit]')
+    audit_parser.add_argument('--min-severity', help='Minimum severity to include [GitHub audit]')
+    audit_parser.add_argument('--format', choices=['display', 'json', 'immunefi', 'csv'], default='display', help='Output format [GitHub audit]')
+    audit_parser.add_argument('--fresh', action='store_true', help='Ignore cache and force fresh analysis [GitHub audit]')
+    audit_parser.add_argument('--reanalyze', action='store_true', help='Re-run analysis even if cached [GitHub audit]')
+    audit_parser.add_argument('--retry-failed', action='store_true', help='Only analyze contracts that failed last time [GitHub audit]')
+    audit_parser.add_argument('--clear-cache', action='store_true', help='Remove cached project before analysis [GitHub audit]')
+    audit_parser.add_argument('--skip-build', action='store_true', help='Use existing build artifacts [GitHub audit]')
+    audit_parser.add_argument('--no-cache', action='store_true', help='Do not cache results [GitHub audit]')
+    audit_parser.add_argument('--dry-run', action='store_true', help='Show what would be analyzed, do not analyze [GitHub audit]')
+    audit_parser.add_argument('--github-token', help='GitHub token for private repositories [GitHub audit]')
 
     # Fuzz command
     fuzz_parser = subparsers.add_parser('fuzz', help='Run dynamic fuzzing and exploit validation')
@@ -166,6 +178,25 @@ Examples:
 
     try:
         if args.command == 'audit':
+            # Route to GitHub auditor when a GitHub URL is provided
+            if isinstance(args.contract, str) and ('github.com/' in args.contract or args.contract.startswith('http')):
+                return cli.run_github_audit_command(
+                    github_url=args.contract,
+                    scope=args.scope,
+                    min_severity=args.min_severity,
+                    output=args.output,
+                    fmt=args.format,
+                    fresh=args.fresh,
+                    reanalyze=args.reanalyze,
+                    retry_failed=args.retry_failed,
+                    clear_cache=args.clear_cache,
+                    skip_build=args.skip_build,
+                    no_cache=args.no_cache,
+                    verbose=args.verbose,
+                    dry_run=args.dry_run,
+                    github_token=args.github_token
+                )
+
             result = asyncio.run(cli.run_audit(
                 contract_path=args.contract,
                 flow_config=args.flow,

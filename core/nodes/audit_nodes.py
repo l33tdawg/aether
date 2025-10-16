@@ -32,7 +32,7 @@ class StaticAnalysisNode(BaseNode):
 
             # Get configuration for this node
             config = self.config or {}
-            tools = config.get('tools', ['slither', 'mythril'])
+            tools = config.get('tools', ['slither'])
 
             all_vulnerabilities = []
             tool_results = {}
@@ -130,15 +130,8 @@ class StaticAnalysisNode(BaseNode):
                     for v in results.get('vulnerabilities', []):
                         v['status'] = 'confirmed'
                     all_vulnerabilities.extend(results.get('vulnerabilities', []))
-
-                elif tool == 'mythril':
-                    results = await self._run_mythril(contract_files[0][0])  # Use first file
-                    tool_results['mythril'] = results
-                    vuln_count = len(results.get('vulnerabilities', []))
-                    print(f"✅ Mythril found {vuln_count} vulnerabilities")
-                    for v in results.get('vulnerabilities', []):
-                        v['status'] = 'confirmed'
-                    all_vulnerabilities.extend(results.get('vulnerabilities', []))
+                # Mythril removed due to Python 3.12 compatibility issues
+                # Use Slither as primary static analysis tool
 
             print(f"📊 Total vulnerabilities from tools: {len(all_vulnerabilities)}")
 
@@ -208,12 +201,7 @@ remappings = [
   "@uniswap/v2-core/=lib/v2-core/"
 ]
 solc_version = "0.7.5"
-
-[dependencies]
-forge-std = "1.11.0"
-openzeppelin-contracts = "3.4.2"
-v2-core = { git = "https://github.com/Uniswap/v2-core" }
-                """.strip())
+""".strip())
 
                 # Create src directory and copy contract
                 src_dir = temp_path / "src"
@@ -222,48 +210,85 @@ v2-core = { git = "https://github.com/Uniswap/v2-core" }
                 final_contract_path = src_dir / contract_file.name
                 shutil.copy2(contract_path, final_contract_path)
 
-                # Install dependencies
+                # Setup environment
                 env = os.environ.copy()
                 env['PATH'] = f"/Users/l33tdawg/.foundry/bin:{env.get('PATH', '')}"
 
+                # Install forge-std
                 subprocess.run(
                     ['forge', 'install', 'foundry-rs/forge-std'],
                     cwd=temp_dir,
                     capture_output=True,
-                    env=env
+                    env=env,
+                    timeout=30
                 )
 
-                # Install OZ and Uniswap v2-core
-                subprocess.run(
-                    ['forge', 'install', 'OpenZeppelin/openzeppelin-contracts@v3.4.2'],
-                    cwd=temp_dir,
-                    capture_output=True,
-                    env=env
-                )
-                subprocess.run(
-                    ['forge', 'install', 'Uniswap/v2-core'],
-                    cwd=temp_dir,
-                    capture_output=True,
-                    env=env
-                )
+                # Install OpenZeppelin - try v4 first, then v3
+                oz_versions = ['OpenZeppelin/openzeppelin-contracts@v4.9.0', 'OpenZeppelin/openzeppelin-contracts@v3.4.2']
+                oz_installed = False
+                for oz_version in oz_versions:
+                    result = subprocess.run(
+                        ['forge', 'install', oz_version],
+                        cwd=temp_dir,
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                        timeout=30
+                    )
+                    if result.returncode == 0:
+                        oz_installed = True
+                        break
 
-                # Build with Foundry
+                # Try to build with Foundry
                 build_result = subprocess.run(
-                    ['forge', 'build'],
+                    ['forge', 'build', '--force'],
                     cwd=temp_dir,
                     capture_output=True,
                     text=True,
-                    env=env
+                    env=env,
+                    timeout=60
                 )
 
+                # If build failed, try running slither without forge (direct analysis)
                 if build_result.returncode != 0:
+                    # Try direct slither analysis without compilation
+                    print(f"⚠️  Foundry build failed, trying direct Slither analysis...")
+                    cmd = [
+                        'slither',
+                        str(final_contract_path),
+                        '--json', '-',
+                        '--exclude-dependencies',
+                        '--exclude-informational'
+                    ]
+                    
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                        env=env
+                    )
+                    
+                    if result.returncode in [0, 255] and result.stdout.strip().startswith('{'):
+                        try:
+                            data = json.loads(result.stdout)
+                            vulnerabilities = self._parse_slither_output(data)
+                            return {
+                                'vulnerabilities': vulnerabilities,
+                                'success': True,
+                                'output': f'Direct analysis (no compilation): {len(vulnerabilities)} issues'
+                            }
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    # If all else fails, return empty
                     return {
                         'vulnerabilities': [],
                         'success': False,
-                        'error': f'Foundry build failed: {build_result.stderr}'
+                        'error': f'Slither analysis skipped - build failed: {build_result.stderr[:100]}'
                     }
 
-                # Run slither on the source file in the Foundry project
+                # Run slither on the compiled project
                 cmd = [
                     'slither',
                     str(final_contract_path),
@@ -285,7 +310,6 @@ v2-core = { git = "https://github.com/Uniswap/v2-core" }
                 # Slither returns 255 when it finds vulnerabilities but still produces valid JSON
                 if result.returncode == 0 or result.returncode == 255:
                     try:
-                        # Check if stdout starts with JSON
                         if result.stdout.strip().startswith('{'):
                             data = json.loads(result.stdout)
                             vulnerabilities = self._parse_slither_output(data)
@@ -310,7 +334,7 @@ v2-core = { git = "https://github.com/Uniswap/v2-core" }
                     return {
                         'vulnerabilities': [],
                         'success': False,
-                        'error': f'Slither analysis failed with code {result.returncode}: {result.stderr}'
+                        'error': f'Slither analysis failed with code {result.returncode}: {result.stderr[:100]}'
                     }
 
         except subprocess.TimeoutExpired:
@@ -1499,16 +1523,16 @@ class ReportNode(BaseNode):
 
             # Get vulnerabilities from LLM analysis results
             llm_analysis = context.get('llm_analysis_results', {})
-            print(f"DEBUG: ReportNode - LLM analysis keys: {list(llm_analysis.keys()) if isinstance(llm_analysis, dict) else 'Not a dict'}")
-            print(f"DEBUG: ReportNode - LLM analysis vulnerabilities: {len(llm_analysis.get('vulnerabilities', [])) if isinstance(llm_analysis, dict) else 'N/A'}")
+            print(f"DEBUG: ReportNode - LLM analysis keys: {list(llm_analysis.keys())}")
+            print(f"DEBUG: ReportNode - LLM analysis vulnerabilities: {len(llm_analysis.get('vulnerabilities', []))}")
             
             # Also check the results structure
             results = context.get('results', {})
             print(f"DEBUG: ReportNode - Results keys: {list(results.keys())}")
             if 'llmanalysisnode' in results:
                 llm_result = results['llmanalysisnode']
-                print(f"DEBUG: ReportNode - LLM result keys: {list(llm_result.keys()) if isinstance(llm_result, dict) else 'Not a dict'}")
-                print(f"DEBUG: ReportNode - LLM result vulnerabilities: {len(llm_result.get('vulnerabilities', [])) if isinstance(llm_result, dict) else 'N/A'}")
+                print(f"DEBUG: ReportNode - LLM result keys: {list(llm_result.keys())}")
+                print(f"DEBUG: ReportNode - LLM result vulnerabilities: {len(llm_result.get('vulnerabilities', []))}")
             
             if isinstance(llm_analysis, dict) and 'vulnerabilities' in llm_analysis:
                 all_vulnerabilities.extend(llm_analysis['vulnerabilities'])

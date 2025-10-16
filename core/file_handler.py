@@ -9,6 +9,23 @@ import os
 from typing import Optional
 
 
+def get_tool_env() -> dict:
+    """
+    Get environment variables configured for external tools (Foundry, Slither, Mythril).
+    Ensures tools like forge, slither, and mythril are in PATH.
+    """
+    env = os.environ.copy()
+    
+    # Add Foundry to PATH if not already there
+    foundry_bin = os.path.expanduser("~/.foundry/bin")
+    if os.path.exists(foundry_bin):
+        path_parts = env.get('PATH', '').split(':')
+        if foundry_bin not in path_parts:
+            env['PATH'] = f"{foundry_bin}:{env.get('PATH', '')}"
+    
+    return env
+
+
 class FileHandler:
     """Simple file handler for contract files."""
     

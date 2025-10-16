@@ -32,7 +32,7 @@ from core.enhanced_report_generator import EnhancedReportGenerator
 class EnhancedAetherAuditEngine:
     """Enhanced audit engine with improved accuracy and validation."""
 
-    def __init__(self, verbose: bool = False, openai_api_key: Optional[str] = None):
+    def __init__(self, verbose: bool = False, openai_api_key: Optional[str] = None, database: Optional[Any] = None):
         self.verbose = verbose
         self.file_handler = FileHandler()
 
@@ -45,7 +45,7 @@ class EnhancedAetherAuditEngine:
         self.ai_ensemble = EnhancedAIEnsemble()
 
         # Database integration
-        self.database = DatabaseManager()
+        self.database = database if database is not None else DatabaseManager()
         # Learning system removed - was simulated
         # Formal verification removed - was simulated
         self.llm_false_positive_filter = LLMFalsePositiveFilter(self.llm_analyzer)
@@ -199,6 +199,26 @@ class EnhancedAetherAuditEngine:
             'statistics': self.stats.copy()
         }
 
+    def _extract_code_snippet(self, contract_content: str, line_number: int, context_lines: int = 5) -> str:
+        """Extract code snippet around a specific line number for LLM verification."""
+        lines = contract_content.split('\n')
+
+        # Ensure line_number is valid
+        if line_number < 1 or line_number > len(lines):
+            return "// Line number out of range"
+
+        # Calculate start and end lines with context
+        start_line = max(1, line_number - context_lines)
+        end_line = min(len(lines), line_number + context_lines)
+
+        # Extract the snippet
+        snippet_lines = []
+        for i in range(start_line - 1, end_line):
+            marker = ">>> " if (i + 1) == line_number else "    "
+            snippet_lines.append(f"{marker}{i + 1:4d}: {lines[i]}")
+
+        return '\n'.join(snippet_lines)
+
     async def _run_enhanced_llm_analysis(self, contract_files: List[Dict[str, Any]], static_results: Dict[str, Any]) -> Dict[str, Any]:
         """Run enhanced LLM analysis with validation."""
         print("🤖 Running enhanced LLM analysis...")
@@ -229,6 +249,9 @@ class EnhancedAetherAuditEngine:
             # Process consensus findings
             consensus_findings = []
             for finding in ensemble_result.consensus_findings:
+                # Extract relevant code snippet around the vulnerability line
+                code_snippet = self._extract_code_snippet(combined_content, finding.get('line', 0))
+
                 consensus_findings.append({
                     'type': finding['type'],
                     'severity': finding['severity'],
@@ -238,7 +261,9 @@ class EnhancedAetherAuditEngine:
                     'swc_id': finding.get('swc_id', ''),
                     'models': finding.get('models', []),
                     'model_count': finding.get('consensus_count', 0),
-                    'source': 'ai_ensemble'
+                    'source': 'ai_ensemble',
+                    'code_snippet': code_snippet,
+                    'contract_content': combined_content  # Include full contract for context
                 })
             
             # Update statistics
@@ -766,7 +791,13 @@ class EnhancedAetherAuditEngine:
             contract_address = self._extract_contract_address(contract_path) or "unknown"
 
             # Check if audit already exists for this contract
-            existing_audit = self.database.find_audit_by_contract(contract_path, contract_name, contract_address)
+            existing_audit = None
+            try:
+                if hasattr(self.database, 'find_audit_by_contract'):
+                    existing_audit = self.database.find_audit_by_contract(contract_path, contract_name, contract_address)
+            except Exception as e:
+                logger.warning(f"Could not check for existing audit: {e}")
+                existing_audit = None
 
             if existing_audit:
                 # Update existing audit
@@ -774,7 +805,11 @@ class EnhancedAetherAuditEngine:
                 print(f"🔄 Updating existing audit for contract: {contract_name}")
 
                 # Delete old vulnerability findings and metrics to replace with new ones
-                self.database.delete_vulnerability_findings(audit_id)
+                try:
+                    if hasattr(self.database, 'delete_vulnerability_findings'):
+                        self.database.delete_vulnerability_findings(audit_id)
+                except Exception as e:
+                    logger.warning(f"Could not delete old vulnerability findings: {e}")
                 # Delete old metrics and learning patterns for this audit
                 # Note: We could implement delete methods for these if needed
             else:
@@ -919,22 +954,35 @@ class EnhancedAetherAuditEngine:
                 vulnerability_findings.append(finding)
 
             if vulnerability_findings:
-                if self.database.save_vulnerability_findings(vulnerability_findings):
-                    print(f"💾 {len(vulnerability_findings)} vulnerability findings saved to database")
-                else:
-                    print("⚠️ Failed to save vulnerability findings to database")
+                try:
+                    if hasattr(self.database, 'save_vulnerability_findings'):
+                        if self.database.save_vulnerability_findings(vulnerability_findings):
+                            print(f"💾 {len(vulnerability_findings)} vulnerability findings saved to database")
+                        else:
+                            print("⚠️ Failed to save vulnerability findings to database")
+                except Exception as e:
+                    logger.warning(f"Could not save vulnerability findings: {e}")
 
             # Save learning patterns if any were learned (only for new audits)
             if not existing_audit:
                 learning_patterns = self._extract_learning_patterns(vulnerabilities, audit_id)
                 for pattern in learning_patterns:
-                    if self.database.save_learning_pattern(pattern):
-                        print(f"💾 Learning pattern saved: {pattern.pattern_type}")
+                    try:
+                        if hasattr(self.database, 'save_learning_pattern'):
+                            if self.database.save_learning_pattern(pattern):
+                                print(f"💾 Learning pattern saved: {pattern.pattern_type}")
+                    except Exception as e:
+                        logger.warning(f"Could not save learning pattern: {e}")
 
             # Save audit metrics
             metrics = self._calculate_audit_metrics(audit_id, vulnerabilities, execution_time)
-            if metrics and self.database.save_audit_metrics(metrics):
-                print(f"💾 Audit metrics saved to database")
+            if metrics:
+                try:
+                    if hasattr(self.database, 'save_audit_metrics'):
+                        if self.database.save_audit_metrics(metrics):
+                            print(f"💾 Audit metrics saved to database")
+                except Exception as e:
+                    logger.warning(f"Could not save audit metrics: {e}")
 
         except Exception as e:
             print(f"⚠️ Failed to save audit to database: {e}")

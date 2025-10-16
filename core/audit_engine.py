@@ -266,7 +266,6 @@ class AetherAuditEngine:
         results = {
             'pattern_analysis': {'vulnerabilities': [], 'errors': []},
             'slither': {'vulnerabilities': [], 'errors': []},
-            'mythril': {'vulnerabilities': [], 'errors': []},
             'summary': {'total_vulnerabilities': 0, 'high_severity': 0}
         }
 
@@ -314,7 +313,7 @@ class AetherAuditEngine:
 
         # Run Slither with proper integration
         try:
-            print("🔍 Running Slither analysis...")
+            print("🔍 Running Slither static analysis...")
             slither_results = await self._run_slither(contract_path)
             results['slither'] = slither_results
             vuln_count = len(slither_results.get('vulnerabilities', []))
@@ -328,23 +327,6 @@ class AetherAuditEngine:
             error_msg = f"Slither error: {str(e)}"
             print(f"❌ {error_msg}")
             results['slither']['errors'].append(error_msg)
-
-        # Run Mythril with proper integration
-        try:
-            print("🔍 Running Mythril analysis...")
-            mythril_results = await self._run_mythril(contract_path)
-            results['mythril'] = mythril_results
-            vuln_count = len(mythril_results.get('vulnerabilities', []))
-            results['summary']['total_vulnerabilities'] += vuln_count
-            results['summary']['high_severity'] += len([
-                v for v in mythril_results.get('vulnerabilities', [])
-                if v.get('severity', '').lower() in ['high', 'critical']
-            ])
-            print(f"✅ Mythril found {vuln_count} vulnerabilities")
-        except Exception as e:
-            error_msg = f"Mythril error: {str(e)}"
-            print(f"❌ {error_msg}")
-            results['mythril']['errors'].append(error_msg)
 
         return results
 
