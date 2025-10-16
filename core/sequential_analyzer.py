@@ -58,6 +58,65 @@ class SequentialAnalyzer:
         except Exception:
             return False
 
+    def _is_mock_or_test_contract(self, file_path: Path) -> bool:
+        """Check if a contract is a mock or test contract (should be skipped in production audits)."""
+        try:
+            file_name = file_path.name.lower()
+            file_path_str = str(file_path).lower()
+            
+            # Check file path patterns
+            test_dirs = ['test', 'tests', 'mocks', 'mock', 'spec', 'specs', '__tests__', '.test', '.spec']
+            for test_dir in test_dirs:
+                if f'/{test_dir}/' in file_path_str or file_path_str.startswith(f'{test_dir}/'):
+                    return True
+            
+            # Check file name patterns
+            mock_patterns = [
+                'mock.sol', 'mock_', '_mock.sol',
+                'test.sol', 'test_', '_test.sol',
+                'stub.sol', 'stub_', '_stub.sol',
+                'fake.sol', 'fake_', '_fake.sol',
+                '.test.sol', '.spec.sol', '.mock.sol',
+            ]
+            for pattern in mock_patterns:
+                if pattern in file_name:
+                    return True
+            
+            # Check contract-level patterns in content
+            content = file_path.read_text(encoding='utf-8', errors='ignore').lower()
+            
+            # Common mock/test contract names and patterns
+            mock_names = [
+                'mock',
+                'test',
+                'stub',
+                'fake',
+                'dummy',
+                'scaffold',
+                'example',
+            ]
+            
+            # Check if contract name contains mock indicators
+            lines = content.split('\n')
+            for line in lines:
+                stripped = line.strip()
+                # Look for contract declarations with mock indicators
+                if stripped.startswith('contract '):
+                    # Extract contract name
+                    parts = stripped.split()
+                    if len(parts) >= 2:
+                        contract_name = parts[1].split('{')[0].split('(')[0]
+                        contract_name_lower = contract_name.lower()
+                        
+                        # Check against mock patterns
+                        for mock_pattern in mock_names:
+                            if mock_pattern in contract_name_lower:
+                                return True
+            
+            return False
+        except Exception:
+            return False
+
     def analyze_contracts(self, project_id: int, project_path: Union[str, Path], contract_relative_paths: List[str], force: bool = False) -> List[AnalysisOutcome]:
         outcomes: List[AnalysisOutcome] = []
 
@@ -152,6 +211,21 @@ class SequentialAnalyzer:
                 duration_ms = int((time.time() - start) * 1000)
                 # Save as skipped with empty findings
                 empty_findings = {'total_findings': 0, 'severity_counts': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}, 'vulnerabilities': [], 'analysis_types': ['skipped_interface']}
+                self.db.save_analysis_result(
+                    contract_id=self._get_contract_id(project_id, rel),
+                    analysis_type='enhanced',
+                    findings=empty_findings,
+                    status='skipped',
+                    analysis_duration_ms=duration_ms,
+                )
+                outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=empty_findings, status='skipped', duration_ms=duration_ms))
+                continue
+
+            # Check if this is a mock or test contract (skip analysis)
+            if self._is_mock_or_test_contract(contract_path):
+                duration_ms = int((time.time() - start) * 1000)
+                # Save as skipped with empty findings
+                empty_findings = {'total_findings': 0, 'severity_counts': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}, 'vulnerabilities': [], 'analysis_types': ['skipped_mock_test']}
                 self.db.save_analysis_result(
                     contract_id=self._get_contract_id(project_id, rel),
                     analysis_type='enhanced',
