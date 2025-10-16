@@ -307,6 +307,26 @@ class AetherDatabase:
                 )
             ''')
 
+            # audit_scopes (for scope persistence and resume)
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS audit_scopes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    scope_name TEXT,
+                    selected_contracts TEXT NOT NULL,
+                    status TEXT DEFAULT 'active',
+                    total_selected INTEGER,
+                    total_audited INTEGER DEFAULT 0,
+                    total_pending INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_audited_contract_id INTEGER,
+                    metadata TEXT,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, status) WHERE status='active'
+                )
+            ''')
+
             # build_artifacts
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS build_artifacts (
@@ -1363,3 +1383,188 @@ class AetherDatabase:
         except Exception as e:
             self.console.print(f"[red]❌ Failed to store audit metrics: {e}[/red]")
             raise
+
+    # ========== SCOPE PERSISTENCE METHODS ==========
+    
+    def save_audit_scope(self, project_id: int, selected_contract_paths: List[str], scope_name: Optional[str] = None) -> Dict[str, Any]:
+        """Save audit scope to database for resume capability."""
+        try:
+            with self._connect() as conn:
+                # Archive any existing active scope
+                conn.execute('''
+                    UPDATE audit_scopes 
+                    SET status = 'archived'
+                    WHERE project_id = ? AND status = 'active'
+                ''', (project_id,))
+                
+                # Create new scope
+                cursor = conn.execute('''
+                    INSERT INTO audit_scopes 
+                    (project_id, scope_name, selected_contracts, status, total_selected, total_pending, modified_at)
+                    VALUES (?, ?, ?, 'active', ?, ?, CURRENT_TIMESTAMP)
+                ''', (
+                    project_id,
+                    scope_name or f"Scope_{int(time.time())}",
+                    json.dumps(selected_contract_paths),
+                    len(selected_contract_paths),
+                    len(selected_contract_paths)
+                ))
+                conn.commit()
+                
+                return {
+                    'id': cursor.lastrowid,
+                    'project_id': project_id,
+                    'contracts': len(selected_contract_paths),
+                    'status': 'active'
+                }
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save audit scope: {e}[/red]")
+            raise
+
+    def get_active_scope(self, project_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve active audit scope for a project."""
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute('''
+                    SELECT id, project_id, scope_name, selected_contracts, status,
+                           total_selected, total_audited, total_pending, last_audited_contract_id,
+                           created_at, modified_at
+                    FROM audit_scopes
+                    WHERE project_id = ? AND status = 'active'
+                    ORDER BY modified_at DESC
+                    LIMIT 1
+                ''', (project_id,))
+                
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                
+                return {
+                    'id': row[0],
+                    'project_id': row[1],
+                    'scope_name': row[2],
+                    'selected_contracts': json.loads(row[3]),
+                    'status': row[4],
+                    'total_selected': row[5],
+                    'total_audited': row[6],
+                    'total_pending': row[7],
+                    'last_audited_contract_id': row[8],
+                    'created_at': row[9],
+                    'modified_at': row[10]
+                }
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to retrieve active scope: {e}[/red]")
+            return None
+
+    def update_scope_progress(self, scope_id: int, contract_id: int, audited_count: int, pending_count: int) -> bool:
+        """Update scope progress after analyzing a contract."""
+        try:
+            with self._connect() as conn:
+                conn.execute('''
+                    UPDATE audit_scopes
+                    SET total_audited = ?, total_pending = ?, last_audited_contract_id = ?, modified_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (audited_count, pending_count, contract_id, scope_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to update scope progress: {e}[/red]")
+            return False
+
+    def update_scope_contracts(self, scope_id: int, selected_contract_paths: List[str]) -> bool:
+        """Update the list of selected contracts in a scope."""
+        try:
+            with self._connect() as conn:
+                conn.execute('''
+                    UPDATE audit_scopes
+                    SET selected_contracts = ?, total_selected = ?, total_pending = ?, modified_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (
+                    json.dumps(selected_contract_paths),
+                    len(selected_contract_paths),
+                    len(selected_contract_paths),  # Reset pending to total when updating
+                    scope_id
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to update scope contracts: {e}[/red]")
+            return False
+
+    def complete_scope(self, scope_id: int) -> bool:
+        """Mark a scope as completed."""
+        try:
+            with self._connect() as conn:
+                conn.execute('''
+                    UPDATE audit_scopes
+                    SET status = 'completed', total_pending = 0, modified_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (scope_id,))
+                conn.commit()
+                return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to complete scope: {e}[/red]")
+            return False
+
+    def reset_scope_for_reaudit(self, scope_id: int) -> bool:
+        """Reset scope for fresh re-analysis of all contracts."""
+        try:
+            with self._connect() as conn:
+                # Get scope info
+                cursor = conn.execute('SELECT selected_contracts FROM audit_scopes WHERE id = ?', (scope_id,))
+                row = cursor.fetchone()
+                if not row:
+                    return False
+                
+                contracts = json.loads(row[0])
+                
+                # Reset progress
+                conn.execute('''
+                    UPDATE audit_scopes
+                    SET total_audited = 0, total_pending = ?, last_audited_contract_id = NULL, modified_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (len(contracts), scope_id))
+                
+                # Delete existing findings for contracts in this scope
+                conn.execute('''
+                    DELETE FROM analysis_results
+                    WHERE contract_id IN (
+                        SELECT id FROM contracts WHERE project_id = (
+                            SELECT project_id FROM audit_scopes WHERE id = ?
+                        )
+                    ) AND status = 'success'
+                ''', (scope_id,))
+                
+                conn.commit()
+                return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to reset scope for re-audit: {e}[/red]")
+            return False
+
+    def get_scope_history(self, project_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get history of all scopes for a project."""
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute('''
+                    SELECT id, scope_name, selected_contracts, status, total_selected, total_audited, created_at
+                    FROM audit_scopes
+                    WHERE project_id = ?
+                    ORDER BY modified_at DESC
+                    LIMIT ?
+                ''', (project_id, limit))
+                
+                scopes = []
+                for row in cursor.fetchall():
+                    scopes.append({
+                        'id': row[0],
+                        'scope_name': row[1],
+                        'contracts': json.loads(row[2]),
+                        'status': row[3],
+                        'total_selected': row[4],
+                        'total_audited': row[5],
+                        'created_at': row[6]
+                    })
+                return scopes
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to retrieve scope history: {e}[/red]")
+            return []

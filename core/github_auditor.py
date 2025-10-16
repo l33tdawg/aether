@@ -18,6 +18,7 @@ from core.framework_detector import FrameworkDetector
 from core.builder import ProjectBuilder
 from core.discovery import ContractDiscovery
 from core.sequential_analyzer import SequentialAnalyzer
+from core.scope_manager import ScopeManager
 
 
 @dataclass
@@ -170,6 +171,7 @@ class GitHubAuditor:
         self.builder = ProjectBuilder(db=self.db)
         self.discovery = ContractDiscovery(db=self.db)
         self.scope_selector = ScopeSelector()
+        self.scope_manager = ScopeManager(db=self.db)
         # Enhanced analysis will be determined by options in the audit method
 
     def audit(self, github_url: str, options: Optional[AuditOptions] = None) -> AuditResult:
@@ -256,9 +258,9 @@ class GitHubAuditor:
                 else:
                     print(f"ℹ️  No contracts found in {framework} project. Check if contracts are in expected locations.")
 
-            # INTERACTIVE SCOPE SELECTION (for bug bounty scoping)
-            if options.interactive_scope and rel_paths:
-                # Convert discovered contracts to info dicts for scope selector
+            # SMART RESUME WORKFLOW (check for saved scope before interactive selection)
+            if rel_paths:
+                # Convert discovered contracts to info dicts
                 contract_info_list = []
                 for c, rel_path in zip(discovered, rel_paths):
                     contract_info_list.append({
@@ -267,20 +269,75 @@ class GitHubAuditor:
                         'line_count': c.line_count
                     })
                 
-                # Let user select which contracts to audit
-                selected_paths = self.scope_selector.select_scope(contract_info_list)
-                if not selected_paths:
-                    self.console.print("[red]No contracts selected. Audit cancelled.[/red]")
-                    return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[])
+                # Check if there's a saved scope (smart resume)
+                if project_id is not None and not options.interactive_scope and not options.scope:
+                    resume_info = self.scope_manager.detect_and_handle_saved_scope(project_id, contract_info_list)
+                    
+                    if resume_info:
+                        action = resume_info.get('action')
+                        scope = resume_info.get('scope')
+                        
+                        if action == 'continue':
+                            # Resume with existing scope
+                            rel_paths = scope['selected_contracts']
+                            contracts_analyzed = len(rel_paths)
+                            self.console.print(f"\n[green]Resuming with saved scope: {scope['total_audited']}/{scope['total_selected']} audited[/green]\n")
+                        
+                        elif action == 'add_contracts':
+                            # User wants to add more contracts
+                            updated_scope = self.scope_manager.handle_add_contracts(scope, contract_info_list)
+                            if updated_scope:
+                                rel_paths = updated_scope['selected_contracts']
+                                contracts_analyzed = len(rel_paths)
+                        
+                        elif action == 'remove_contracts':
+                            # User wants to remove contracts
+                            updated_scope = self.scope_manager.handle_remove_contracts(scope, contract_info_list)
+                            if updated_scope:
+                                rel_paths = updated_scope['selected_contracts']
+                                contracts_analyzed = len(rel_paths)
+                        
+                        elif action == 'reaudit':
+                            # Fresh re-analysis of all selected contracts
+                            updated_scope = self.scope_manager.handle_reaudit(scope)
+                            rel_paths = updated_scope['selected_contracts']
+                            contracts_analyzed = len(rel_paths)
+                        
+                        elif action == 'new_scope':
+                            # Let user create new scope
+                            options.interactive_scope = True
+                        
+                        elif action == 'view_report':
+                            # Show partial report and exit
+                            self.console.print("[bold]📊 Partial Audit Report[/bold]")
+                            self.console.print(f"  Audited: {scope['total_audited']}/{scope['total_selected']}")
+                            self.console.print(f"  Pending: {scope['total_pending']}/{scope['total_selected']}")
+                            return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=scope['total_audited'], findings=findings)
+                        
+                        elif action == 'cancel':
+                            return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[])
                 
-                rel_paths = selected_paths
-                self.console.print(f"[green]Auditing {len(rel_paths)} selected contracts out of {contracts_analyzed} discovered[/green]\n")
-                contracts_analyzed = len(rel_paths)
-            elif options.scope:
-                # Use provided scope list
-                rel_paths = [p for p in rel_paths if p in options.scope]
-                contracts_analyzed = len(rel_paths)
-                self.console.print(f"[green]Auditing {len(rel_paths)} contracts matching scope[/green]\n")
+                # INTERACTIVE SCOPE SELECTION (for first-time users or new scope)
+                if options.interactive_scope and rel_paths:
+                    # Let user select which contracts to audit
+                    selected_paths = self.scope_selector.select_scope(contract_info_list)
+                    if not selected_paths:
+                        self.console.print("[red]No contracts selected. Audit cancelled.[/red]")
+                        return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[])
+                    
+                    # Save scope to database
+                    if project_id is not None:
+                        self.db.save_audit_scope(project_id, selected_paths)
+                    
+                    rel_paths = selected_paths
+                    self.console.print(f"[green]Auditing {len(rel_paths)} selected contracts out of {len(contract_info_list)} discovered[/green]\n")
+                    contracts_analyzed = len(rel_paths)
+                
+                elif options.scope:
+                    # Use provided scope list
+                    rel_paths = [p for p in rel_paths if p in options.scope]
+                    contracts_analyzed = len(rel_paths)
+                    self.console.print(f"[green]Auditing {len(rel_paths)} contracts matching scope[/green]\n")
 
             # Analysis step
             try:
