@@ -542,7 +542,8 @@ class AetherCLI:
         no_cache: bool = False,
         verbose: bool = False,
         dry_run: bool = False,
-        github_token: Optional[str] = None
+        github_token: Optional[str] = None,
+        interactive_scope: bool = False
     ) -> int:
         auditor = GitHubAuditor()
         options = GitHubAuditOptions(
@@ -559,6 +560,7 @@ class AetherCLI:
             verbose=verbose,
             dry_run=dry_run,
             github_token=github_token,
+            interactive_scope=interactive_scope
         )
 
         result = auditor.audit(github_url, options)

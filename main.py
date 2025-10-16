@@ -55,6 +55,7 @@ Examples:
     audit_parser.add_argument('--no-cache', action='store_true', help='Do not cache results [GitHub audit]')
     audit_parser.add_argument('--dry-run', action='store_true', help='Show what would be analyzed, do not analyze [GitHub audit]')
     audit_parser.add_argument('--github-token', help='GitHub token for private repositories [GitHub audit]')
+    audit_parser.add_argument('--interactive-scope', action='store_true', help='Interactively select which contracts to audit (for bug bounty scoping) [GitHub audit]')
 
     # Fuzz command
     fuzz_parser = subparsers.add_parser('fuzz', help='Run dynamic fuzzing and exploit validation')
@@ -194,7 +195,8 @@ Examples:
                     no_cache=args.no_cache,
                     verbose=args.verbose,
                     dry_run=args.dry_run,
-                    github_token=args.github_token
+                    github_token=args.github_token,
+                    interactive_scope=args.interactive_scope
                 )
 
             result = asyncio.run(cli.run_audit(
