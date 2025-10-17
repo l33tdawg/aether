@@ -1567,3 +1567,17 @@ class AetherDatabase:
         except Exception as e:
             self.console.print(f"[red]❌ Failed to retrieve scope history: {e}[/red]")
             return []
+    
+    def close(self) -> None:
+        """Close database connection. This method is called on graceful shutdown."""
+        try:
+            # SQLite connections are automatically closed when the connection object
+            # goes out of scope or is garbage collected, so this is mainly for consistency
+            # with other database managers that might have persistent connections
+            pass
+        except Exception as e:
+            self.console.print(f"[yellow]⚠️  Warning during database close: {e}[/yellow]")
+    
+    def _close(self) -> None:
+        """Alias for close() to support different shutdown protocols."""
+        self.close()

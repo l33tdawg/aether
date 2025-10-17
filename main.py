@@ -12,10 +12,14 @@ from pathlib import Path
 from typing import Optional
 
 from cli.main import AetherCLI
+from core.graceful_shutdown import get_shutdown_handler
 
 
 def main():
     """Main entry point for Aether CLI."""
+    # Set up graceful shutdown handler for Ctrl+C
+    shutdown_handler = get_shutdown_handler()
+    
     parser = argparse.ArgumentParser(
         description="AetherAudit + AetherFuzz: Agentic Smart Contract Auditing & Fuzzing Framework",
         formatter_class=argparse.RawDescriptionHelpFormatter,

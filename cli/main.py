@@ -24,6 +24,7 @@ from utils.file_handler import FileHandler
 from core.llm_foundry_generator import LLMFoundryGenerator
 from core.github_auditor import GitHubAuditor, AuditOptions as GitHubAuditOptions
 from core.audit_result_formatter import AuditResultFormatter
+from core.graceful_shutdown import register_database
 
 
 class AetherCLI:
@@ -546,6 +547,11 @@ class AetherCLI:
         interactive_scope: bool = False
     ) -> int:
         auditor = GitHubAuditor()
+        
+        # Register database for graceful shutdown
+        if hasattr(auditor, 'db') and auditor.db:
+            register_database(auditor.db)
+        
         options = GitHubAuditOptions(
             scope=[s.strip() for s in scope.split(',')] if scope else None,
             min_severity=min_severity,
