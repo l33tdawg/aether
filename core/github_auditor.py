@@ -207,8 +207,8 @@ class GitHubAuditor:
                         'line_count': c.line_count
                     })
                 
-                # Check if there's a saved scope (smart resume)
-                if project_id is not None and not options.interactive_scope and not options.scope:
+                # Check if there's a saved scope (smart resume) - ALWAYS check, regardless of flags
+                if project_id is not None and not options.scope:
                     resume_info = self.scope_manager.detect_and_handle_saved_scope(project_id, contract_info_list)
                     
                     if resume_info:
