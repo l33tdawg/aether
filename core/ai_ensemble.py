@@ -860,9 +860,17 @@ Return only valid JSON, no markdown formatting.
                     parts = ((candidates[0] or {}).get('content') or {}).get('parts') or []
                     if parts and isinstance(parts, list) and 'text' in parts[0]:
                         response_text = parts[0]['text']
+                        logger.debug(f"[Gemini Security] Raw response (first 500 chars): {response_text[:500]}")
                         data = parse_llm_json(response_text, fallback={"findings": []})
                         findings = data.get('findings', [])
-            except Exception:
+                        logger.debug(f"[Gemini Security] Parsed {len(findings)} findings")
+                    else:
+                        logger.warning(f"[Gemini Security] No text in response parts: {parts}")
+                else:
+                    logger.warning(f"[Gemini Security] No candidates in response: {result}")
+            except Exception as e:
+                logger.error(f"[Gemini Security] Error parsing findings: {e}")
+                logger.debug(f"[Gemini Security] Response was: {result}")
                 findings = []
 
             return ModelResult(
@@ -966,9 +974,17 @@ Return only valid JSON, no markdown formatting.
                     parts = ((candidates[0] or {}).get('content') or {}).get('parts') or []
                     if parts and isinstance(parts, list) and 'text' in parts[0]:
                         response_text = parts[0]['text']
+                        logger.debug(f"[Gemini Verifier] Raw response (first 500 chars): {response_text[:500]}")
                         data = parse_llm_json(response_text, fallback={"findings": []})
                         findings = data.get('findings', [])
-            except Exception:
+                        logger.debug(f"[Gemini Verifier] Parsed {len(findings)} findings")
+                    else:
+                        logger.warning(f"[Gemini Verifier] No text in response parts: {parts}")
+                else:
+                    logger.warning(f"[Gemini Verifier] No candidates in response: {result}")
+            except Exception as e:
+                logger.error(f"[Gemini Verifier] Error parsing findings: {e}")
+                logger.debug(f"[Gemini Verifier] Response was: {result}")
                 findings = []
 
             return ModelResult(

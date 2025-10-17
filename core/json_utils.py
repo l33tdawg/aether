@@ -29,17 +29,16 @@ def sanitize_json_string(json_str: str, aggressive: bool = False) -> str:
     if not json_str:
         return "{}"
     
-    # Remove control characters that cause JSON parsing errors
-    # Use the comprehensive regex approach suggested by user
-    
+    # Step 1: Remove control characters that cause JSON parsing errors
     # Convert to bytes and back to remove any encoding issues
     try:
         json_str = json_str.encode('utf-8', errors='ignore').decode('utf-8')
     except:
         pass
     
-    # Remove all control characters (0x00-0x1F) and DEL (0x7F)
-    json_str = re.sub(r'[\x00-\x1F\x7F]', '', json_str)
+    # Remove all control characters (0x00-0x1F) and DEL (0x7F) - THIS IS THE KEY FIX
+    # Gemini returns findings with embedded \x01 characters between items
+    json_str = re.sub(r'[\x00-\x08\x0B-\x1F\x7F]', '', json_str)
 
     # Also strip textual hex-escape sequences that models sometimes emit literally (e.g. "\\x01")
     json_str = re.sub(r'\\x[0-9A-Fa-f]{2}', '', json_str)
@@ -47,57 +46,35 @@ def sanitize_json_string(json_str: str, aggressive: bool = False) -> str:
     # And textual unicode control escapes (e.g. "\\u0001" .. "\\u001F")
     json_str = re.sub(r'\\u00[0-1][0-9A-Fa-f]{2}', '', json_str)
     
-    # Fix malformed JSON arrays by replacing control characters between objects
-    # Pattern: "},\x01}, {" becomes "}, {"
-    json_str = re.sub(r'},\s*},\s*{', '}, {', json_str)
-
-    # Normalize any non-JSON separators between consecutive objects/arrays
-    # e.g., "}\x01}, {" -> "}, {" and "]\x01[" -> "], ["
-    json_str = re.sub(r'}\s*[^{}\[\]]*\s*{', '}, {', json_str)
-    json_str = re.sub(r']\s*[^{}\[\]]*\s*\[', '], [', json_str)
+    # Step 2: Extract JSON from surrounding text
+    # Try to find JSON in code blocks first (object or array)
+    code_block_patterns = [
+        r'```(?:json)?\s*(\{[\s\S]*?\})\s*```',  # Object in code block
+        r'```(?:json)?\s*(\[[\s\S]*?\])\s*```',  # Array in code block
+    ]
     
-    # Clean up any extra whitespace that might have been created
-    json_str = re.sub(r'\s+', ' ', json_str)
+    for pattern in code_block_patterns:
+        code_block_match = re.search(pattern, json_str, re.DOTALL)
+        if code_block_match:
+            return code_block_match.group(1)
     
-    # Extract JSON object from response
-    json_match = re.search(r'\{.*\}', json_str, re.DOTALL)
+    # Try to find JSON object first (prioritize objects with braces)
+    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', json_str, re.DOTALL)
     if json_match:
-        json_str = json_match.group(0)
+        return json_match.group(0)
     
-    # Remove any content before first { and after last }
-    first_brace = json_str.find('{')
-    last_brace = json_str.rfind('}')
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        json_str = json_str[first_brace:last_brace + 1]
+    # Try to find JSON array second (if no object found)
+    array_match = re.search(r'\[.*\]', json_str, re.DOTALL)
+    if array_match:
+        return array_match.group(0)
     
-    # Fix common JSON formatting issues
+    # Step 3: Fix common structural issues ONLY IF NEEDED
     # Remove trailing commas before closing braces/brackets
     json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
     
-    # Fix unterminated strings
-    json_str = re.sub(r'"([^"\\]*)(?=[}\]])', r'"\1"', json_str)
-    
-    # Fix missing commas between objects/arrays
+    # Fix missing commas between objects in arrays
     json_str = re.sub(r'}\s*{', '},{', json_str)
     json_str = re.sub(r']\s*\[', '],[', json_str)
-    
-    # Fix missing commas between key-value pairs (but not between key and value)
-    json_str = re.sub(r'"\s*"([^:])', '","\1', json_str)
-    
-    # Fix missing colons between keys and values
-    json_str = re.sub(r'"\s*"([^,}])', '": "\1', json_str)
-    
-    # Fix common structural issues
-    # Ensure proper spacing around colons
-    json_str = re.sub(r':\s*', ': ', json_str)
-    
-    # Fix missing quotes around values
-    json_str = re.sub(r':\s*([^"{\[\s][^,}\]]*?)(\s*[,}])', r': "\1"\2', json_str)
-    
-    # Fix incomplete strings by ensuring they're properly closed
-    quote_count = json_str.count('"')
-    if quote_count % 2 != 0:
-        json_str = json_str.rstrip() + '"'
     
     # Ensure proper JSON structure
     open_braces = json_str.count('{')
@@ -110,11 +87,6 @@ def sanitize_json_string(json_str: str, aggressive: bool = False) -> str:
         json_str += '}' * (open_braces - close_braces)
     if open_brackets > close_brackets:
         json_str += ']' * (open_brackets - close_brackets)
-
-    if aggressive:
-        # Extra pass in aggressive mode to normalize odd separators again
-        json_str = re.sub(r'}\s*[^{}\[\]]*\s*{', '}, {', json_str)
-        json_str = re.sub(r']\s*[^{}\[\]]*\s*\[', '], [', json_str)
     
     return json_str
 
