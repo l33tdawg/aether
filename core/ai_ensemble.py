@@ -801,36 +801,23 @@ class GeminiSecurityAuditor(BaseAIModel):
                 )
 
             # Create Gemini API prompt for security auditing
-            prompt = f"""
-You are an expert smart contract security auditor specializing in external calls, delegatecall, tx.origin, and unchecked returns.
+            prompt = f"""STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
 
-Focus your analysis on these specific vulnerability types:
-- External calls to untrusted contracts
-- Delegatecall usage and proxy patterns
-- tx.origin usage for authorization
-- Unchecked return values from external calls
+1. Analyze the Solidity contract below for security vulnerabilities
+2. Return ONLY valid JSON - no explanations, no markdown, no text
+3. If no vulnerabilities found, return: {{"findings": []}}
+4. Do NOT include ```json markers or any markdown
+5. Each finding MUST have: type, severity, confidence, description, line, swc_id
 
-Contract to analyze:
+Focus on: external calls, delegatecall, tx.origin, unchecked returns
+
+Contract:
 ```solidity
-{contract_content[:8000]}  # Limit for API constraints
+{contract_content[:8000]}
 ```
 
-Please analyze this contract and return findings in the exact JSON format:
-{{
-    "findings": [
-        {{
-            "type": "vulnerability_type",
-            "severity": "critical|high|medium|low",
-            "confidence": 0.0-1.0,
-            "description": "detailed explanation",
-            "line": line_number,
-            "swc_id": "SWC-XXX"
-        }}
-    ]
-}}
-
-Return only valid JSON, no markdown formatting.
-"""
+Return only this JSON format (nothing else):
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}"""
 
             # Make Gemini API call
             import requests
@@ -934,36 +921,23 @@ class GeminiFormalVerifier(BaseAIModel):
                 )
 
             # Create Gemini API prompt for formal verification
-            prompt = f"""
-You are a formal verification specialist analyzing smart contracts for mathematical correctness and arithmetic vulnerabilities.
+            prompt = f"""STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
 
-Focus your analysis on these specific vulnerability types:
-- Integer overflow and underflow in arithmetic operations
-- Precision loss in division operations
-- Unsafe casting between integer types
-- Mathematical invariants and boundary conditions
+1. Analyze the Solidity contract below for arithmetic and mathematical vulnerabilities
+2. Return ONLY valid JSON - no explanations, no markdown, no text
+3. If no vulnerabilities found, return: {{"findings": []}}
+4. Do NOT include ```json markers or any markdown
+5. Each finding MUST have: type, severity, confidence, description, line, swc_id
 
-Contract to analyze:
+Focus on: integer overflow, underflow, precision loss, unsafe casting, math invariants
+
+Contract:
 ```solidity
-{contract_content[:8000]}  # Limit for API constraints
+{contract_content[:8000]}
 ```
 
-Please analyze this contract and return findings in the exact JSON format:
-{{
-    "findings": [
-        {{
-            "type": "vulnerability_type",
-            "severity": "critical|high|medium|low",
-            "confidence": 0.0-1.0,
-            "description": "detailed explanation",
-            "line": line_number,
-            "swc_id": "SWC-XXX"
-        }}
-    ]
-}}
-
-Return only valid JSON, no markdown formatting.
-"""
+Return only this JSON format (nothing else):
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}"""
 
             # Make Gemini API call
             import requests
