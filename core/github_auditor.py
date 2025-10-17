@@ -71,7 +71,7 @@ class ScopeSelector:
             return []
         
         self.console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
-        self.console.print("[bold cyan]      INTERACTIVE CONTRACT SELECTOR[/bold cyan]")
+        self.console.print("[bold cyan]      AETHER  CONTRACT SELECTOR[/bold cyan]")
         self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n")
         self.console.print(f"[bold]Total contracts discovered: {len(discovered_contracts)}[/bold]")
         self.console.print("[bold cyan]Launching interactive selector... Press arrow keys to navigate[/bold cyan]\n")
