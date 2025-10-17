@@ -322,8 +322,7 @@ class AetherDatabase:
                     modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     last_audited_contract_id INTEGER,
                     metadata TEXT,
-                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                    UNIQUE(project_id, status) WHERE status='active'
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
                 )
             ''')
 
