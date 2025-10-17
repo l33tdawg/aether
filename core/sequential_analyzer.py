@@ -250,7 +250,7 @@ class SequentialAnalyzer:
 
             try:
                 # Display progress: Currently analyzing
-                self.console.print(f"[bold cyan]🔍 {idx}/{len(contract_relative_paths)}: {contract_name}[/bold cyan]", end="", flush=True)
+                self.console.print(f"[bold cyan]🔍 {idx}/{len(contract_relative_paths)}: {contract_name}[/bold cyan]", end="")
                 
                 # Run enhanced audit on the contract
                 results = asyncio.run(enhanced_engine.run_enhanced_audit_with_llm_validation(
