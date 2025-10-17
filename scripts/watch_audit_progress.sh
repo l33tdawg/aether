@@ -1,12 +1,14 @@
 #!/bin/bash
 
-# AETHER AUDIT MONITOR - top-like real-time monitoring for all active audits
+# AETHER AUDIT MONITOR v2 - Advanced Real-Time Monitoring System
+# Polls database for live activity, tracks scopes, findings, and performance
 # Usage: ./watch_audit_progress.sh [refresh_interval]
-# Shows all projects, their scopes, progress, and real-time statistics
 
 DB_PATH="$HOME/.aether/aether_github_audit.db"
-REFRESH_INTERVAL=${1:-2}  # Refresh every N seconds (default: 2)
+REFRESH_INTERVAL=${1:-1}
 RUNNING=true
+LAST_CHECK=0
+LAST_COUNT=0
 
 # Color codes
 RED='\033[0;31m'
@@ -17,278 +19,325 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 WHITE='\033[1;37m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
+DIM='\033[2m'
+NC='\033[0m'
 
 # Trap Ctrl+C to exit gracefully
-trap "RUNNING=false; clear; echo 'Monitor stopped'; exit 0" SIGINT
+trap "RUNNING=false; clear; echo -e '${GREEN}Monitor stopped${NC}'; exit 0" SIGINT
 
-# Get terminal width for dynamic formatting
-get_term_width() {
-    if command -v tput &> /dev/null; then
-        tput cols
-    else
-        echo 120
+# Check if database exists
+check_db() {
+    if [ ! -f "$DB_PATH" ]; then
+        echo -e "${RED}❌ Database not found at $DB_PATH${NC}"
+        exit 1
     fi
-}
-
-# Print centered text
-print_centered() {
-    local text="$1"
-    local width=$(get_term_width)
-    local padding=$(( (width - ${#text}) / 2 ))
-    printf "%${padding}s%s\n" "" "$text"
 }
 
 # Create progress bar
-make_progress_bar() {
-    local completed=$1
+make_bar() {
+    local filled=$1
     local total=$2
-    local width=$3
+    local width=40
     
     if [ $total -eq 0 ]; then
-        printf "[%-${width}s] 0%%\n" ""
+        printf "[%-${width}s] 0/0 (0%%)" ""
         return
     fi
     
-    local percent=$((completed * 100 / total))
-    local filled=$((completed * width / total))
-    local empty=$((width - filled))
+    local percent=$((filled * 100 / total))
+    local bar_filled=$((filled * width / total))
+    local bar_empty=$((width - bar_filled))
     
     local bar="["
-    for ((i=0; i<filled; i++)); do bar+="█"; done
-    for ((i=0; i<empty; i++)); do bar+="░"; done
+    for ((i=0; i<bar_filled; i++)); do bar+="█"; done
+    for ((i=0; i<bar_empty; i++)); do bar+="░"; done
     bar+="]"
     
-    printf "%s %3d%%\n" "$bar" "$percent"
+    printf "%s %d/%d (%d%%)" "$bar" "$filled" "$total" "$percent"
 }
 
-# Header
+# Get database stats with caching
+get_db_stat() {
+    local query="$1"
+    sqlite3 "$DB_PATH" "$query" 2>/dev/null || echo "0"
+}
+
+# Show main header with timestamp and system info
 show_header() {
     clear
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${BOLD}  🔍 AETHER AUDIT MONITOR - top-like Real-Time Activity Monitor${NC}${CYAN}        ║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${BOLD}  🔍 AETHER AUDIT MONITOR - Advanced Real-Time Multi-Project Auditing Dashboard${NC}${CYAN}   ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
     
-    # System time
-    echo -e "${WHITE}$(date '+%A, %B %d, %Y | %H:%M:%S')${NC}"
+    local timestamp=$(date '+%A, %B %d, %Y | %H:%M:%S')
+    local uptime=$(uptime | awk -F'up' '{print $2}' | cut -d',' -f1)
+    echo -e "${WHITE}${timestamp}${NC} | Refresh: ${BOLD}${REFRESH_INTERVAL}s${NC} | ${DIM}Uptime: $(echo $uptime | xargs)${NC}"
     echo ""
 }
 
-# Get all projects with active scopes
-get_active_projects() {
-    sqlite3 "$DB_PATH" \
-        "SELECT DISTINCT p.id, p.url, p.repo_name 
-         FROM projects p 
-         WHERE EXISTS (
-             SELECT 1 FROM audit_scopes WHERE project_id = p.id AND status = 'active'
-         )
-         ORDER BY p.id DESC;" 2>/dev/null
-}
-
-# Show audit scopes for a project
-show_project_audits() {
-    local project_id=$1
-    local repo_name=$2
-    local repo_url=$3
+# Show LIVE project monitoring with scope details
+show_live_projects() {
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${BOLD}  📊 ACTIVE AUDITS - Live Monitoring${NC}${CYAN}                                          ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
     
-    echo -e "${MAGENTA}📦 PROJECT: ${BOLD}$repo_name${NC}${MAGENTA} (ID: $project_id)${NC}"
-    echo -e "${MAGENTA}   URL: $repo_url${NC}"
-    echo ""
+    # Get all projects with active scopes
+    local projects=$(sqlite3 "$DB_PATH" \
+        "SELECT DISTINCT p.id, p.repo_name, p.url, COUNT(DISTINCT s.id) as scope_count
+         FROM projects p
+         LEFT JOIN audit_scopes s ON p.id = s.project_id AND s.status = 'active'
+         WHERE EXISTS (SELECT 1 FROM audit_scopes WHERE project_id = p.id)
+         GROUP BY p.id
+         ORDER BY p.id DESC;" 2>/dev/null)
     
-    # Get scopes for this project
-    local scopes=$(sqlite3 "$DB_PATH" \
-        "SELECT id, total_selected, total_audited, total_pending, created_at 
-         FROM audit_scopes 
-         WHERE project_id = $project_id AND status = 'active'
-         ORDER BY created_at DESC LIMIT 5;" 2>/dev/null)
-    
-    if [ -z "$scopes" ]; then
-        echo -e "${YELLOW}   ⚠️  No active scopes${NC}"
+    if [ -z "$projects" ]; then
+        echo -e "${YELLOW}ℹ️  No audit projects found. Start an audit to see live monitoring.${NC}"
         echo ""
-        return
+        return 1
     fi
     
-    while IFS='|' read -r scope_id total_selected total_audited total_pending created_at; do
-        echo -e "${BLUE}   📋 Scope #$scope_id${NC} (Created: $created_at)"
+    while IFS='|' read -r project_id repo_name url scope_count; do
+        local scope_info=$(sqlite3 "$DB_PATH" \
+            "SELECT id, total_selected, total_audited, total_pending, status, created_at
+             FROM audit_scopes WHERE project_id = $project_id AND status = 'active'
+             ORDER BY modified_at DESC LIMIT 1;" 2>/dev/null)
         
-        # Progress bar
-        printf "      Progress: "
-        make_progress_bar "$total_audited" "$total_selected" 30
+        if [ -z "$scope_info" ]; then
+            continue
+        fi
         
-        # Stats
-        echo -e "      ${GREEN}✅ Audited: $total_audited${NC} | ${YELLOW}⏳ Pending: $total_pending${NC} | ${WHITE}Total: $total_selected${NC}"
+        IFS='|' read -r scope_id total_selected total_audited total_pending scope_status created_at <<< "$scope_info"
         
-        # Findings for this scope
+        # Get findings for this scope
         local findings=$(sqlite3 "$DB_PATH" \
             "SELECT COALESCE(SUM(json_extract(findings, '$.total_findings')), 0)
              FROM analysis_results ar
-             WHERE ar.contract_id IN (
-                 SELECT id FROM contracts WHERE project_id = $project_id
-             )
+             WHERE ar.contract_id IN (SELECT id FROM contracts WHERE project_id = $project_id)
              AND ar.status = 'success';" 2>/dev/null || echo "0")
         
-        echo -e "      ${CYAN}🎯 Total Findings: $findings${NC}"
+        # Get contract statistics
+        local stats=$(sqlite3 "$DB_PATH" \
+            "SELECT 
+                SUM(CASE WHEN ar.status = 'success' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN ar.status = 'failed' THEN 1 ELSE 0 END) as failed_count,
+                SUM(CASE WHEN ar.status = 'skipped' THEN 1 ELSE 0 END) as skipped_count,
+                AVG(ar.analysis_duration_ms) as avg_time
+             FROM analysis_results ar
+             WHERE ar.contract_id IN (SELECT id FROM contracts WHERE project_id = $project_id);" 2>/dev/null)
+        
+        IFS='|' read -r success_count failed_count skipped_count avg_time <<< "$stats"
+        success_count=${success_count:-0}
+        failed_count=${failed_count:-0}
+        skipped_count=${skipped_count:-0}
+        avg_time=${avg_time:-0}
+        
+        # Display project
+        echo -e "${MAGENTA}📦 ${BOLD}$repo_name${NC}${MAGENTA} (Scope #$scope_id)${NC}"
+        echo -e "   ${DIM}URL: $url${NC}"
+        echo -e "   ${DIM}Created: $created_at${NC}"
         echo ""
-    done <<< "$scopes"
+        
+        # Scope progress with detailed bar
+        echo -e "   ${BLUE}Scope Progress:${NC}"
+        echo -n "   "
+        make_bar "$total_audited" "$total_selected"
+        echo ""
+        echo ""
+        
+        # Detailed statistics
+        echo -e "   ${BLUE}Analysis Status:${NC}"
+        echo -e "      ${GREEN}✅ Successful: $success_count${NC} | ${RED}❌ Failed: $failed_count${NC} | ${YELLOW}⏭️ Skipped: $skipped_count${NC}"
+        
+        # Performance
+        if [ "$avg_time" != "0" ] && [ "$avg_time" != "" ]; then
+            avg_sec=$(printf "%.2f" $(echo "scale=2; $avg_time/1000" | bc))
+            echo -e "      ⏱️  Avg Time: ${avg_sec}s"
+        fi
+        
+        # Findings
+        echo -e "   ${CYAN}🎯 Total Findings: $findings${NC}"
+        echo -e "   ${YELLOW}Progress: ${BOLD}$total_audited/$total_selected${NC}${YELLOW} audited | ${BOLD}$total_pending${NC}${YELLOW} pending${NC}"
+        echo ""
+        
+    done <<< "$projects"
+    
+    return 0
 }
 
-# Show global analysis statistics
-show_global_stats() {
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${BOLD}  📊 GLOBAL ANALYSIS STATISTICS${NC}${CYAN}                                         ║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+# Show LIVE contract analysis being performed
+show_live_analysis() {
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${BOLD}  ⚡ LIVE ANALYSIS - Recently Updated Contracts${NC}${CYAN}                               ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
     
-    local successful=$(sqlite3 "$DB_PATH" \
-        "SELECT COUNT(*) FROM analysis_results WHERE status='success';" 2>/dev/null || echo "0")
-    
-    local failed=$(sqlite3 "$DB_PATH" \
-        "SELECT COUNT(*) FROM analysis_results WHERE status='failed';" 2>/dev/null || echo "0")
-    
-    local skipped=$(sqlite3 "$DB_PATH" \
-        "SELECT COUNT(*) FROM analysis_results WHERE status='skipped';" 2>/dev/null || echo "0")
-    
-    local cached=$(sqlite3 "$DB_PATH" \
-        "SELECT COUNT(*) FROM analysis_results WHERE status='cached';" 2>/dev/null || echo "0")
-    
-    local total=$((successful + failed + skipped + cached))
-    
-    local total_findings=$(sqlite3 "$DB_PATH" \
-        "SELECT COALESCE(SUM(json_extract(findings, '$.total_findings')), 0) 
-         FROM analysis_results WHERE status='success';" 2>/dev/null || echo "0")
-    
-    echo -e "${GREEN}  ✅ Successful: $successful${NC} | ${RED}❌ Failed: $failed${NC} | ${YELLOW}⏭️  Skipped: $skipped${NC} | ${CYAN}⚡ Cached: $cached${NC}"
-    echo -e "${WHITE}  📈 Total Processed: $total${NC} | ${MAGENTA}🎯 Total Findings: $total_findings${NC}"
-    echo ""
-}
-
-# Show recently analyzed contracts
-show_recent_activity() {
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${BOLD}  📝 RECENT ACTIVITY (Last 10 Contracts)${NC}${CYAN}                              ║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
-    
-    sqlite3 "$DB_PATH" \
-        "SELECT c.file_path, ar.status, json_extract(ar.findings, '$.total_findings') as findings, 
-                printf('%.1f', ar.analysis_duration_ms/1000.0) as duration, ar.created_at
+    # Get contracts updated in last 60 seconds
+    local recent=$(sqlite3 "$DB_PATH" \
+        "SELECT c.file_path, ar.status, 
+                json_extract(ar.findings, '$.total_findings') as findings, 
+                printf('%.1f', ar.analysis_duration_ms/1000.0) as duration,
+                ar.created_at,
+                p.repo_name
          FROM analysis_results ar
          JOIN contracts c ON ar.contract_id = c.id
+         JOIN projects p ON c.project_id = p.id
          WHERE ar.analysis_type='enhanced'
+         AND datetime(ar.created_at) > datetime('now', '-60 seconds')
          ORDER BY ar.created_at DESC
-         LIMIT 10;" 2>/dev/null | nl -w2 -s'. ' | while read num line; do
-        
-        IFS='|' read -r contract_path status findings duration timestamp <<< "$line"
+         LIMIT 15;" 2>/dev/null)
+    
+    if [ -z "$recent" ]; then
+        echo -e "${DIM}   (No recent activity in the last minute)${NC}"
+        echo ""
+        return
+    fi
+    
+    local count=1
+    while IFS='|' read -r contract_path status findings duration timestamp repo_name; do
         contract_name=$(basename "$contract_path")
         
         case "$status" in
             "success")
                 if [ "$findings" != "0" ] && [ "$findings" != "" ]; then
-                    echo -e "  ${GREEN}✅${NC} $num. $contract_name ${MAGENTA}($findings findings)${NC} ${YELLOW}(${duration}s)${NC} @ ${CYAN}$timestamp${NC}"
+                    echo -e "   ${GREEN}✅${NC} $count. ${BOLD}$contract_name${NC} from $repo_name"
+                    echo -e "      ${MAGENTA}→ $findings findings${NC} ${DIM}(${duration}s) @ $timestamp${NC}"
                 else
-                    echo -e "  ${GREEN}✅${NC} $num. $contract_name ${WHITE}(clean)${NC} ${YELLOW}(${duration}s)${NC} @ ${CYAN}$timestamp${NC}"
+                    echo -e "   ${GREEN}✅${NC} $count. ${BOLD}$contract_name${NC} from $repo_name"
+                    echo -e "      ${WHITE}→ clean${NC} ${DIM}(${duration}s) @ $timestamp${NC}"
                 fi
                 ;;
             "skipped")
-                echo -e "  ${YELLOW}⏭️${NC} $num. $contract_name ${WHITE}(skipped)${NC} ${YELLOW}(${duration}s)${NC} @ ${CYAN}$timestamp${NC}"
+                echo -e "   ${YELLOW}⏭️${NC} $count. ${BOLD}$contract_name${NC} from $repo_name ${DIM}(skipped)${NC}"
                 ;;
             "failed")
-                echo -e "  ${RED}❌${NC} $num. $contract_name ${WHITE}(failed)${NC} ${YELLOW}(${duration}s)${NC} @ ${CYAN}$timestamp${NC}"
+                echo -e "   ${RED}❌${NC} $count. ${BOLD}$contract_name${NC} from $repo_name ${DIM}(failed)${NC}"
                 ;;
             "cached")
-                echo -e "  ${CYAN}⚡${NC} $num. $contract_name ${WHITE}(cached)${NC} ${YELLOW}(${duration}s)${NC} @ ${CYAN}$timestamp${NC}"
+                echo -e "   ${CYAN}⚡${NC} $count. ${BOLD}$contract_name${NC} from $repo_name ${DIM}(cached)${NC}"
                 ;;
         esac
-    done
+        
+        count=$((count + 1))
+    done <<< "$recent"
+    
     echo ""
 }
 
-# Show error summary
+# Show GLOBAL statistics across all audits
+show_global_stats() {
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${BOLD}  📈 GLOBAL STATISTICS - All Projects Combined${NC}${CYAN}                                 ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    
+    local successful=$(get_db_stat "SELECT COUNT(*) FROM analysis_results WHERE status='success';")
+    local failed=$(get_db_stat "SELECT COUNT(*) FROM analysis_results WHERE status='failed';")
+    local skipped=$(get_db_stat "SELECT COUNT(*) FROM analysis_results WHERE status='skipped';")
+    local cached=$(get_db_stat "SELECT COUNT(*) FROM analysis_results WHERE status='cached';")
+    local total=$((successful + failed + skipped + cached))
+    
+    local findings=$(get_db_stat "SELECT COALESCE(SUM(json_extract(findings, '$.total_findings')), 0) FROM analysis_results WHERE status='success';")
+    
+    echo -e "   ${GREEN}✅ Successful: $successful${NC} | ${RED}❌ Failed: $failed${NC} | ${YELLOW}⏭️  Skipped: $skipped${NC} | ${CYAN}⚡ Cached: $cached${NC}"
+    echo -e "   ${WHITE}📈 Total Contracts: $total${NC} | ${MAGENTA}🎯 Total Findings: $findings${NC}"
+    echo ""
+}
+
+# Show ERRORS and FAILURES with details
 show_errors() {
-    local error_count=$(sqlite3 "$DB_PATH" \
-        "SELECT COUNT(*) FROM analysis_results WHERE status='failed';" 2>/dev/null || echo "0")
+    local error_count=$(get_db_stat "SELECT COUNT(*) FROM analysis_results WHERE status='failed';")
     
     if [ "$error_count" -gt 0 ]; then
-        echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║${BOLD}  ${RED}⚠️  ERRORS & FAILURES ($error_count total)${NC}${CYAN}                                   ║${NC}"
-        echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+        echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║${BOLD}  ${RED}⚠️  ERRORS & FAILURES (${error_count} total)${NC}${CYAN}                                           ║${NC}"
+        echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
         
         sqlite3 "$DB_PATH" \
-            "SELECT c.file_path, ar.error_log 
+            "SELECT c.file_path, ar.error_log, ar.created_at, p.repo_name
              FROM analysis_results ar
              JOIN contracts c ON ar.contract_id = c.id
+             JOIN projects p ON c.project_id = p.id
              WHERE ar.status='failed'
              ORDER BY ar.created_at DESC
-             LIMIT 5;" 2>/dev/null | while read -r line; do
+             LIMIT 8;" 2>/dev/null | nl -w2 -s'. ' | while read num line; do
             
-            IFS='|' read -r contract_path error <<< "$line"
+            IFS='|' read -r contract_path error timestamp repo_name <<< "$line"
             contract_name=$(basename "$contract_path")
             
-            echo -e "  ${RED}❌${NC} $contract_name"
+            echo -e "   ${RED}❌${NC} $num. ${BOLD}$contract_name${NC} from $repo_name"
             if [ -n "$error" ]; then
-                error_short="${error:0:70}"
-                echo -e "     ${YELLOW}→ ${error_short}...${NC}"
+                error_short="${error:0:75}"
+                echo -e "      ${YELLOW}→ ${error_short}...${NC}"
             fi
+            echo -e "      ${DIM}@ $timestamp${NC}"
         done
         echo ""
     fi
 }
 
-# Show performance metrics
+# Show PERFORMANCE metrics
 show_performance() {
-    local avg_time=$(sqlite3 "$DB_PATH" \
-        "SELECT COALESCE(AVG(analysis_duration_ms), 0) 
-         FROM analysis_results WHERE status='success';" 2>/dev/null || echo "0")
+    local stats=$(sqlite3 "$DB_PATH" \
+        "SELECT 
+            COALESCE(AVG(analysis_duration_ms), 0) as avg_time,
+            COALESCE(MIN(analysis_duration_ms), 0) as min_time,
+            COALESCE(MAX(analysis_duration_ms), 0) as max_time,
+            COUNT(*) as total_analyzed
+         FROM analysis_results 
+         WHERE status='success';" 2>/dev/null)
     
-    local min_time=$(sqlite3 "$DB_PATH" \
-        "SELECT COALESCE(MIN(analysis_duration_ms), 0) 
-         FROM analysis_results WHERE status='success';" 2>/dev/null || echo "0")
+    IFS='|' read -r avg_time min_time max_time total_analyzed <<< "$stats"
     
-    local max_time=$(sqlite3 "$DB_PATH" \
-        "SELECT COALESCE(MAX(analysis_duration_ms), 0) 
-         FROM analysis_results WHERE status='success';" 2>/dev/null || echo "0")
-    
-    if [ "$avg_time" != "0" ]; then
-        echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║${BOLD}  ⏱️  PERFORMANCE METRICS${NC}${CYAN}                                               ║${NC}"
-        echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+    if [ "$total_analyzed" -gt 0 ]; then
+        echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║${BOLD}  ⏱️  PERFORMANCE METRICS${NC}${CYAN}                                                        ║${NC}"
+        echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
         
-        printf "  Average: %.2fs | Minimum: %.2fs | Maximum: %.2fs\n" \
-            $(echo "scale=2; $avg_time/1000" | bc) \
-            $(echo "scale=2; $min_time/1000" | bc) \
-            $(echo "scale=2; $max_time/1000" | bc)
+        avg_sec=$(printf "%.2f" $(echo "scale=2; $avg_time/1000" | bc))
+        min_sec=$(printf "%.2f" $(echo "scale=2; $min_time/1000" | bc))
+        max_sec=$(printf "%.2f" $(echo "scale=2; $max_time/1000" | bc))
+        
+        echo -e "   Average Time: ${BOLD}${avg_sec}s${NC} | Minimum: ${GREEN}${min_sec}s${NC} | Maximum: ${YELLOW}${max_sec}s${NC} | Total Analyzed: ${BOLD}$total_analyzed${NC}"
         echo ""
     fi
+}
+
+# Show overall audit summary
+show_summary() {
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${BOLD}  📋 AUDIT SUMMARY${NC}${CYAN}                                                               ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    
+    local active_scopes=$(get_db_stat "SELECT COUNT(*) FROM audit_scopes WHERE status='active';")
+    local completed_scopes=$(get_db_stat "SELECT COUNT(*) FROM audit_scopes WHERE status='completed';")
+    local projects=$(get_db_stat "SELECT COUNT(DISTINCT id) FROM projects;")
+    
+    echo -e "   Active Scopes: ${BOLD}$active_scopes${NC} | Completed Scopes: ${BOLD}$completed_scopes${NC} | Total Projects: ${BOLD}$projects${NC}"
+    echo ""
 }
 
 # Footer with controls
 show_footer() {
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║  ${BOLD}Press Ctrl+C to exit${NC}${CYAN} | Refresh interval: ${BOLD}${REFRESH_INTERVAL}s${NC}${CYAN}                           ║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  ${BOLD}Press Ctrl+C to exit${NC}${CYAN} | Polling Interval: ${BOLD}${REFRESH_INTERVAL}s${NC}${CYAN} | DB: ${BOLD}$DB_PATH${NC}${CYAN}   ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
 }
 
 # Main monitoring loop
+check_db
+
 while $RUNNING; do
     show_header
     show_global_stats
     
-    # Get all active projects
-    local projects=$(get_active_projects)
-    
-    if [ -z "$projects" ]; then
-        echo -e "${YELLOW}ℹ️  No active audit scopes found. Start an audit to see progress here.${NC}"
+    if ! show_live_projects; then
+        echo -e "${YELLOW}No active audits running${NC}"
         echo ""
-    else
-        # Show each project's audits
-        while IFS='|' read -r project_id repo_name repo_url; do
-            show_project_audits "$project_id" "$repo_name" "$repo_url"
-        done <<< "$projects"
     fi
     
-    show_recent_activity
+    show_live_analysis
     show_errors
     show_performance
+    show_summary
     show_footer
     
-    # Wait for next refresh
     sleep "$REFRESH_INTERVAL"
 done
