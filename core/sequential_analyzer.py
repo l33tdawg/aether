@@ -312,14 +312,30 @@ class SequentialAnalyzer:
             'analysis_types': []
         }
 
-        # Extract vulnerabilities from audit results
-        if 'audit' in results and 'vulnerabilities' in results['audit']:
-            for vuln in results['audit']['vulnerabilities']:
+        # Try multiple paths where vulnerabilities might be stored
+        vulnerabilities = []
+        
+        # Check results['results']['vulnerabilities'] (new format from enhanced audit engine)
+        if 'results' in results and isinstance(results['results'], dict) and 'vulnerabilities' in results['results']:
+            vulnerabilities = results['results']['vulnerabilities']
+        # Check results['audit']['vulnerabilities'] (legacy format)
+        elif 'audit' in results and isinstance(results['audit'], dict) and 'vulnerabilities' in results['audit']:
+            vulnerabilities = results['audit']['vulnerabilities']
+        # Check results['vulnerabilities'] directly
+        elif 'vulnerabilities' in results and isinstance(results['vulnerabilities'], list):
+            vulnerabilities = results['vulnerabilities']
+        # Check results['llm_validation_results'] (another possible location)
+        elif 'llm_validation_results' in results and isinstance(results['llm_validation_results'], list):
+            vulnerabilities = results['llm_validation_results']
+        
+        # Extract vulnerabilities from wherever they are
+        for vuln in vulnerabilities:
+            if isinstance(vuln, dict):
                 findings['vulnerabilities'].append({
                     'type': vuln.get('title', vuln.get('vulnerability_type', 'Unknown')),
                     'severity': vuln.get('severity', 'unknown'),
                     'description': vuln.get('description', ''),
-                    'line': vuln.get('line', 0),
+                    'line': vuln.get('line', vuln.get('line_number', 0)),
                     'confidence': vuln.get('confidence', 0.0)
                 })
 
@@ -333,7 +349,7 @@ class SequentialAnalyzer:
         # Add analysis types
         if 'audit' in results:
             findings['analysis_types'].append('enhanced_audit')
-        if 'validation' in results:
+        if 'validation' in results or 'llm_validation' in results:
             findings['analysis_types'].append('llm_validation')
 
         return findings
