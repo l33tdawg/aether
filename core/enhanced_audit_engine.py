@@ -157,6 +157,13 @@ class EnhancedAetherAuditEngine:
         all_vulnerabilities = []
         total_lines = 0
         
+        # STAGE 1: Run Slither static analysis
+        print("   📊 Running Slither static analysis...")
+        slither_findings = self._run_slither_analysis(contract_files)
+        all_vulnerabilities.extend(slither_findings)
+        
+        # STAGE 2: Run our enhanced pattern-based detectors
+        print("   🔎 Running enhanced pattern-based detectors...")
         for contract_file in contract_files:
             content = contract_file['content']
             total_lines += len(content.split('\n'))
@@ -198,6 +205,47 @@ class EnhancedAetherAuditEngine:
             'contract_count': len(contract_files),
             'statistics': self.stats.copy()
         }
+
+    def _run_slither_analysis(self, contract_files: List[Dict[str, Any]]) -> List[Any]:
+        """Run Slither static analysis on contract files."""
+        try:
+            from core.vulnerability_detector import SlitherIntegration
+            slither = SlitherIntegration()
+            
+            if not slither.slither_available:
+                print("   ⚠️  Slither not available, skipping Slither analysis")
+                return []
+            
+            all_findings = []
+            for contract_file in contract_files:
+                try:
+                    # For now, we'll create temporary files for Slither analysis
+                    # In a real scenario, we'd pass the file path directly
+                    import tempfile
+                    from pathlib import Path
+                    
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
+                        f.write(contract_file['content'])
+                        temp_path = f.name
+                    
+                    try:
+                        findings = slither.analyze_with_slither(temp_path)
+                        all_findings.extend(findings)
+                        if findings:
+                            print(f"   ✅ Slither found {len(findings)} issues in {contract_file['name']}")
+                    finally:
+                        # Clean up temporary file
+                        Path(temp_path).unlink(missing_ok=True)
+                
+                except Exception as e:
+                    print(f"   ⚠️  Slither analysis failed for {contract_file['name']}: {e}")
+                    continue
+            
+            return all_findings
+        
+        except Exception as e:
+            print(f"   ⚠️  Could not run Slither analysis: {e}")
+            return []
 
     def _extract_code_snippet(self, contract_content: str, line_number: int, context_lines: int = 5) -> str:
         """Extract code snippet around a specific line number for LLM verification."""

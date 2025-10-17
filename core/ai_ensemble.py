@@ -846,8 +846,7 @@ Return only this JSON format (nothing else):
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                     if attempt < max_retries - 1:
                         logger.warning(f"[Gemini Security] Timeout on attempt {attempt + 1}/{max_retries}, retrying...")
-                        import time
-                        time.sleep(2)  # Wait before retry
+                        time.sleep(2)  # Wait before retry (use module-level time import)
                     else:
                         logger.error(f"[Gemini Security] Timeout after {max_retries} attempts: {e}")
                         return ModelResult(
@@ -985,8 +984,7 @@ Return only this JSON format (nothing else):
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                     if attempt < max_retries - 1:
                         logger.warning(f"[Gemini Verifier] Timeout on attempt {attempt + 1}/{max_retries}, retrying...")
-                        import time
-                        time.sleep(2)  # Wait before retry
+                        time.sleep(2)  # Wait before retry (use module-level time import)
                     else:
                         logger.error(f"[Gemini Verifier] Timeout after {max_retries} attempts: {e}")
                         return ModelResult(
