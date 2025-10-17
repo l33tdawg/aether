@@ -8,6 +8,7 @@ Handles scope persistence, detection, and resume options for bug bounty audits.
 from typing import Dict, List, Optional, Any
 from rich.console import Console
 from pathlib import Path
+import curses
 
 from core.database_manager import AetherDatabase
 
@@ -18,6 +19,129 @@ class ScopeManager:
     def __init__(self, db: Optional[AetherDatabase] = None):
         self.console = Console()
         self.db = db or AetherDatabase()
+    
+    def interactive_select(self, items: List[Dict[str, Any]]) -> List[int]:
+        """
+        Interactive multi-select using curses with arrow keys and spacebar.
+        
+        Args:
+            items: List of dicts with 'file_path' and 'contract_name' keys
+            
+        Returns:
+            List of selected indices
+        """
+        try:
+            return curses.wrapper(self._curses_select, items)
+        except KeyboardInterrupt:
+            self.console.print("\n[yellow]Selection cancelled[/yellow]")
+            return []
+        except Exception as e:
+            self.console.print(f"[red]Selection error: {e}[/red]")
+            return []
+    
+    def _curses_select(self, stdscr, items: List[Dict[str, Any]]) -> List[int]:
+        """Curses-based interactive selector."""
+        curses.curs_set(0)  # Hide cursor
+        selected = [False] * len(items)
+        position = 0
+        
+        # Color pairs
+        curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Highlight
+        curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Selected
+        curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)   # Info
+        
+        while True:
+            stdscr.clear()
+            height, width = stdscr.getmaxyx()
+            
+            # Draw header
+            header = "📋 SELECT CONTRACTS TO AUDIT (Use ↑↓ arrows, SPACE to toggle, ENTER to confirm)"
+            stdscr.addstr(0, 0, header[:width], curses.color_pair(3) | curses.A_BOLD)
+            
+            # Draw instructions
+            instructions = "Selected: {} / {}  |  [q]uit without selecting".format(
+                sum(selected), len(items)
+            )
+            stdscr.addstr(1, 0, instructions[:width], curses.color_pair(3))
+            
+            # Draw separator
+            stdscr.addstr(2, 0, "─" * width, curses.color_pair(3))
+            
+            # Draw items
+            start_row = 3
+            max_visible = height - 6
+            
+            # Calculate scroll position
+            scroll_offset = max(0, min(position - max_visible // 2, len(items) - max_visible))
+            
+            for i, item in enumerate(items[scroll_offset:scroll_offset + max_visible]):
+                actual_index = i + scroll_offset
+                row = start_row + i
+                
+                file_path = item.get('file_path', '')
+                contract_name = item.get('contract_name', 'Unknown')
+                
+                # Format the line
+                checkbox = "✓" if selected[actual_index] else " "
+                is_current = (actual_index == position)
+                
+                line = f"[{checkbox}] [{actual_index:3d}] {file_path:<50} ({contract_name})"
+                line = line[:width - 1]  # Trim to screen width
+                
+                # Apply styling
+                if is_current:
+                    attr = curses.color_pair(1) | curses.A_BOLD
+                elif selected[actual_index]:
+                    attr = curses.color_pair(2)
+                else:
+                    attr = curses.A_NORMAL
+                
+                stdscr.addstr(row, 0, line, attr)
+            
+            # Draw footer
+            footer_row = height - 1
+            footer = "[↑/↓] Move | [SPACE] Toggle | [ENTER] Confirm | [Q] Quit"
+            stdscr.addstr(footer_row, 0, footer[:width], curses.color_pair(3))
+            
+            stdscr.refresh()
+            
+            # Handle input
+            try:
+                key = stdscr.getch()
+                
+                if key == ord('q') or key == ord('Q'):
+                    return []
+                
+                elif key == ord(' '):  # Spacebar
+                    selected[position] = not selected[position]
+                
+                elif key == curses.KEY_UP:
+                    position = (position - 1) % len(items)
+                
+                elif key == curses.KEY_DOWN:
+                    position = (position + 1) % len(items)
+                
+                elif key == curses.KEY_HOME:
+                    position = 0
+                
+                elif key == curses.KEY_END:
+                    position = len(items) - 1
+                
+                elif key == ord('\n'):  # Enter/Return
+                    if sum(selected) == 0:
+                        self.console.print("[red]Please select at least one contract[/red]")
+                        stdscr.getch()  # Wait for user
+                        continue
+                    return [i for i, s in enumerate(selected) if s]
+                
+                elif key == ord('a') or key == ord('A'):  # Select all
+                    selected = [True] * len(items)
+                
+                elif key == ord('n') or key == ord('N'):  # Select none
+                    selected = [False] * len(items)
+                
+            except KeyboardInterrupt:
+                return []
     
     def detect_and_handle_saved_scope(self, project_id: int, all_discovered_contracts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """

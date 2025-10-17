@@ -50,12 +50,15 @@ class AuditResult:
 class ScopeSelector:
     """Interactive tool to select which contracts should be audited (for bug bounty scope)."""
     
-    def __init__(self):
+    def __init__(self, scope_manager: Optional['ScopeManager'] = None):
         self.console = Console()
+        from core.scope_manager import ScopeManager
+        self.scope_manager = scope_manager or ScopeManager()
     
     def select_scope(self, discovered_contracts: List[Dict[str, Any]]) -> List[str]:
         """
         Present list of discovered contracts and allow user to select which ones to audit.
+        Uses interactive curses-based selection with arrow keys and spacebar.
         
         Args:
             discovered_contracts: List of contract info dicts with 'file_path' and optional 'contract_name'
@@ -68,88 +71,23 @@ class ScopeSelector:
             return []
         
         self.console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
-        self.console.print("[bold cyan]      AUDIT SCOPE SELECTOR - Bug Bounty Target Selection[/bold cyan]")
+        self.console.print("[bold cyan]      INTERACTIVE CONTRACT SELECTOR[/bold cyan]")
         self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n")
+        self.console.print(f"[bold]Total contracts discovered: {len(discovered_contracts)}[/bold]")
+        self.console.print("[bold cyan]Launching interactive selector... Press arrow keys to navigate[/bold cyan]\n")
         
-        self.console.print(f"[bold]Total contracts discovered: {len(discovered_contracts)}[/bold]\n")
+        # Use the interactive curses-based selector
+        selected_indices = self.scope_manager.interactive_select(discovered_contracts)
         
-        # Group contracts by directory
-        contracts_by_dir = {}
-        for i, contract in enumerate(discovered_contracts):
-            file_path = contract.get('file_path', '')
-            dir_name = str(Path(file_path).parent)
-            if dir_name not in contracts_by_dir:
-                contracts_by_dir[dir_name] = []
-            contracts_by_dir[dir_name].append((i, contract))
+        if not selected_indices:
+            self.console.print("[yellow]No contracts selected. Audit cancelled.[/yellow]")
+            return []
         
-        # Display organized list
-        selected_indices = set()
-        for dir_name, contracts in sorted(contracts_by_dir.items()):
-            self.console.print(f"\n[bold yellow]📁 {dir_name}[/bold yellow]")
-            for idx, (orig_idx, contract) in enumerate(contracts):
-                contract_name = contract.get('contract_name', 'Unknown')
-                file_name = Path(contract.get('file_path', '')).name
-                self.console.print(f"   [{orig_idx:3d}] {file_name:<30} (contract: {contract_name})")
+        # Show summary
+        selected_indices_set = set(selected_indices)
+        self._show_selection_summary(discovered_contracts, selected_indices_set)
         
-        self.console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
-        self.console.print("[bold]SELECTION OPTIONS:[/bold]")
-        self.console.print("  • Enter comma-separated indices: 0,1,2,5 (audit these)")
-        self.console.print("  • Enter 'all' to audit all contracts")
-        self.console.print("  • Enter 'none' to cancel audit")
-        self.console.print("  • Enter pattern like 'src/' to select by directory")
-        self.console.print("  • Enter 'exclude:test' to audit all except test contracts")
-        self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n")
-        
-        while True:
-            try:
-                user_input = self.console.input("[bold green]Select contracts to audit: [/bold green]").strip()
-                
-                if user_input.lower() == 'none':
-                    self.console.print("[yellow]Audit cancelled[/yellow]")
-                    return []
-                
-                if user_input.lower() == 'all':
-                    selected_indices = set(range(len(discovered_contracts)))
-                    self._show_selection_summary(discovered_contracts, selected_indices)
-                    return [discovered_contracts[i].get('file_path', '') for i in selected_indices]
-                
-                if user_input.lower().startswith('exclude:'):
-                    pattern = user_input.replace('exclude:', '').strip()
-                    selected_indices = set()
-                    for i, contract in enumerate(discovered_contracts):
-                        if pattern.lower() not in contract.get('file_path', '').lower():
-                            selected_indices.add(i)
-                    self._show_selection_summary(discovered_contracts, selected_indices)
-                    return [discovered_contracts[i].get('file_path', '') for i in selected_indices]
-                
-                if '/' in user_input and not ',' in user_input:
-                    # Directory pattern selection
-                    pattern = user_input.lower()
-                    selected_indices = set()
-                    for i, contract in enumerate(discovered_contracts):
-                        if pattern in contract.get('file_path', '').lower():
-                            selected_indices.add(i)
-                    if not selected_indices:
-                        self.console.print(f"[red]No contracts found matching pattern: {pattern}[/red]")
-                        continue
-                    self._show_selection_summary(discovered_contracts, selected_indices)
-                    return [discovered_contracts[i].get('file_path', '') for i in selected_indices]
-                
-                # Parse comma-separated indices
-                indices = [int(x.strip()) for x in user_input.split(',')]
-                if not all(0 <= i < len(discovered_contracts) for i in indices):
-                    self.console.print(f"[red]Invalid index. Valid range: 0-{len(discovered_contracts)-1}[/red]")
-                    continue
-                
-                selected_indices = set(indices)
-                self._show_selection_summary(discovered_contracts, selected_indices)
-                return [discovered_contracts[i].get('file_path', '') for i in sorted(selected_indices)]
-            
-            except ValueError:
-                self.console.print("[red]Invalid input. Please enter comma-separated numbers or use commands (all/none/exclude:pattern)[/red]")
-            except KeyboardInterrupt:
-                self.console.print("\n[yellow]Audit cancelled[/yellow]")
-                return []
+        return [discovered_contracts[i].get('file_path', '') for i in sorted(selected_indices)]
     
     def _show_selection_summary(self, contracts: List[Dict[str, Any]], indices: set) -> None:
         """Display summary of selected contracts."""
