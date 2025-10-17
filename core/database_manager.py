@@ -1581,3 +1581,73 @@ class AetherDatabase:
     def _close(self) -> None:
         """Alias for close() to support different shutdown protocols."""
         self.close()
+    
+    def recalculate_scope_progress(self, scope_id: int) -> Dict[str, int]:
+        """
+        Recalculate audit progress for a scope by checking which selected contracts
+        have actually been analyzed in the database.
+        
+        Args:
+            scope_id: The audit scope ID
+            
+        Returns:
+            Dict with keys: total_selected, total_audited, total_pending, last_audited_contract_id
+        """
+        try:
+            with self._connect() as conn:
+                # Get the scope and its selected contracts
+                cursor = conn.execute(
+                    'SELECT selected_contracts FROM audit_scopes WHERE id = ?',
+                    (scope_id,)
+                )
+                scope_row = cursor.fetchone()
+                if not scope_row:
+                    return {'total_selected': 0, 'total_audited': 0, 'total_pending': 0}
+                
+                selected_contracts = json.loads(scope_row[0])
+                total_selected = len(selected_contracts)
+                
+                # Get all contracts with their analysis status
+                cursor = conn.execute('''
+                    SELECT c.id, c.file_path, ar.status
+                    FROM contracts c
+                    LEFT JOIN analysis_results ar ON c.id = ar.contract_id AND ar.status = 'success'
+                ''')
+                
+                # Build a map of file_path -> (contract_id, analyzed)
+                path_to_status = {}
+                for row in cursor.fetchall():
+                    contract_id = row[0]
+                    file_path = row[1]
+                    has_success = row[2] is not None  # Has 'success' status
+                    path_to_status[file_path] = (contract_id, has_success)
+                
+                # Count how many selected contracts have been analyzed
+                total_audited = 0
+                last_audited_id = None
+                for path in selected_contracts:
+                    if path in path_to_status:
+                        contract_id, analyzed = path_to_status[path]
+                        if analyzed:
+                            total_audited += 1
+                            last_audited_id = contract_id
+                
+                total_pending = total_selected - total_audited
+                
+                # Update the scope record with actual progress
+                conn.execute('''
+                    UPDATE audit_scopes
+                    SET total_audited = ?, total_pending = ?, last_audited_contract_id = ?
+                    WHERE id = ?
+                ''', (total_audited, total_pending, last_audited_id, scope_id))
+                conn.commit()
+                
+                return {
+                    'total_selected': total_selected,
+                    'total_audited': total_audited,
+                    'total_pending': total_pending,
+                    'last_audited_contract_id': last_audited_id
+                }
+        except Exception as e:
+            self.console.print(f"[yellow]⚠️  Warning: Could not recalculate scope progress: {e}[/yellow]")
+            return {'total_selected': 0, 'total_audited': 0, 'total_pending': 0}

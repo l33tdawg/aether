@@ -217,6 +217,13 @@ class GitHubAuditor:
                         scope = resume_info.get('scope')
                         resume_scope_processed = True  # Mark that resume was processed
                         
+                        # Recalculate actual progress from database
+                        if scope.get('id'):
+                            progress = self.db.recalculate_scope_progress(scope['id'])
+                            scope['total_audited'] = progress['total_audited']
+                            scope['total_pending'] = progress['total_pending']
+                            scope['total_selected'] = progress['total_selected']
+                        
                         if action == 'continue':
                             # Resume with existing scope
                             rel_paths = scope['selected_contracts']
