@@ -836,8 +836,27 @@ Return only this JSON format (nothing else):
                 }
             }
 
-            response = requests.post(url, json=payload, timeout=30)
-            response.raise_for_status()
+            # Gemini API can be slow, use longer timeout (60 seconds) with retry logic
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(url, json=payload, timeout=60)
+                    response.raise_for_status()
+                    break  # Success, exit retry loop
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"[Gemini Security] Timeout on attempt {attempt + 1}/{max_retries}, retrying...")
+                        import time
+                        time.sleep(2)  # Wait before retry
+                    else:
+                        logger.error(f"[Gemini Security] Timeout after {max_retries} attempts: {e}")
+                        return ModelResult(
+                            model_name='gemini_security',
+                            findings=[],
+                            confidence=0.0,
+                            processing_time=time.time() - start,
+                            metadata={'persona': 'gemini_security_hunter', 'error': f'API timeout: {str(e)}'}
+                        )
 
             result = response.json()
             findings = []
@@ -956,8 +975,27 @@ Return only this JSON format (nothing else):
                 }
             }
 
-            response = requests.post(url, json=payload, timeout=30)
-            response.raise_for_status()
+            # Gemini API can be slow, use longer timeout (60 seconds) with retry logic
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(url, json=payload, timeout=60)
+                    response.raise_for_status()
+                    break  # Success, exit retry loop
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"[Gemini Verifier] Timeout on attempt {attempt + 1}/{max_retries}, retrying...")
+                        import time
+                        time.sleep(2)  # Wait before retry
+                    else:
+                        logger.error(f"[Gemini Verifier] Timeout after {max_retries} attempts: {e}")
+                        return ModelResult(
+                            model_name='gemini_verification',
+                            findings=[],
+                            confidence=0.0,
+                            processing_time=time.time() - start,
+                            metadata={'persona': 'gemini_formal_verifier', 'error': f'API timeout: {str(e)}'}
+                        )
 
             result = response.json()
             findings = []
