@@ -857,20 +857,39 @@ Return only valid JSON, no markdown formatting.
             try:
                 candidates = result.get('candidates') or []
                 if candidates:
-                    parts = ((candidates[0] or {}).get('content') or {}).get('parts') or []
-                    if parts and isinstance(parts, list) and 'text' in parts[0]:
-                        response_text = parts[0]['text']
-                        logger.debug(f"[Gemini Security] Raw response (first 500 chars): {response_text[:500]}")
-                        data = parse_llm_json(response_text, fallback={"findings": []})
-                        findings = data.get('findings', [])
-                        logger.debug(f"[Gemini Security] Parsed {len(findings)} findings")
+                    content = candidates[0].get('content') or {}
+                    parts = content.get('parts') or []
+                    
+                    # Debug the structure
+                    logger.debug(f"[Gemini Security] Response structure - candidates: {len(candidates)}, parts: {len(parts)}")
+                    
+                    if parts and isinstance(parts, list):
+                        # Find text in parts (could be at any index)
+                        response_text = None
+                        for i, part in enumerate(parts):
+                            if isinstance(part, dict) and 'text' in part:
+                                response_text = part['text']
+                                logger.debug(f"[Gemini Security] Found text in part {i}")
+                                break
+                        
+                        if response_text:
+                            logger.debug(f"[Gemini Security] Raw response (first 500 chars): {response_text[:500]}")
+                            data = parse_llm_json(response_text, fallback={"findings": []})
+                            findings = data.get('findings', [])
+                            logger.debug(f"[Gemini Security] Parsed {len(findings)} findings")
+                        else:
+                            logger.warning(f"[Gemini Security] No text found in any part. Parts: {[p.keys() if isinstance(p, dict) else type(p) for p in parts]}")
                     else:
-                        logger.warning(f"[Gemini Security] No text in response parts: {parts}")
+                        logger.warning(f"[Gemini Security] Parts is not a list or is empty: {type(parts)} - {parts}")
                 else:
-                    logger.warning(f"[Gemini Security] No candidates in response: {result}")
+                    logger.warning(f"[Gemini Security] No candidates in response")
+                    if 'promptFeedback' in result:
+                        logger.warning(f"[Gemini Security] Prompt feedback: {result['promptFeedback']}")
             except Exception as e:
                 logger.error(f"[Gemini Security] Error parsing findings: {e}")
                 logger.debug(f"[Gemini Security] Response was: {result}")
+                import traceback
+                logger.debug(f"[Gemini Security] Traceback: {traceback.format_exc()}")
                 findings = []
 
             return ModelResult(
@@ -971,20 +990,39 @@ Return only valid JSON, no markdown formatting.
             try:
                 candidates = result.get('candidates') or []
                 if candidates:
-                    parts = ((candidates[0] or {}).get('content') or {}).get('parts') or []
-                    if parts and isinstance(parts, list) and 'text' in parts[0]:
-                        response_text = parts[0]['text']
-                        logger.debug(f"[Gemini Verifier] Raw response (first 500 chars): {response_text[:500]}")
-                        data = parse_llm_json(response_text, fallback={"findings": []})
-                        findings = data.get('findings', [])
-                        logger.debug(f"[Gemini Verifier] Parsed {len(findings)} findings")
+                    content = candidates[0].get('content') or {}
+                    parts = content.get('parts') or []
+                    
+                    # Debug the structure
+                    logger.debug(f"[Gemini Verifier] Response structure - candidates: {len(candidates)}, parts: {len(parts)}")
+                    
+                    if parts and isinstance(parts, list):
+                        # Find text in parts (could be at any index)
+                        response_text = None
+                        for i, part in enumerate(parts):
+                            if isinstance(part, dict) and 'text' in part:
+                                response_text = part['text']
+                                logger.debug(f"[Gemini Verifier] Found text in part {i}")
+                                break
+                        
+                        if response_text:
+                            logger.debug(f"[Gemini Verifier] Raw response (first 500 chars): {response_text[:500]}")
+                            data = parse_llm_json(response_text, fallback={"findings": []})
+                            findings = data.get('findings', [])
+                            logger.debug(f"[Gemini Verifier] Parsed {len(findings)} findings")
+                        else:
+                            logger.warning(f"[Gemini Verifier] No text found in any part. Parts: {[p.keys() if isinstance(p, dict) else type(p) for p in parts]}")
                     else:
-                        logger.warning(f"[Gemini Verifier] No text in response parts: {parts}")
+                        logger.warning(f"[Gemini Verifier] Parts is not a list or is empty: {type(parts)} - {parts}")
                 else:
-                    logger.warning(f"[Gemini Verifier] No candidates in response: {result}")
+                    logger.warning(f"[Gemini Verifier] No candidates in response")
+                    if 'promptFeedback' in result:
+                        logger.warning(f"[Gemini Verifier] Prompt feedback: {result['promptFeedback']}")
             except Exception as e:
                 logger.error(f"[Gemini Verifier] Error parsing findings: {e}")
                 logger.debug(f"[Gemini Verifier] Response was: {result}")
+                import traceback
+                logger.debug(f"[Gemini Verifier] Traceback: {traceback.format_exc()}")
                 findings = []
 
             return ModelResult(
