@@ -202,9 +202,10 @@ class SequentialAnalyzer:
         # Initialize enhanced audit engine with AetherDatabase for GitHub audit compatibility
         enhanced_engine = EnhancedAetherAuditEngine(verbose=True, database=self.db)
 
-        for rel in contract_relative_paths:
+        for idx, rel in enumerate(contract_relative_paths, 1):
             start = time.time()
             contract_path = Path(project_path) / rel
+            contract_name = contract_path.name  # e.g., "RocketBase.sol"
 
             # Check if this is an abstract interface (skip analysis - no implementation to analyze)
             if self._is_abstract_interface(contract_path):
@@ -218,6 +219,7 @@ class SequentialAnalyzer:
                     status='skipped',
                     analysis_duration_ms=duration_ms,
                 )
+                self.console.print(f"[yellow]⏭️  {idx}/{len(contract_relative_paths)}: {contract_name} (skipped - interface)[/yellow]")
                 outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=empty_findings, status='skipped', duration_ms=duration_ms))
                 continue
 
@@ -233,6 +235,7 @@ class SequentialAnalyzer:
                     status='skipped',
                     analysis_duration_ms=duration_ms,
                 )
+                self.console.print(f"[yellow]⏭️  {idx}/{len(contract_relative_paths)}: {contract_name} (skipped - mock/test)[/yellow]")
                 outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=empty_findings, status='skipped', duration_ms=duration_ms))
                 continue
 
@@ -240,10 +243,15 @@ class SequentialAnalyzer:
             if not force:
                 cached = self._get_cached(project_id, rel)
                 if cached is not None:
-                    outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=cached, status='cached', duration_ms=0))
+                    duration_ms = int((time.time() - start) * 1000)
+                    self.console.print(f"[cyan]⚡ {idx}/{len(contract_relative_paths)}: {contract_name} (cached)[/cyan]")
+                    outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=cached, status='cached', duration_ms=duration_ms))
                     continue
 
             try:
+                # Display progress: Currently analyzing
+                self.console.print(f"[bold cyan]🔍 {idx}/{len(contract_relative_paths)}: {contract_name}[/bold cyan]", end="", flush=True)
+                
                 # Run enhanced audit on the contract
                 results = asyncio.run(enhanced_engine.run_enhanced_audit_with_llm_validation(
                     str(contract_path),
@@ -256,6 +264,7 @@ class SequentialAnalyzer:
 
                 # Extract findings from results
                 findings = self._extract_findings_from_results(results)
+                finding_count = findings.get('total_findings', 0)
 
                 self.db.save_analysis_result(
                     contract_id=self._get_contract_id(project_id, rel),
@@ -265,6 +274,13 @@ class SequentialAnalyzer:
                     analysis_duration_ms=duration_ms,
                 )
 
+                # Display completion with findings count and duration
+                duration_sec = duration_ms / 1000
+                if finding_count > 0:
+                    self.console.print(f" [green]✅ {finding_count} finding{'s' if finding_count != 1 else ''} ({duration_sec:.1f}s)[/green]")
+                else:
+                    self.console.print(f" [green]✅ clean ({duration_sec:.1f}s)[/green]")
+                
                 outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status=status, duration_ms=duration_ms))
 
             except Exception as e:
@@ -281,6 +297,8 @@ class SequentialAnalyzer:
                     analysis_duration_ms=duration_ms,
                 )
 
+                duration_sec = duration_ms / 1000
+                self.console.print(f" [red]❌ failed ({duration_sec:.1f}s)[/red]")
                 outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status=status, duration_ms=duration_ms))
 
         return outcomes
