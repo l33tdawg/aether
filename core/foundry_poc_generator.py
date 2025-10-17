@@ -1644,7 +1644,7 @@ Return your response in this exact JSON format:
                 import json
                 data = json.loads(json_match.group())
                 return {
-                    'repaired': data.get('repaired', False),
+                    'success': True,
                     'test_code': data.get('test_code', ''),
                     'exploit_code': data.get('exploit_code', ''),
                     'explanation': data.get('explanation', '')
@@ -3374,7 +3374,7 @@ contract {contract_name} {{
         contract_source_path: str,
         output_dir: str
     ) -> GenerationManifest:
-        """Main orchestration method: Generate complete PoC suite for all findings."""
+        # Main orchestration method: Generate complete PoC suite for all findings.
         logger.info(f"Starting comprehensive PoC generation for {results_json_path}")
 
         start_time = time.time()
@@ -3719,7 +3719,7 @@ contract {contract_name} {{
         return None
 
     def _validate_solidity_syntax(self, code: str) -> bool:
-        """Basic syntax validation for generated Solidity code."""
+        # Basic syntax validation for generated Solidity code.
         try:
             # Check for basic syntax issues
             if not code.strip():
@@ -3766,7 +3766,7 @@ contract {contract_name} {{
             return False
 
     def _post_process_contract_source(self, contract_source: str) -> str:
-        """Post-process contract source to fix common issues with generated stubs."""
+        # Post-process contract source to fix common issues with generated stubs.
         import re
         
         # Fix bytes16.powu() calls to use Bytes16Math.powu()
@@ -3811,7 +3811,7 @@ contract {contract_name} {{
         return processed_source
 
     def _analyze_used_functions(self, interface_name: str, contract_code: str) -> set:
-        """Analyze contract code to find which functions from the interface are actually used."""
+        # Analyze contract code to find which functions from the interface are actually used.
         import re
         
         used_functions = set()
@@ -3858,7 +3858,7 @@ contract {contract_name} {{
         return used_functions
 
     def _find_original_project_for_contract(self, contract_source: str) -> Optional[Path]:
-        """Find the original project directory for a contract based on its imports."""
+        # Find the original project directory for a contract based on its imports.
         root = self._project_root()
         
         # Check common project directories
@@ -3883,7 +3883,7 @@ contract {contract_name} {{
         return None
 
     def _generate_poc_remappings(self, output_dir: str, contract_source: str) -> List[str]:
-        """Generate comprehensive remappings for a PoC project to resolve all imports."""
+        # Generate comprehensive remappings for a PoC project to resolve all imports.
         remaps = []
 
         # Parse imports from contract source to understand what remappings are needed
@@ -3952,7 +3952,7 @@ contract {contract_name} {{
         return unique_remaps
 
     def _generate_comprehensive_remappings(self, output_dir: str, dependency_tree: Dict[str, Any], project_root: Path) -> List[str]:
-        """Generate comprehensive remappings based on dependency tree analysis."""
+        # Generate comprehensive remappings based on dependency tree analysis.
         remaps = []
 
         # Start with essential remappings
@@ -4015,7 +4015,7 @@ contract {contract_name} {{
         return unique_remaps
 
     def _generate_dependency_stubs(self, output_dir: str, dependency_tree: Dict[str, Any]):
-        """Generate intelligent stubs for all dependencies in the tree."""
+        # Generate intelligent stubs for all dependencies in the tree.
         mocks_dir = os.path.join(output_dir, 'mocks')
         os.makedirs(mocks_dir, exist_ok=True)
 
@@ -4023,21 +4023,17 @@ contract {contract_name} {{
         for interface_name, interface_info in dependency_tree['interfaces'].items():
             stub_file = os.path.join(mocks_dir, f"{interface_name}.sol")
             if interface_info['type'] == 'extracted':
-                # Use the extracted definition
                 with open(stub_file, 'w') as f:
                     f.write(interface_info['definition'])
             else:
-                # Generate intelligent interface
-                functions = interface_info['functions']
+                functions = interface_info.get('functions', [])
                 functions_str = "\n    ".join(functions)
-
                 with open(stub_file, 'w') as f:
-                    f.write(f"""// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
-
-interface {interface_name} {{
-    {functions_str}
-}}""")
+                    f.write(
+                        "// SPDX-License-Identifier: MIT\n"
+                        "pragma solidity ^0.8.19;\n\n"
+                        f"interface {interface_name} {{\n    {functions_str}\n}}"
+                    )
 
         # Generate stubs for libraries
         for library_name, library_info in dependency_tree['libraries'].items():
@@ -4046,16 +4042,14 @@ interface {interface_name} {{
                 with open(stub_file, 'w') as f:
                     f.write(library_info['definition'])
             else:
-                functions = library_info['functions']
+                functions = library_info.get('functions', [])
                 functions_str = "\n    ".join(functions)
-
                 with open(stub_file, 'w') as f:
-                    f.write(f"""// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
-
-library {library_name} {{
-    {functions_str}
-}}""")
+                    f.write(
+                        "// SPDX-License-Identifier: MIT\n"
+                        "pragma solidity ^0.8.19;\n\n"
+                        f"library {library_name} {{\n    {functions_str}\n}}"
+                    )
 
         # Generate stubs for contracts
         for contract_name, contract_info in dependency_tree['contracts'].items():
@@ -4064,60 +4058,51 @@ library {library_name} {{
                 with open(stub_file, 'w') as f:
                     f.write(contract_info['definition'])
             else:
-                functions = contract_info['functions']
+                functions = contract_info.get('functions', [])
                 functions_str = "\n    ".join(functions)
-
                 with open(stub_file, 'w') as f:
-                    f.write(f"""// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+                    f.write(
+                        "// SPDX-License-Identifier: MIT\n"
+                        "pragma solidity ^0.8.19;\n\n"
+                        f"contract {contract_name} {{\n    {functions_str}\n}}"
+                    )
 
-contract {contract_name} {{
-    {functions_str}
-}}""")
-
-        # Generate stubs for unresolved imports (create minimal working stubs)
+        # Generate stubs for unresolved imports
         for unresolved in dependency_tree['unresolved']:
             stub_file = os.path.join(mocks_dir, f"{unresolved.replace('/', '_')}.sol")
-
-            # Determine if it's likely an interface, library, or contract
-            if unresolved.startswith('I') and unresolved[1].isupper():
-                # Likely an interface
+            if unresolved.startswith('I') and len(unresolved) > 1 and unresolved[1].isupper():
                 with open(stub_file, 'w') as f:
-                    f.write(f"""// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
-
-interface {unresolved} {{
-    function someFunction() external view returns (uint256);
-    function anotherFunction(address user) external;
-}}""")
+                    f.write(
+                        "// SPDX-License-Identifier: MIT\n"
+                        "pragma solidity ^0.8.19;\n\n"
+                        f"interface {unresolved} {{\n    function someFunction() external view returns (uint256);\n    function anotherFunction(address user) external;\n}}"
+                    )
             elif any(keyword in unresolved.lower() for keyword in ['lib', 'math', 'util']):
-                # Likely a library
                 with open(stub_file, 'w') as f:
-                    f.write(f"""// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
-
-library {unresolved} {{
-    function someLibraryFunction() external pure returns (uint256) {{
-        return 1000;
-    }}
-}}""")
+                    f.write(
+                        "// SPDX-License-Identifier: MIT\n"
+                        "pragma solidity ^0.8.19;\n\n"
+                        f"library {unresolved} {{\n    function someLibraryFunction() external pure returns (uint256) {{\n        return 1000;\n    }}\n}}"
+                    )
             else:
-                # Assume it's a contract
                 with open(stub_file, 'w') as f:
-                    f.write(f"""// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+                    f.write(
+                        "// SPDX-License-Identifier: MIT\n"
+                        "pragma solidity ^0.8.19;\n\n"
+                        f"contract {unresolved} {{\n    function someContractFunction() external view returns (uint256) {{\n        return 1000;\n    }}\n}}"
+                    )
 
-contract {unresolved} {{
-    function someContractFunction() external view returns (uint256) {{
-        return 1000;
-    }}
-}}""")
-
-        logger.info(f"Generated {len(dependency_tree['interfaces']) + len(dependency_tree['libraries']) + len(dependency_tree['contracts']) + len(dependency_tree['unresolved'])} dependency stubs")
+        logger.info(
+            "Generated %d dependency stubs",
+            len(dependency_tree['interfaces'])
+            + len(dependency_tree['libraries'])
+            + len(dependency_tree['contracts'])
+            + len(dependency_tree['unresolved'])
+        )
 
     def run_comprehensive_tests(self) -> Dict[str, Any]:
-        """Run all comprehensive tests for the enhanced system."""
-        logger.info("🧪 Running comprehensive system tests...")
+        # Run all comprehensive tests for the enhanced system.
+        logger.info("Running comprehensive system tests...")
 
         results = {}
 
@@ -4134,15 +4119,15 @@ contract {unresolved} {{
             # Test 4: Remapping Setup
             results['remapping_setup'] = self._test_remapping_setup()
 
-            logger.info("✅ All comprehensive tests passed!")
+            logger.info("All comprehensive tests passed!")
             return results
 
         except Exception as e:
-            logger.error(f"❌ Comprehensive tests failed: {e}")
+            logger.error(f"Comprehensive tests failed: {e}")
             return {'error': str(e)}
 
     def _test_dependency_analysis(self) -> Dict[str, Any]:
-        """Test the dependency analysis system with a sample contract."""
+        # Test the dependency analysis system with a sample contract.
         # Sample contract with complex dependencies
         test_contract = '''
 pragma solidity ^0.8.20;
@@ -4173,11 +4158,11 @@ contract TestContract is IPump {
         assert 'IERC20' in dependency_tree['interfaces'], "IERC20 should be classified as interface"
         assert 'IPump' in dependency_tree['interfaces'], "IPump should be classified as interface"
 
-        logger.info("✅ Dependency analysis test passed")
+        logger.info("Dependency analysis test passed")
         return dependency_tree
 
     def _test_abi_integration(self) -> Dict[str, Any]:
-        """Test ABI integration for exploit generation."""
+        # Test ABI integration for exploit generation.
         # Sample ABI data
         abi_data = {
             'abi': [
@@ -4208,11 +4193,11 @@ contract TestContract is IPump {
         assert 'uint256[]' in signature, "Should include parameter types"
         assert 'bytes' in signature, "Should include data parameter"
 
-        logger.info("✅ ABI integration test passed")
+        logger.info("ABI integration test passed")
         return {'signature': signature, 'abi_data': abi_data}
 
     def _test_enhanced_exploit_generation(self) -> str:
-        """Test that exploits use ABI-encoded calls."""
+        # Test that exploits use ABI-encoded calls.
         # Sample context with ABI data
         context = {
             'contract_name': 'TestContract',
@@ -4240,11 +4225,11 @@ contract TestContract is IPump {
         assert 'exploitWithParams()' in exploit_code, "Should have parameter manipulation"
         assert 'exploitMultiple()' in exploit_code, "Should have batch exploit"
 
-        logger.info("✅ Enhanced exploit generation test passed")
+        logger.info("Enhanced exploit generation test passed")
         return exploit_code
 
     def _test_remapping_setup(self) -> List[str]:
-        """Test comprehensive remapping generation."""
+        # Test comprehensive remapping generation.
         # Sample dependency tree
         dependency_tree = {
             'direct_imports': [
@@ -4266,11 +4251,11 @@ contract TestContract is IPump {
         assert any('oz/' in remap for remap in remaps), "Should include OpenZeppelin remapping"
         assert len(remaps) >= 3, f"Should have at least 3 remappings, got {len(remaps)}"
 
-        logger.info("✅ Remapping setup test passed")
+        logger.info("Remapping setup test passed")
         return remaps
 
     def _get_essential_libraries(self, root: Path) -> List[str]:
-        """Get essential libraries that should be included in every PoC project."""
+        # Get essential libraries that should be included in every PoC project.
         essential_libs = []
 
         # Always include forge-std for testing framework
@@ -4286,10 +4271,8 @@ contract TestContract is IPump {
         return essential_libs
 
     def _extract_defs_from_file(self, abs_path: Path, target_names: Optional[List[str]] = None) -> Dict[str, str]:
-        """Extract concrete interface, contract, and struct definitions from a Solidity file.
-
-        Returns mapping of name -> solidity code block for that definition.
-        """
+        # Extract concrete interface, contract, and struct definitions from a Solidity file.
+        # Returns mapping of name -> solidity code block for that definition.
         out: Dict[str, str] = {}
         try:
             src = abs_path.read_text()
