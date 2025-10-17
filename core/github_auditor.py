@@ -208,12 +208,14 @@ class GitHubAuditor:
                     })
                 
                 # Check if there's a saved scope (smart resume) - ALWAYS check, regardless of flags
+                resume_scope_processed = False  # Flag to prevent double-selection
                 if project_id is not None and not options.scope:
                     resume_info = self.scope_manager.detect_and_handle_saved_scope(project_id, contract_info_list)
                     
                     if resume_info:
                         action = resume_info.get('action')
                         scope = resume_info.get('scope')
+                        resume_scope_processed = True  # Mark that resume was processed
                         
                         if action == 'continue':
                             # Resume with existing scope
@@ -244,6 +246,7 @@ class GitHubAuditor:
                         elif action == 'new_scope':
                             # Let user create new scope
                             options.interactive_scope = True
+                            resume_scope_processed = False  # Reset flag to allow interactive selection
                         
                         elif action == 'view_report':
                             # Show partial report and exit
@@ -256,7 +259,8 @@ class GitHubAuditor:
                             return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[])
                 
                 # INTERACTIVE SCOPE SELECTION (for first-time users or new scope)
-                if options.interactive_scope and rel_paths:
+                # Only show selector if resume menu wasn't processed or user chose 'new_scope'
+                if options.interactive_scope and not resume_scope_processed and rel_paths:
                     # Let user select which contracts to audit
                     selected_paths = self.scope_selector.select_scope(contract_info_list)
                     if not selected_paths:
