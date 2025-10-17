@@ -1253,3 +1253,110 @@ class AetherCLI:
                 import traceback
                 traceback.print_exc()
             return {'error': str(e)}
+
+    async def run_generate_report(
+        self,
+        output_dir: Optional[str] = None,
+        format: str = "markdown",
+        scope_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+        list_projects: bool = False,
+        list_scopes: Optional[int] = None,
+        verbose: bool = False
+    ) -> int:
+        """Generate audit reports from GitHub audit database findings."""
+        try:
+            from core.github_audit_report_generator import GitHubAuditReportGenerator
+            import sqlite3
+            from pathlib import Path
+            
+            db_path = str(Path.home() / '.aether' / 'aether_github_audit.db')
+            
+            # List projects
+            if list_projects:
+                print("\n📋 Projects in Database:")
+                print("=" * 80)
+                
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT id, repo_name, url, created_at FROM projects
+                    ORDER BY created_at DESC
+                """)
+                
+                projects = cursor.fetchall()
+                if not projects:
+                    print("  (No projects found)")
+                else:
+                    for p in projects:
+                        print(f"  ID: {p['id']:3d} | {p['repo_name']:40s} | {p['url']}")
+                
+                conn.close()
+                return 0
+            
+            # List scopes for a project
+            if list_scopes is not None:
+                print(f"\n📋 Audit Scopes for Project ID {list_scopes}:")
+                print("=" * 80)
+                
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT id, status, total_selected, total_audited, total_pending, created_at
+                    FROM audit_scopes
+                    WHERE project_id = ?
+                    ORDER BY created_at DESC
+                """, (list_scopes,))
+                
+                scopes = cursor.fetchall()
+                if not scopes:
+                    print(f"  (No scopes found for project {list_scopes})")
+                else:
+                    for s in scopes:
+                        print(f"  Scope ID: {s['id']:3d} | Status: {s['status']:10s} | " +
+                              f"Audited: {s['total_audited']:3d}/{s['total_selected']:3d} | " +
+                              f"Pending: {s['total_pending']:3d}")
+                
+                conn.close()
+                return 0
+            
+            # Generate report
+            if not Path(db_path).exists():
+                print(f"❌ Database not found at {db_path}")
+                print("   Run an audit first with: python main.py audit <github_url>")
+                return 1
+            
+            print("🔍 Generating audit report from database...")
+            print(f"   Format: {format}")
+            if scope_id:
+                print(f"   Scope ID: {scope_id}")
+            if project_id:
+                print(f"   Project ID: {project_id}")
+            print()
+            
+            generator = GitHubAuditReportGenerator(db_path=db_path)
+            report_paths = generator.generate_report(
+                output_dir=output_dir,
+                scope_id=scope_id,
+                project_id=project_id,
+                format=format
+            )
+            
+            if report_paths:
+                print(f"\n✅ Reports generated successfully!")
+                print(f"📁 Location: {report_paths}")
+                return 0
+            else:
+                print("❌ Failed to generate reports")
+                return 1
+        
+        except Exception as e:
+            print(f"❌ Error generating report: {e}")
+            if verbose:
+                import traceback
+                traceback.print_exc()
+            return 1

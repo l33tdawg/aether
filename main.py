@@ -106,6 +106,16 @@ Examples:
     genf_parser.add_argument('--only-consensus', action='store_true', help='Restrict to consensus findings only')
     genf_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
 
+    # Report command (generate reports from GitHub audit database)
+    report_parser = subparsers.add_parser('report', help='Generate audit reports from GitHub audit database findings')
+    report_parser.add_argument('--output', '-o', help='Output directory for reports (default: ./output/reports)')
+    report_parser.add_argument('--format', choices=['markdown', 'json', 'html', 'all'], default='markdown', help='Report format (default: markdown)')
+    report_parser.add_argument('--scope-id', type=int, help='Generate report for specific audit scope ID')
+    report_parser.add_argument('--project-id', type=int, help='Generate report for specific project ID')
+    report_parser.add_argument('--list-projects', action='store_true', help='List all projects in database')
+    report_parser.add_argument('--list-scopes', type=int, metavar='PROJECT_ID', help='List all audit scopes for a project')
+    report_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+
     # Console command (interactive CLI)
     console_parser = subparsers.add_parser('console', help='Launch interactive Metasploit-style console')
     console_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
@@ -302,6 +312,17 @@ Examples:
                 min_severity=args.min_severity,
                 types_filter=args.types,
                 only_consensus=args.only_consensus,
+                verbose=args.verbose
+            ))
+            return rc
+        elif args.command == 'report':
+            rc = asyncio.run(cli.run_generate_report(
+                output_dir=args.output,
+                format=args.format,
+                scope_id=args.scope_id,
+                project_id=args.project_id,
+                list_projects=args.list_projects,
+                list_scopes=args.list_scopes,
                 verbose=args.verbose
             ))
             return rc
