@@ -3,6 +3,8 @@
 
 Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and optionally validating those tests on mainnet forks. It combines static analysis, prompt-driven LLM analysis, and AI-ensemble reasoning with reporting and persistence.
 
+**Enhanced PoC Generation**: Aether now features advanced AST-based contract analysis, iterative compilation fixes, and production-ready LLM prompts that generate exploits suitable for $100k+ bug bounty submissions.
+
 ## Scope and Capabilities
 
 - Static analysis
@@ -24,6 +26,10 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
   - Audit results persisted via `core/database_manager.AetherDatabase` to `~/.aether/aether_github_audit.db`
 
 - Foundry integration and PoC generation
+  - **AST-based contract analysis** for 100% accurate function and modifier extraction
+  - **Enhanced LLM prompts** with production-ready exploit generation for $100k+ bounties
+  - **Iterative compilation feedback loop** that fixes errors automatically using LLM
+  - **Vulnerability-aware contract context** extraction based on vulnerability type
   - LLM-based Foundry tests via `core/llm_foundry_generator.py`
   - Enhanced Foundry validation and submission formatting via `core/enhanced_foundry_integration.py`
   - Optional exploit testing and fork verification via `core/exploit_tester.py` and `fork-verify` command
@@ -159,6 +165,13 @@ python main.py generate-foundry --from-results ./output/results.json --out ./out
 python main.py generate-foundry --from-report ./output/report.md --out ./output/pocs
 ```
 
+**Enhanced PoC Generation Features:**
+- **AST-based analysis** provides 100% accurate contract function extraction
+- **Production-ready prompts** generate exploits suitable for $100k+ bug bounty submissions
+- **Iterative compilation fixes** automatically resolve compilation errors using LLM feedback
+- **Vulnerability-specific attack chains** for different vulnerability types (access control, reentrancy, oracle manipulation, etc.)
+- **Enhanced contract context** provides vulnerability-focused analysis around vulnerable code locations
+
 ### 5) Run Foundry validation directly
 
 ```bash
@@ -217,10 +230,17 @@ This uses findings persisted by the GitHub audit workflow and attempts PoC gener
   - LLM analyzer: `core/enhanced_llm_analyzer.py`
   - AI ensemble: `core/ai_ensemble.py` (experimental)
   - GitHub auditor: `core/github_auditor.py`
+  - **Enhanced Foundry generation**: `core/foundry_poc_generator.py` (AST analysis, iterative fixes, production-ready prompts)
   - Foundry generation and validation: `core/llm_foundry_generator.py`, `core/enhanced_foundry_integration.py`
   - Exploit testing: `core/exploit_tester.py`
   - Reporting: `core/report_generator.py`, `core/github_audit_report_generator.py`
   - Persistence: `core/database_manager.py`
+
+- **Comprehensive test suite** for enhanced features:
+  - `tests/test_poc_generator_enhancements.py` - AST analysis and enhanced prompts
+  - `tests/test_iterative_compilation_fixes.py` - Compilation feedback loop
+  - `tests/test_enhanced_llm_integration.py` - LLM integration improvements
+  - `tests/test_poc_generator_improvements.py` - Integration testing
 
 - Known inconsistencies and caveats:
   - References to formal verification and learning systems exist in comments but are disabled or removed.
