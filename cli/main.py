@@ -25,6 +25,7 @@ from core.llm_foundry_generator import LLMFoundryGenerator
 from core.github_auditor import GitHubAuditor, AuditOptions as GitHubAuditOptions
 from core.audit_result_formatter import AuditResultFormatter
 from core.graceful_shutdown import register_database
+from core.exploit_tester import ExploitTester
 
 
 class AetherCLI:
@@ -36,6 +37,7 @@ class AetherCLI:
         self.config_manager = ConfigManager()
         self.etherscan_fetcher = EtherscanFetcher(self.config_manager)
         self.basescan_fetcher = BasescanFetcher(self.config_manager)
+        self.exploit_tester = ExploitTester()
 
     def show_version(self):
         """Display version information."""
@@ -1353,9 +1355,50 @@ class AetherCLI:
             else:
                 print("❌ Failed to generate reports")
                 return 1
-        
+
         except Exception as e:
             print(f"❌ Error generating report: {e}")
+            if verbose:
+                import traceback
+                traceback.print_exc()
+            return 1
+
+    async def run_exploit_tests(self, project_name: str, fork_url: Optional[str] = None,
+                               anvil_port: int = 8545, verbose: bool = False) -> int:
+        """Run exploit tests for a project."""
+        try:
+            # Run comprehensive exploit tests
+            suite = await self.exploit_tester.run_comprehensive_exploit_tests(project_name, fork_url)
+
+            # Save results
+            results_file = f"output/exploit_tests/{project_name}_exploit_test_results.json"
+            os.makedirs(os.path.dirname(results_file), exist_ok=True)
+
+            with open(results_file, 'w') as f:
+                json.dump({
+                    'project_name': suite.project_name,
+                    'findings_tested': suite.findings_tested,
+                    'tests_passed': suite.tests_passed,
+                    'exploits_successful': suite.exploits_successful,
+                    'total_execution_time': suite.total_execution_time,
+                    'results': [
+                        {
+                            'finding_id': r.finding_id,
+                            'contract_name': r.contract_name,
+                            'vulnerability_type': r.vulnerability_type,
+                            'test_compiled': r.test_compiled,
+                            'test_passed': r.test_passed,
+                            'execution_time': r.execution_time,
+                            'errors': r.errors[:5]  # Limit error output
+                        } for r in suite.results
+                    ]
+                }, f, indent=2)
+
+            print(f"\n✅ Results saved to: {results_file}")
+            return 0
+
+        except Exception as e:
+            print(f"❌ Error running exploit tests: {e}")
             if verbose:
                 import traceback
                 traceback.print_exc()

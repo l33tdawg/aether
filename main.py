@@ -13,6 +13,7 @@ from typing import Optional
 
 from cli.main import AetherCLI
 from core.graceful_shutdown import get_shutdown_handler
+from core.exploit_tester import ExploitTester
 
 
 def main():
@@ -115,6 +116,13 @@ Examples:
     report_parser.add_argument('--list-projects', action='store_true', help='List all projects in database')
     report_parser.add_argument('--list-scopes', type=int, metavar='PROJECT_ID', help='List all audit scopes for a project')
     report_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+
+    # Exploit test command (test generated POC code against real contracts)
+    exploit_test_parser = subparsers.add_parser('exploit-test', help='Test generated exploit code against real audited contracts')
+    exploit_test_parser.add_argument('project_name', help='Name of the project to test exploits for')
+    exploit_test_parser.add_argument('--fork-url', help='RPC URL for mainnet fork testing (default: local Anvil)')
+    exploit_test_parser.add_argument('--anvil-port', type=int, default=8545, help='Port for Anvil local node (default: 8545)')
+    exploit_test_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
 
     # Console command (interactive CLI)
     console_parser = subparsers.add_parser('console', help='Launch interactive Metasploit-style console')
@@ -323,6 +331,14 @@ Examples:
                 project_id=args.project_id,
                 list_projects=args.list_projects,
                 list_scopes=args.list_scopes,
+                verbose=args.verbose
+            ))
+            return rc
+        elif args.command == 'exploit-test':
+            rc = asyncio.run(cli.run_exploit_tests(
+                project_name=args.project_name,
+                fork_url=args.fork_url,
+                anvil_port=args.anvil_port,
                 verbose=args.verbose
             ))
             return rc
