@@ -1,9 +1,7 @@
-# AetherAudit: Smart Contract Security Analysis and PoC Generation
+# Aether - Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories 
+# A Smart Contract Security Analysis and PoC Generation Framework 
 
-AetherAudit is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and optionally validating those tests on mainnet forks. It combines static analysis, prompt-driven LLM analysis, and AI-ensemble reasoning with reporting and persistence.
-
-This document describes what is implemented in the repository today, how to use it end-to-end, configuration details, and known limitations. Marketing language, badges, and non-implemented claims have been removed in favor of an accurate, engineering-focused overview.
-
+Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and optionally validating those tests on mainnet forks. It combines static analysis, prompt-driven LLM analysis, and AI-ensemble reasoning with reporting and persistence.
 
 ## Scope and Capabilities
 
