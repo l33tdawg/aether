@@ -232,9 +232,15 @@ This uses findings persisted by the GitHub audit workflow and attempts PoC gener
 
 ## License
 
-MIT License. See `LICENSE` if present in the repository.
+AetherAudit is distributed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
 
+## Author
+
+**Dhillon Andrew Kannabhiran** (@l33tdawg)
+- Email: l33tdawg@hitb.org
+- Twitter: [@l33tdawg](https://twitter.com/l33tdawg)
+- GitHub: [@l33tdawg](https://github.com/l33tdawg)
 
 ## Contributing
 
-Contributions are welcome. Useful areas include detector improvements, framework detection, report templates, validation robustness, and documentation accuracy.
+Contributions are welcome! Please feel free to submit issues, fork the repository, and create pull requests.
