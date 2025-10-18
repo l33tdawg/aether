@@ -361,7 +361,7 @@ class FoundryPoCGenerator:
         except Exception as e:
             logger.warning(f"Error during contract discovery: {e}")
             return None
-    
+
     def _normalize_single_finding(self, vuln: Dict[str, Any], index: int) -> Optional[NormalizedFinding]:
         # Normalize a single vulnerability finding.
         try:
@@ -374,7 +374,7 @@ class FoundryPoCGenerator:
             contract_name = vuln.get('contract_name', '')
             
             if not contract_name:
-                contract_name = self._extract_contract_name_from_path(file_path)
+            contract_name = self._extract_contract_name_from_path(file_path)
 
             if not contract_name:
                 logger.warning(f"Could not extract contract name from path: {file_path}")
@@ -622,7 +622,7 @@ class FoundryPoCGenerator:
         
         # Default to 0.8.19 if detection fails
         return "0.8.19"
-    
+
     def _detect_state_changes(self, function_body: str) -> bool:
         # Detect if a function likely modifies state (simplified heuristic).
         # Look for common state-changing patterns
@@ -769,42 +769,88 @@ class FoundryPoCGenerator:
 
     def _flash_loan_template(self, context: Dict[str, Any]) -> str:
         # Flash loan attack test template.
-        return ""
+        return """For flash loan attacks:
+- Obtain flash loan from Aave/Uniswap/Balancer
+- Execute price manipulation or exploit
+- Repay flash loan with profit
+- Demonstrate significant profit extraction
+- Show realistic attack with actual protocols
+- Include gas cost calculations"""
 
     def _flash_loan_exploit_template(self, context: Dict[str, Any]) -> str:
         # Flash loan exploit contract template.
-        return ""
+        return """Generate a flash loan exploit that:
+- Implements flash loan callback (executeOperation, onFlashLoan, etc.)
+- Shows step-by-step attack execution
+- Manipulates target protocol during callback
+- Calculates and extracts profit
+- Includes realistic token amounts
+- Works with actual DeFi protocols"""
 
     def _overflow_template(self, context: Dict[str, Any]) -> str:
         # Integer overflow/underflow test template.
-        return ""
+        return """For overflow/underflow vulnerabilities:
+- Test boundary conditions that trigger overflow
+- Show impact of wrapped values
+- Demonstrate unauthorized minting/burning
+- Prove accounting inconsistencies
+- Include before/after balance verification
+- Test both overflow and underflow scenarios"""
 
     def _overflow_exploit_template(self, context: Dict[str, Any]) -> str:
         # Integer overflow/underflow exploit contract template.
-        return ""
+        return """Generate an overflow/underflow exploit that:
+- Triggers the arithmetic issue
+- Shows the wrapped value impact
+- Demonstrates how to profit from the issue
+- Includes clear numeric examples
+- Proves the vulnerability is exploitable"""
 
     def _access_control_template(self, context: Dict[str, Any]) -> str:
         # Access control vulnerability test template.
-        return ""
+        return """For access control vulnerabilities:
+- Test unauthorized access to protected functions
+- Verify modifier bypass scenarios
+- Check role-based permission escalation
+- Test admin/owner function access from non-privileged accounts
+- Include before/after state verification"""
 
     def _reentrancy_template(self, context: Dict[str, Any]) -> str:
         # Reentrancy vulnerability test template.
-        return ""
+        return """For reentrancy vulnerabilities:
+- Create a malicious contract with receive()/fallback()
+- Call the vulnerable function and reenter during external call
+- Demonstrate state manipulation or fund drainage
+- Show the exploit succeeds multiple times
+- Include balance checks before/after
+- Test both single and cross-function reentrancy"""
 
     def _oracle_template(self, context: Dict[str, Any]) -> str:
         # Oracle manipulation test template.
-        return ""
+        return """For oracle manipulation:
+- Show how price feeds can be manipulated
+- Demonstrate flash loan price manipulation if applicable
+- Test edge cases in price calculation
+- Show profit extraction from manipulated prices
+- Include realistic attack scenarios with actual DEX interactions"""
 
     def _generic_template(self, context: Dict[str, Any]) -> str:
         # Generic vulnerability test template.
-        return ""
+        return """For this vulnerability:
+- Demonstrate the issue with a concrete test case
+- Show how an attacker can exploit it
+- Include state verification before/after
+- Prove the vulnerability leads to loss or unauthorized access
+- Make the test deterministic and reproducible"""
 
     def _access_control_exploit_template(self, context: Dict[str, Any]) -> str:
         # Access control exploit contract template with ABI integration.
-        abi_data = context.get('abi_data', {})
-        function_signature = self._get_function_signature_from_abi(context['entrypoint'], abi_data)
-
-        return ""
+        return """Generate an exploit contract that:
+- Calls the protected function from an unauthorized account
+- Bypasses access control modifiers (onlyOwner, onlyRole, etc.)
+- Demonstrates privilege escalation
+- Shows state changes from unauthorized access
+- Proves the vulnerability is exploitable"""
 
     def _get_function_signature_from_abi(self, function_name: str, abi_data: Dict[str, Any]) -> str:
         """Extract function signature from ABI data for exploit generation."""
@@ -827,15 +873,32 @@ class FoundryPoCGenerator:
 
     def _reentrancy_exploit_template(self, context: Dict[str, Any]) -> str:
         # Reentrancy exploit contract template.
-        return ""
+        return """Generate an exploit contract with:
+- receive() or fallback() function for reentrancy
+- Counter to control recursion depth
+- Method to trigger the vulnerable function
+- Reentry logic during external call
+- Profit extraction mechanism
+- Step-by-step comments explaining the attack"""
 
     def _oracle_exploit_template(self, context: Dict[str, Any]) -> str:
         # Oracle manipulation exploit contract template.
-        return ""
+        return """Generate an exploit contract that:
+- Manipulates oracle price feeds
+- Uses flash loans if applicable
+- Shows price manipulation impact
+- Demonstrates profit extraction
+- Includes realistic DEX/lending protocol interactions
+- Proves economic viability"""
 
     def _generic_exploit_template(self, context: Dict[str, Any]) -> str:
         # Generic exploit contract template.
-        return ""
+        return """Generate an exploit contract that:
+- Clearly demonstrates the vulnerability
+- Shows how to trigger the issue
+- Proves the impact (fund loss, unauthorized access, etc.)
+- Includes detailed step-by-step comments
+- Works with the Foundry test harness"""
 
     async def _generate_llm_poc(
         self,
@@ -907,7 +970,64 @@ class FoundryPoCGenerator:
 
     def _create_poc_generation_prompt(self, context: Dict[str, Any], template: Dict[str, Any]) -> str:
         # Create detailed prompt for LLM PoC generation.
-        return ""
+        return f"""You are an expert smart contract security researcher and exploit developer. Generate a complete Foundry test suite and exploit contract for the following vulnerability.
+
+VULNERABILITY DETAILS:
+Contract: {context['contract_name']}
+Type: {context['vulnerability_type']}
+Severity: {context['severity']}
+Line: {context['line_number']}
+Entrypoint: {context['entrypoint']}
+
+Description:
+{context['description']}
+
+CONTRACT CONTEXT (First 2000 chars):
+{context['contract_code']}
+
+AVAILABLE FUNCTIONS:
+{', '.join(context['available_functions'][:10])}
+
+SOLIDITY VERSION: {context.get('solc_version', '0.8.19')}
+
+REQUIREMENTS:
+
+1. Generate a COMPLETE Foundry test file that:
+   - Uses pragma solidity {context.get('solc_version', '0.8.19')}
+   {f"- Includes pragma abicoder v2 (required for {context.get('solc_version', '0.8.19')})" if context.get('solc_version', '').startswith('0.7') else ''}
+   - Imports forge-std/Test.sol
+   - Uses vm.createSelectFork() for fork testing
+   - References the REAL deployed contract (not copying it)
+   - Demonstrates the vulnerability with a working test
+   - Includes assertions proving the exploit
+   - Has proper setup and teardown
+
+2. Generate an EXPLOIT contract that:
+   - Uses the detected Solidity version
+   - Can be called from the test to execute the attack
+   - Demonstrates the vulnerability step-by-step
+   - Includes comments explaining each step
+   - Works with real on-chain state
+
+3. FORK TESTING PATTERN:
+   - The contract source is in the original repo via remappings
+   - Import paths use contract/ and interface/ prefixes
+   - Tests run on a fork of mainnet
+   - Use actual deployed addresses where known
+
+VULNERABILITY-SPECIFIC GUIDANCE:
+{template.get('description', '')}
+
+OUTPUT FORMAT:
+Return ONLY valid JSON in this exact format:
+{{
+    "test_code": "// Complete Foundry test file code here",
+    "exploit_code": "// Complete exploit contract code here",
+    "explanation": "Brief explanation of how the exploit works"
+}}
+
+Generate production-ready, working exploit code that demonstrates this {context['severity']} severity vulnerability.
+Focus on REAL attack scenarios that would work on mainnet fork testing."""
 
     def _parse_llm_poc_response(self, response: str) -> Dict[str, str]:
         # Parse LLM response for PoC generation.
@@ -1085,7 +1205,7 @@ class FoundryPoCGenerator:
         solc_version = "0.8.19"
         if test_result.contract_source:
             solc_version = self._detect_solidity_version(test_result.contract_source)
-        
+
         # Generate minimal working version
         fallback_test = self._generate_minimal_test(test_result.contract_name, solc_version)
         fallback_exploit = self._generate_minimal_exploit(test_result.contract_name, solc_version)
@@ -2010,7 +2130,7 @@ solc_version = "{solc_version}"
                     stubs[ri] = stub_code
                     logger.info(f"Added critical interface/contract: {ri}")
             
-            # Also create stubs for any imports that couldn't be resolved  
+            # Also create stubs for any imports that couldn't be resolved
             # Use filename only (not full path) as the key
             # This happens LAST so extracted versions are preferred
             for imp in imports:
@@ -2986,7 +3106,7 @@ interface {interface_name} {{
                         logger.info(f"Fixed imports in: {stub_file.name}")
                 except Exception as e:
                     logger.warning(f"Could not post-process {stub_file}: {e}")
-        
+
         except Exception as e:
             logger.error(f"Failed to write interface stubs: {e}")
 
@@ -3446,12 +3566,12 @@ interface {interface_name} {{
 
         # Only add OpenZeppelin remapping if version-compatible
         if solc_version.startswith('0.8') or solc_version.startswith('0.9'):
-            oz_path = project_root / 'lib' / 'openzeppelin-contracts' / 'contracts'
-            if oz_path.exists():
-                essential_remaps.extend([
-                    f"oz/={str(oz_path)}/",
-                    f"@openzeppelin/={str(oz_path)}/",
-                ])
+        oz_path = project_root / 'lib' / 'openzeppelin-contracts' / 'contracts'
+        if oz_path.exists():
+            essential_remaps.extend([
+                f"oz/={str(oz_path)}/",
+                f"@openzeppelin/={str(oz_path)}/",
+            ])
         else:
             # For 0.7.x, don't add OpenZeppelin remapping - use mocks instead
             logger.info(f"Skipping OpenZeppelin remapping (incompatible with {solc_version})")
@@ -3861,9 +3981,9 @@ contract TestContract is IPump {
         # OpenZeppelin v4.x requires Solidity ^0.8.0
         # For older versions (0.7.x), rely on mocks instead
         if solc_version.startswith('0.8') or solc_version.startswith('0.9'):
-            oz_path = root / 'lib' / 'openzeppelin-contracts' / 'contracts'
-            if oz_path.exists():
-                essential_libs.append(str(oz_path))
+        oz_path = root / 'lib' / 'openzeppelin-contracts' / 'contracts'
+        if oz_path.exists():
+            essential_libs.append(str(oz_path))
                 logger.info(f"Including OpenZeppelin (compatible with {solc_version})")
         else:
             logger.info(f"Skipping OpenZeppelin (incompatible with {solc_version}), will use mocks")
