@@ -1,6 +1,6 @@
 # AetherAudit: Smart Contract Security Analysis and PoC Generation
 
-AetherAudit is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and optionally validating those tests on mainnet forks. It combines static analysis, prompt-driven LLM analysis, and optional AI-ensemble reasoning with reporting and persistence.
+AetherAudit is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and optionally validating those tests on mainnet forks. It combines static analysis, prompt-driven LLM analysis, and AI-ensemble reasoning with reporting and persistence.
 
 This document describes what is implemented in the repository today, how to use it end-to-end, configuration details, and known limitations. Marketing language, badges, and non-implemented claims have been removed in favor of an accurate, engineering-focused overview.
 
@@ -16,9 +16,9 @@ This document describes what is implemented in the repository today, how to use 
   - Requires `OPENAI_API_KEY` and/or `GEMINI_API_KEY`
   - Strict JSON output and post-processing to reduce false positives
 
-- Optional AI ensemble (experimental)
+- AI ensemble
   - `core/ai_ensemble.py` coordinates multiple specialized agents, aggregates results, and attempts consensus
-  - Depends on API keys and model availability; treat as experimental
+  - Requires API keys and model availability
 
 - GitHub audit workflow
   - `core/github_auditor.py` clones repositories, detects frameworks, discovers contracts, and coordinates analysis
@@ -38,13 +38,6 @@ This document describes what is implemented in the repository today, how to use 
   - Two SQLite databases are used:
     - `~/.aether/aetheraudit.db` for engine-driven results
     - `~/.aether/aether_github_audit.db` for GitHub audit workflow
-
-
-## Not Implemented or Disabled
-
-- Formal verification and learning subsystems referenced in comments are disabled or removed.
-- Some features are marked as experimental (e.g., multi-model AI ensemble). Use cautiously.
-- Performance metrics and success rates are intentionally omitted; behavior depends on inputs, API availability, and target contracts.
 
 
 ## Requirements
@@ -72,10 +65,10 @@ pip install slither-analyzer
 
 Install Python dependencies:
 
-```bash
+   ```bash
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+   pip install -r requirements.txt
 ```
 
 
