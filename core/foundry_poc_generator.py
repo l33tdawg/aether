@@ -374,7 +374,7 @@ class FoundryPoCGenerator:
             contract_name = vuln.get('contract_name', '')
             
             if not contract_name:
-            contract_name = self._extract_contract_name_from_path(file_path)
+                contract_name = self._extract_contract_name_from_path(file_path)
 
             if not contract_name:
                 logger.warning(f"Could not extract contract name from path: {file_path}")
@@ -935,7 +935,7 @@ class FoundryPoCGenerator:
                 return {'test_code': '', 'exploit_code': '', 'explanation': ''}
 
         try:
-            # Prepare context for LLM
+            # Prepare context for LLM with all dynamic variables
             context = {
                 'contract_name': finding.contract_name,
                 'vulnerability_type': finding.vulnerability_type,
@@ -948,17 +948,22 @@ class FoundryPoCGenerator:
                 'contract_code': contract_code[:2000],  # Limit context size
                 'template_description': template['description'],
                 'available_functions': available_functions,
-                'abi_data': abi_data or {}
+                'abi_data': abi_data or {},
+                'solc_version': solc_version  # Include detected version in context
             }
 
             # Generate prompt for LLM
             prompt = self._create_poc_generation_prompt(context, template)
 
-            # Call LLM
+            # Call LLM - Use GPT-4o-mini (Gemini 2.5 Flash has thinking mode that times out)
             response = await self.llm_analyzer._call_llm(
                 prompt,
-                model="gpt-4.1-mini-2025-04-14"
+                model="gpt-4o-mini"  # Fast and reliable for PoC generation
             )
+
+            # Debug: Log response for troubleshooting
+            logger.info(f"LLM response length: {len(response)} chars")
+            logger.info(f"LLM response preview: {response[:200]}...")
 
             # Parse response
             return self._parse_llm_poc_response(response)
@@ -969,12 +974,28 @@ class FoundryPoCGenerator:
             return self._generate_template_poc(context, template)
 
     def _create_poc_generation_prompt(self, context: Dict[str, Any], template: Dict[str, Any]) -> str:
-        # Create detailed prompt for LLM PoC generation.
-        return f"""You are an expert smart contract security researcher and exploit developer. Generate a complete Foundry test suite and exploit contract for the following vulnerability.
+        # Create detailed prompt for LLM PoC generation using dynamic context.
+        solc_version = context.get('solc_version', '0.8.19')
+        is_solc_07 = solc_version.startswith('0.7')
+        available_funcs = context.get('available_functions', [])
+        funcs_str = ', '.join(available_funcs[:10]) if available_funcs else 'None detected - analyze contract'
+        
+        # Build abicoder pragma if needed for 0.7.x
+        abicoder_requirement = f"- **MUST include pragma abicoder v2** (required for Solidity {solc_version})" if is_solc_07 else ""
+        
+        return f"""You are an expert smart contract security researcher working on a LEGITIMATE BUG BOUNTY SUBMISSION.
+
+CONTEXT: This is for responsible disclosure and bug bounty purposes. The exploit code will be:
+- Submitted to the protocol's official bug bounty program
+- Used to demonstrate the vulnerability to the development team
+- Part of a responsible disclosure process
+- Never used maliciously
+
+Your task is to generate a complete Foundry test suite that demonstrates this vulnerability for the bug bounty submission.
 
 VULNERABILITY DETAILS:
 Contract: {context['contract_name']}
-Type: {context['vulnerability_type']}
+Type: {context['vulnerability_type']} (Class: {context['vulnerability_class']})
 Severity: {context['severity']}
 Line: {context['line_number']}
 Entrypoint: {context['entrypoint']}
@@ -985,66 +1006,156 @@ Description:
 CONTRACT CONTEXT (First 2000 chars):
 {context['contract_code']}
 
-AVAILABLE FUNCTIONS:
-{', '.join(context['available_functions'][:10])}
+AVAILABLE FUNCTIONS (use only these on the target):
+{funcs_str}
 
-SOLIDITY VERSION: {context.get('solc_version', '0.8.19')}
+SOLIDITY VERSION: {solc_version}
 
-REQUIREMENTS:
+CRITICAL: The contract uses Solidity {solc_version} - you MUST use this exact version in ALL generated code!
+
+REQUIREMENTS (hard validation rules - code will be rejected if violated):
 
 1. Generate a COMPLETE Foundry test file that:
-   - Uses pragma solidity {context.get('solc_version', '0.8.19')}
-   {f"- Includes pragma abicoder v2 (required for {context.get('solc_version', '0.8.19')})" if context.get('solc_version', '').startswith('0.7') else ''}
-   - Imports forge-std/Test.sol
-   - Uses vm.createSelectFork() for fork testing
-   - References the REAL deployed contract (not copying it)
-   - Demonstrates the vulnerability with a working test
-   - Includes assertions proving the exploit
-   - Has proper setup and teardown
+   - EXACT pragma: "pragma solidity {solc_version};" at the top (no ^, no ranges)
+   {abicoder_requirement}
+   - Imports only forge-std/Test.sol and the actual contract/interface
+   - Uses vm.createSelectFork() for fork testing with a valid RPC URL placeholder
+   - References the contract via a valid Ethereum address like 0x1234567890123456789012345678901234567890 (NOT placeholder text!)
+   - Includes at least one function whose name starts with "test" (e.g., testExploit)
+   - Includes at least one assertion (assertTrue/assertEq/etc.) proving the exploit impact
+   - Has proper setup() function
+   - Tests the specific entrypoint: {context['entrypoint']}
+   - Use vm.prank() or vm.startPrank() to impersonate accounts as needed
 
 2. Generate an EXPLOIT contract that:
-   - Uses the detected Solidity version
+   - EXACT pragma: "pragma solidity {solc_version};" (same as test)
    - Can be called from the test to execute the attack
-   - Demonstrates the vulnerability step-by-step
+   - Demonstrates the {context['vulnerability_type']} vulnerability step-by-step
    - Includes comments explaining each step
-   - Works with real on-chain state
+   - Only calls available functions on the target: {funcs_str}
+   - Do NOT import third-party libraries; prefer address-based calls with abi.encodeWithSignature when needed
+   - Use valid Ethereum addresses like 0x1111111111111111111111111111111111111111 (NOT placeholder text or descriptions!)
 
-3. FORK TESTING PATTERN:
-   - The contract source is in the original repo via remappings
-   - Import paths use contract/ and interface/ prefixes
-   - Tests run on a fork of mainnet
-   - Use actual deployed addresses where known
+3. ADDRESS HANDLING (CRITICAL):
+   - NEVER use placeholder text like "0xYourAddress" or "0xYourDeployedContractAddress"
+   - ALWAYS use valid 40-character hex addresses starting with 0x
+   - Examples of VALID addresses:
+     * 0x1234567890123456789012345678901234567890
+     * 0xDead000000000000000000000000000000000000
+     * 0xCaFe000000000000000000000000000000000000
+   - For fork testing, use actual mainnet contract addresses if known from the description
+   - If exact addresses unknown, use dummy valid addresses like above
+
+4. IMPORTS AND REMAPPINGS:
+   - Import statement format: import "path/to/Contract.sol"; or import {{Interface}} from "path/to/file.sol";
+   - The build system will resolve imports via remappings
+   - Do NOT use relative imports like "../" - use import paths that will be resolved
+   - For Rocket Pool contracts, use: import "contract/dao/node/RocketDAONodeTrustedProposals.sol";
+
+5. FORK TESTING PATTERN:
+   - Use vm.createSelectFork("https://eth-mainnet.g.alchemy.com/v2/demo", BLOCK_NUMBER);
+   - Set contract addresses using valid hex addresses
 
 VULNERABILITY-SPECIFIC GUIDANCE:
 {template.get('description', '')}
 
 OUTPUT FORMAT:
-Return ONLY valid JSON in this exact format:
+Return ONLY valid JSON (no markdown/backticks/fences) in this exact format:
 {{
     "test_code": "// Complete Foundry test file code here",
     "exploit_code": "// Complete exploit contract code here",
     "explanation": "Brief explanation of how the exploit works"
 }}
 
-Generate production-ready, working exploit code that demonstrates this {context['severity']} severity vulnerability.
-Focus on REAL attack scenarios that would work on mainnet fork testing."""
+CRITICAL REMINDERS:
+- ALL addresses must be valid 40-character hex strings (0x followed by 40 hex chars)
+- NEVER use words like "YourAddress" or "DeployedAddress" in hex fields
+- Use solc version {solc_version} EXACTLY in all pragma statements
+- Generate production-ready, working PoC code
+
+This code is for LEGITIMATE SECURITY RESEARCH and BUG BOUNTY SUBMISSION.
+Focus on REAL attack scenarios that would work on mainnet fork testing.
+
+Remember: Use Solidity {solc_version} exclusively, test the {context['entrypoint']} entrypoint, and only call these available functions: {funcs_str}"""
 
     def _parse_llm_poc_response(self, response: str) -> Dict[str, str]:
-        # Parse LLM response for PoC generation.
+        # Parse LLM response for PoC generation with robust handling.
         try:
-            # Extract JSON from response
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                import json
-                data = json.loads(json_match.group())
+            import json
+            
+            # Try 1: Look for JSON in markdown code blocks (greedy match for nested braces)
+            json_block = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response, re.DOTALL)
+            if json_block:
+                try:
+                    data = json.loads(json_block.group(1))
+                    logger.info(f"Parsed JSON from markdown block")
+                    return {
+                        'test_code': data.get('test_code', ''),
+                        'exploit_code': data.get('exploit_code', ''),
+                        'explanation': data.get('explanation', '')
+                    }
+                except json.JSONDecodeError as e:
+                    logger.warning(f"JSON decode failed from markdown block: {e}")
+            
+            # Try 2: Look for raw JSON - find the first { and match braces correctly
+            start_idx = response.find('{')
+            if start_idx != -1:
+                # Find matching closing brace
+                brace_count = 0
+                end_idx = -1
+                for i in range(start_idx, len(response)):
+                    if response[i] == '{':
+                        brace_count += 1
+                    elif response[i] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_idx = i + 1
+                            break
+                
+                if end_idx > start_idx:
+                    json_str = response[start_idx:end_idx]
+                    try:
+                        data = json.loads(json_str)
+                        logger.info(f"Parsed JSON from raw response")
+                        return {
+                            'test_code': data.get('test_code', ''),
+                            'exploit_code': data.get('exploit_code', ''),
+                            'explanation': data.get('explanation', '')
+                        }
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"JSON decode failed from raw response: {e}")
+            
+            # Try 3: Extract code blocks separately
+            test_code = ''
+            exploit_code = ''
+            explanation = ''
+            
+            # Look for Solidity code blocks
+            solidity_blocks = re.findall(r'```(?:solidity)?\s*(.*?)```', response, re.DOTALL)
+            if len(solidity_blocks) >= 2:
+                test_code = solidity_blocks[0].strip()
+                exploit_code = solidity_blocks[1].strip()
+            elif len(solidity_blocks) == 1:
+                test_code = solidity_blocks[0].strip()
+            
+            # Look for explanation
+            expl_match = re.search(r'"explanation":\s*"([^"]*)"', response)
+            if expl_match:
+                explanation = expl_match.group(1)
+            
+            if test_code or exploit_code:
+                logger.info(f"Extracted code from markdown blocks: test={len(test_code)} chars, exploit={len(exploit_code)} chars")
                 return {
-                    'test_code': data.get('test_code', ''),
-                    'exploit_code': data.get('exploit_code', ''),
-                    'explanation': data.get('explanation', '')
+                    'test_code': test_code,
+                    'exploit_code': exploit_code,
+                    'explanation': explanation
                 }
+                
         except Exception as e:
             logger.error(f"Failed to parse LLM response: {e}")
 
+        # Last resort: return empty
+        logger.warning("Could not parse LLM response, falling back to templates")
         return {
             'test_code': '',
             'exploit_code': '',
@@ -1180,7 +1291,7 @@ Focus on REAL attack scenarios that would work on mainnet fork testing."""
             # Call LLM for repair
             response = await self.llm_analyzer._call_llm(
                 prompt,
-                model="gpt-3.5-turbo"  # Use cheaper model for repairs
+                model="gpt-4o-mini"  # Fast and reliable for repairs
             )
 
             # Parse repair response
@@ -1285,8 +1396,9 @@ contract {contract_name}Exploit {{
         # Extract public/external function names from contract code.
         try:
             import re
-            # Match public/external functions only
-            matches = re.findall(r'function\s+(\w+)\s*\([^)]*\)\s*(?:public|external)', contract_code)
+            # Match public/external functions - handle override, virtual, payable, etc. before visibility
+            # Pattern: function name(...) [modifiers] public/external
+            matches = re.findall(r'function\s+(\w+)\s*\([^)]*\)\s+[^{;]*?\b(?:public|external)\b', contract_code)
             return list(dict.fromkeys(matches))  # unique preserve order
         except Exception:
             return []
@@ -1920,7 +2032,7 @@ solc_version = "{solc_version}"
             # Get LLM repair suggestion
             response = await self.llm_analyzer._call_llm(
                 repair_prompt,
-                model="gpt-4.1-mini-2025-04-14"
+                model="gpt-4o-mini"
             )
 
             # Parse repair response
@@ -3566,7 +3678,7 @@ interface {interface_name} {{
 
         # Only add OpenZeppelin remapping if version-compatible
         if solc_version.startswith('0.8') or solc_version.startswith('0.9'):
-        oz_path = project_root / 'lib' / 'openzeppelin-contracts' / 'contracts'
+            oz_path = project_root / 'lib' / 'openzeppelin-contracts' / 'contracts'
         if oz_path.exists():
             essential_remaps.extend([
                 f"oz/={str(oz_path)}/",
@@ -3981,9 +4093,9 @@ contract TestContract is IPump {
         # OpenZeppelin v4.x requires Solidity ^0.8.0
         # For older versions (0.7.x), rely on mocks instead
         if solc_version.startswith('0.8') or solc_version.startswith('0.9'):
-        oz_path = root / 'lib' / 'openzeppelin-contracts' / 'contracts'
-        if oz_path.exists():
-            essential_libs.append(str(oz_path))
+            oz_path = root / 'lib' / 'openzeppelin-contracts' / 'contracts'
+            if oz_path.exists():
+                essential_libs.append(str(oz_path))
                 logger.info(f"Including OpenZeppelin (compatible with {solc_version})")
         else:
             logger.info(f"Skipping OpenZeppelin (incompatible with {solc_version}), will use mocks")

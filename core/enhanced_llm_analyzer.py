@@ -7,6 +7,8 @@ import os
 import re
 import asyncio
 import json
+import time
+import requests
 from typing import Dict, List, Any, Optional
 
 from openai import OpenAI
@@ -16,39 +18,55 @@ class EnhancedLLMAnalyzer:
     """Enhanced LLM-powered smart contract analysis with validation."""
 
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4.1-mini-2025-04-14"):
-        # Try to get API key from multiple sources
+        # Try to get OpenAI API key from multiple sources
         self.api_key = api_key
         if not self.api_key:
             self.api_key = os.getenv("OPENAI_API_KEY")
         
-        if not self.api_key:
-            # Try config manager for stored key
+        # Try to get Gemini API key
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
+        
+        if not self.api_key or not self.gemini_api_key:
+            # Try config manager for stored keys
             try:
                 from core.config_manager import ConfigManager
                 cm = ConfigManager()
-                if getattr(cm.config, 'openai_api_key', ''):
+                if not self.api_key and getattr(cm.config, 'openai_api_key', ''):
                     self.api_key = cm.config.openai_api_key
                     os.environ['OPENAI_API_KEY'] = self.api_key
+                if not self.gemini_api_key and getattr(cm.config, 'gemini_api_key', ''):
+                    self.gemini_api_key = cm.config.gemini_api_key
+                    os.environ['GEMINI_API_KEY'] = self.gemini_api_key
             except Exception:
                 pass
         
-        self.has_api_key = bool(self.api_key)
+        self.has_api_key = bool(self.api_key) or bool(self.gemini_api_key)
         self.model = model
-        self.fallback_models = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
-        # Context limits for different models
+        
+        # Updated fallback models to include Gemini
+        self.fallback_models = ["gemini-2.5-flash", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+        
+        # Context limits for different models (Gemini has 2M token context)
         self.model_context_limits = {
             "gpt-4.1-mini-2025-04-14": 1000000,  # 1M tokens
             "gpt-4.1-mini": 1000000,  # 1M tokens
             "gpt-4o-mini": 128000,    # 128k tokens
-            "gpt-4-turbo": 128000,     # 128k tokens
-            "gpt-4": 8192,             # 8k tokens
-            "gpt-3.5-turbo": 16384     # 16k tokens
+            "gpt-4o": 128000,         # 128k tokens
+            "gpt-4-turbo": 128000,    # 128k tokens
+            "gpt-4": 8192,            # 8k tokens
+            "gpt-3.5-turbo": 16384,   # 16k tokens
+            "gemini-2.5-flash": 2000000,  # 2M tokens
+            "gemini-1.5-pro": 2000000,    # 2M tokens
+            "gemini-1.5-flash": 1000000,  # 1M tokens
         }
 
-        if self.has_api_key:
+        if self.api_key:
             self.client = OpenAI(api_key=self.api_key)
         else:
-            print("⚠️  No OpenAI API key found in environment or config - LLM features disabled")
+            self.client = None
+            
+        if not self.has_api_key:
+            print("⚠️  No API keys found in environment or config - LLM features disabled")
 
     async def analyze_vulnerabilities(
         self,
@@ -203,7 +221,7 @@ Before reporting any vulnerability, verify:
         return prompt
 
     async def _call_llm(self, prompt: str, model: str = "gpt-4.1-mini-2025-04-14") -> Optional[str]:
-        """Call the LLM with the given prompt."""
+        """Call the LLM with the given prompt. Supports both OpenAI and Gemini models."""
         if not self.has_api_key:
             print("⚠️  No API key available for LLM calls")
             return None
@@ -213,12 +231,25 @@ Before reporting any vulnerability, verify:
         
         for current_model in models_to_try:
             try:
+                # Check if this is a Gemini model
+                is_gemini = current_model.startswith('gemini-')
+                
+                # Skip if we don't have the right API key
+                if is_gemini and not self.gemini_api_key:
+                    print(f"⚠️  Skipping {current_model} - no Gemini API key")
+                    continue
+                elif not is_gemini and not self.api_key:
+                    print(f"⚠️  Skipping {current_model} - no OpenAI API key")
+                    continue
+                
                 # Get context limit for current model
                 context_limit = self.model_context_limits.get(current_model, 8192)
                 # More conservative token estimation: ~3 chars per token
-                max_prompt_tokens = context_limit - 1000  # Reserve 1000 tokens for completion
+                max_prompt_tokens = context_limit - 20000  # Reserve for completion (Gemini thinking + output)
                 max_prompt_chars = max_prompt_tokens * 3  # ~3 chars per token
-                max_completion_tokens = 1000  # Fixed completion token limit
+                # Gemini 2.5 Flash uses thinking mode - balance between thinking and output
+                # 8K tokens is reasonable: ~4K for thinking + 4K for actual output
+                max_completion_tokens = 8000 if is_gemini else 4000
                 
                 # Truncate prompt if needed for current model
                 truncated_prompt = prompt
@@ -226,26 +257,21 @@ Before reporting any vulnerability, verify:
                     print(f"⚠️  Prompt too large for {current_model} ({len(prompt)} chars), truncating to {max_prompt_chars}")
                     truncated_prompt = prompt[:max_prompt_chars] + "\n\n[Note: Content truncated for model compatibility]"
                 
-                response = self.client.chat.completions.create(
-                    model=current_model,
-                    messages=[
-                        {"role": "system", "content": "You are an expert smart contract security auditor. Provide accurate, validated analysis."},
-                        {"role": "user", "content": truncated_prompt}
-                    ],
-                    temperature=0.1,  # Low temperature for more consistent results
-                    max_tokens=max_completion_tokens
-                )
+                if is_gemini:
+                    # Use Google Gemini API
+                    response_text = await self._call_gemini_api(current_model, truncated_prompt, max_completion_tokens)
+                else:
+                    # Use OpenAI API
+                    response_text = await self._call_openai_api(current_model, truncated_prompt, max_completion_tokens)
                 
-                if current_model != model:
-                    print(f"✅ Using fallback model: {current_model}")
-                
-                # Clean the response text of control characters using the improved regex
-                import re
-                response_text = response.choices[0].message.content
-                response_text = re.sub(r'[\x00-\x1F\x7F]', '', response_text)
-                
-                return response_text
-                
+                if response_text:
+                    if current_model != model:
+                        print(f"✅ Using fallback model: {current_model}")
+                    
+                    # Clean the response text of control characters
+                    response_text = re.sub(r'[\x00-\x1F\x7F]', '', response_text)
+                    return response_text
+                    
             except Exception as e:
                 print(f"❌ Model {current_model} failed: {e}")
                 if current_model == model:
@@ -254,6 +280,86 @@ Before reporting any vulnerability, verify:
         
         print("❌ All LLM models failed")
         return None
+    
+    async def _call_openai_api(self, model: str, prompt: str, max_tokens: int) -> Optional[str]:
+        """Call OpenAI API."""
+        try:
+            if not self.client:
+                return None
+                
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are an expert smart contract security auditor. Provide accurate, validated analysis."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,  # Low temperature for more consistent results
+                max_tokens=max_tokens
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            raise e
+    
+    async def _call_gemini_api(self, model: str, prompt: str, max_tokens: int) -> Optional[str]:
+        """Call Google Gemini API (similar to ai_ensemble.py implementation)."""
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.gemini_api_key}"
+            
+            payload = {
+                "contents": [{
+                    "parts": [{
+                        "text": prompt
+                    }]
+                }],
+                "generationConfig": {
+                    "maxOutputTokens": max_tokens,
+                    "temperature": 0.1,  # Low temperature for consistent results
+                }
+            }
+            
+            # Gemini API with thinking mode can be slow, use longer timeout with retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # Increased timeout for thinking mode (can take 90-120 seconds)
+                    response = requests.post(url, json=payload, timeout=120)
+                    response.raise_for_status()
+                    break  # Success, exit retry loop
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                    if attempt < max_retries - 1:
+                        print(f"⚠️  Gemini timeout on attempt {attempt + 1}/{max_retries}, retrying...")
+                        time.sleep(3)  # Wait before retry
+                    else:
+                        raise e
+            
+            result = response.json()
+            
+            # Parse Gemini response structure
+            candidates = result.get('candidates') or []
+            if candidates:
+                content = candidates[0].get('content') or {}
+                parts = content.get('parts') or []
+                
+                if parts and isinstance(parts, list):
+                    # Find text in parts (could be at any index)
+                    for part in parts:
+                        if isinstance(part, dict) and 'text' in part:
+                            return part['text']
+                    
+                    print(f"⚠️  No text found in Gemini response parts")
+                else:
+                    print(f"⚠️  Gemini parts is not a list or is empty")
+            else:
+                print(f"⚠️  No candidates in Gemini response")
+                if 'promptFeedback' in result:
+                    print(f"⚠️  Gemini prompt feedback: {result['promptFeedback']}")
+            
+            return None
+            
+        except Exception as e:
+            raise e
 
     def _parse_and_validate_response(self, response: str, contract_content: str) -> Dict[str, Any]:
         """Parse and validate the LLM response."""
