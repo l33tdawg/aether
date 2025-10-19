@@ -1608,18 +1608,21 @@ class AetherDatabase:
                 total_selected = len(selected_contracts)
                 
                 # Get all contracts with their analysis status
+                # Use a subquery to properly count success results per contract
                 cursor = conn.execute('''
-                    SELECT c.id, c.file_path, ar.status
+                    SELECT c.id, c.file_path, 
+                           (SELECT COUNT(*) FROM analysis_results ar 
+                            WHERE ar.contract_id = c.id AND ar.status = 'success') as has_success
                     FROM contracts c
-                    LEFT JOIN analysis_results ar ON c.id = ar.contract_id AND ar.status = 'success'
-                ''')
+                    WHERE c.project_id = (SELECT project_id FROM audit_scopes WHERE id = ?)
+                ''', (scope_id,))
                 
                 # Build a map of file_path -> (contract_id, analyzed)
                 path_to_status = {}
                 for row in cursor.fetchall():
                     contract_id = row[0]
                     file_path = row[1]
-                    has_success = row[2] is not None  # Has 'success' status
+                    has_success = row[2] > 0  # Check if count > 0
                     path_to_status[file_path] = (contract_id, has_success)
                 
                 # Count how many selected contracts have been analyzed

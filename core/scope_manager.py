@@ -243,36 +243,36 @@ class ScopeManager:
         """Allow user to add more contracts to existing scope."""
         current = scope['selected_contracts']
         
-        self.console.print("\n[bold]Currently selected contracts:[/bold]")
-        self.console.print(f"  {','.join(str(i) for i, c in enumerate(all_contracts) if c['file_path'] in current)}\n")
+        # Filter to available (unselected) contracts
+        available_contracts = [c for c in all_contracts if c['file_path'] not in current]
         
-        # Show available contracts not yet selected
-        available_indices = [i for i, c in enumerate(all_contracts) if c['file_path'] not in current]
-        if not available_indices:
+        if not available_contracts:
             self.console.print("[yellow]All contracts already selected![/yellow]")
             return None
         
-        self.console.print(f"[bold]Available to add (indices: {','.join(map(str, available_indices[:10]))}...)[/bold]")
-        user_input = self.console.input("[bold green]Enter indices to add (comma-separated) or 'cancel': [/bold green]").strip()
+        self.console.print(f"\n[bold]Currently selected: {len(current)} contracts[/bold]")
+        self.console.print(f"[bold]Available to add: {len(available_contracts)} contracts[/bold]\n")
+        self.console.print("[bold cyan]Launching interactive selector for additional contracts...[/bold cyan]\n")
         
-        if user_input.lower() == 'cancel':
+        # Use interactive selector for available contracts
+        selected_indices = self.interactive_select(available_contracts)
+        
+        if not selected_indices:
+            self.console.print("[yellow]No additional contracts selected[/yellow]")
             return None
         
-        try:
-            new_indices = [int(x.strip()) for x in user_input.split(',')]
-            new_paths = [all_contracts[i]['file_path'] for i in new_indices if i < len(all_contracts)]
-            updated_paths = current + new_paths
-            
-            self.db.update_scope_contracts(scope['id'], updated_paths)
-            scope['selected_contracts'] = updated_paths
-            scope['total_selected'] = len(updated_paths)
-            scope['total_pending'] += len(new_paths)
-            
-            self.console.print(f"\n[green]✓ Added {len(new_paths)} contracts. Total: {len(updated_paths)}[/green]")
-            return scope
-        except (ValueError, IndexError):
-            self.console.print("[red]Invalid input[/red]")
-            return None
+        # Map selected indices to paths
+        new_paths = [available_contracts[i]['file_path'] for i in selected_indices]
+        updated_paths = current + new_paths
+        
+        # Update database
+        self.db.update_scope_contracts(scope['id'], updated_paths)
+        scope['selected_contracts'] = updated_paths
+        scope['total_selected'] = len(updated_paths)
+        scope['total_pending'] += len(new_paths)
+        
+        self.console.print(f"\n[green]✓ Added {len(new_paths)} contracts. Total: {len(updated_paths)}[/green]")
+        return scope
     
     def handle_remove_contracts(self, scope: Dict[str, Any], all_contracts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Allow user to remove contracts from scope."""
