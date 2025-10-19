@@ -3,7 +3,7 @@
 
 Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and optionally validating those tests on mainnet forks. It combines static analysis, prompt-driven LLM analysis, and AI-ensemble reasoning with reporting and persistence.
 
-**Enhanced PoC Generation**: Aether now features advanced AST-based contract analysis, iterative compilation fixes, and production-ready LLM prompts that generate exploits suitable for $100k+ bug bounty submissions.
+**Enhanced PoC Generation**: Aether now features advanced AST-based contract analysis, iterative compilation fixes, and production-ready LLM prompts that generate exploits suitable for bug bounty submissions.
 
 ## Scope and Capabilities
 
@@ -44,6 +44,28 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
     - `~/.aether/aether_github_audit.db` for GitHub audit workflow
 
 
+## Quick Setup (Recommended)
+
+**New users:** Run the automated installer for a guided setup experience:
+
+```bash
+python setup.py
+```
+
+This interactive installer will:
+- ✓ Check system requirements (Python 3.11+)
+- ✓ Install Foundry (forge/anvil) if needed
+- ✓ Set up Python virtual environment
+- ✓ Install all Python dependencies
+- ✓ Configure API keys with validation
+- ✓ Create configuration files
+- ✓ Verify everything works
+
+**Non-interactive mode** (for CI/CD):
+```bash
+python setup.py --non-interactive
+```
+
 ## Requirements
 
 - Python 3.11+
@@ -53,7 +75,11 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
   - `OPENAI_API_KEY`
   - `GEMINI_API_KEY`
 
-Install system tools:
+## Manual Setup
+
+If you prefer manual installation or the automated setup fails:
+
+### Install system tools:
 
 ```bash
 # Foundry
@@ -67,18 +93,24 @@ export PATH="$PATH:$HOME/.foundry/bin"
 pip install slither-analyzer
 ```
 
-Install Python dependencies:
+### Install Python dependencies:
 
-   ```bash
+```bash
 python -m venv venv
 source venv/bin/activate
-   pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
 
 ## Configuration
 
-Environment variables:
+### Automated Configuration
+
+The `setup.py` installer will guide you through configuring all API keys.
+
+### Manual Configuration
+
+Set environment variables:
 
 ```bash
 # Required for LLM features
@@ -87,6 +119,13 @@ export GEMINI_API_KEY=gsk-...
 
 # Optional
 export AETHER_LOG_LEVEL=INFO
+```
+
+Or copy the example environment file and fill in your keys:
+
+```bash
+cp env.example .env
+# Edit .env with your API keys
 ```
 
 Database locations:

@@ -20,18 +20,19 @@ class ScopeManager:
         self.console = Console()
         self.db = db or AetherDatabase()
     
-    def interactive_select(self, items: List[Dict[str, Any]]) -> List[int]:
+    def interactive_select(self, items: List[Dict[str, Any]], disabled_indices: Optional[List[int]] = None) -> List[int]:
         """
         Interactive multi-select using curses with arrow keys and spacebar.
         
         Args:
             items: List of dicts with 'file_path' and 'contract_name' keys
+            disabled_indices: List of indices that are disabled/already selected
             
         Returns:
             List of selected indices
         """
         try:
-            return curses.wrapper(self._curses_select, items)
+            return curses.wrapper(self._curses_select, items, disabled_indices or [])
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Selection cancelled[/yellow]")
             return []
@@ -39,7 +40,7 @@ class ScopeManager:
             self.console.print(f"[red]Selection error: {e}[/red]")
             return []
     
-    def _curses_select(self, stdscr, items: List[Dict[str, Any]]) -> List[int]:
+    def _curses_select(self, stdscr, items: List[Dict[str, Any]], disabled_indices: List[int]) -> List[int]:
         """Curses-based interactive selector."""
         curses.curs_set(0)  # Hide cursor
         selected = [False] * len(items)
@@ -49,6 +50,7 @@ class ScopeManager:
         curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Highlight
         curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Selected
         curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)   # Info
+        curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_BLACK)  # Disabled (dimmed)
         
         while True:
             stdscr.clear()
@@ -59,8 +61,9 @@ class ScopeManager:
             stdscr.addstr(0, 0, header[:width], curses.color_pair(3) | curses.A_BOLD)
             
             # Draw instructions
+            new_selected_count = sum(1 for i, s in enumerate(selected) if s and i not in disabled_indices)
             instructions = "Selected: {} / {}  |  [q]uit without selecting".format(
-                sum(selected), len(items)
+                new_selected_count, len([i for i in range(len(items)) if i not in disabled_indices])
             )
             stdscr.addstr(1, 0, instructions[:width], curses.color_pair(3))
             
@@ -82,14 +85,24 @@ class ScopeManager:
                 contract_name = item.get('contract_name', 'Unknown')
                 
                 # Format the line
-                checkbox = "✓" if selected[actual_index] else " "
+                is_disabled = actual_index in disabled_indices
                 is_current = (actual_index == position)
                 
-                line = f"[{checkbox}] [{actual_index:3d}] {file_path:<50} ({contract_name})"
+                if is_disabled:
+                    checkbox = "✓"  # Already selected
+                    status = "[ALREADY SELECTED]"
+                else:
+                    checkbox = "✓" if selected[actual_index] else " "
+                    status = ""
+                
+                line = f"[{checkbox}] [{actual_index:3d}] {file_path:<40} ({contract_name}) {status}"
                 line = line[:width - 1]  # Trim to screen width
                 
                 # Apply styling
-                if is_current:
+                if is_disabled:
+                    # Disabled contracts in dim gray
+                    attr = curses.A_DIM
+                elif is_current:
                     attr = curses.color_pair(1) | curses.A_BOLD
                 elif selected[actual_index]:
                     attr = curses.color_pair(2)
@@ -113,7 +126,9 @@ class ScopeManager:
                     return []
                 
                 elif key == ord(' '):  # Spacebar
-                    selected[position] = not selected[position]
+                    # Only toggle if not disabled
+                    if position not in disabled_indices:
+                        selected[position] = not selected[position]
                 
                 elif key == curses.KEY_UP:
                     position = (position - 1) % len(items)
@@ -128,14 +143,17 @@ class ScopeManager:
                     position = len(items) - 1
                 
                 elif key == ord('\n'):  # Enter/Return
-                    if sum(selected) == 0:
-                        self.console.print("[red]Please select at least one contract[/red]")
+                    new_selections = [i for i, s in enumerate(selected) if s and i not in disabled_indices]
+                    if len(new_selections) == 0:
+                        self.console.print("[red]Please select at least one new contract[/red]")
                         stdscr.getch()  # Wait for user
                         continue
-                    return [i for i, s in enumerate(selected) if s]
+                    return new_selections
                 
                 elif key == ord('a') or key == ord('A'):  # Select all
-                    selected = [True] * len(items)
+                    for i in range(len(items)):
+                        if i not in disabled_indices:
+                            selected[i] = True
                 
                 elif key == ord('n') or key == ord('N'):  # Select none
                     selected = [False] * len(items)
@@ -153,34 +171,52 @@ class ScopeManager:
         if not active_scope:
             return None  # No saved scope, start fresh
         
-        # Display saved scope info
-        self._display_saved_scope_menu(active_scope, all_discovered_contracts)
-        
-        # Get user choice
+        # Loop to handle menu options (allowing user to cancel operations and return to menu)
         while True:
-            try:
-                choice = self.console.input("\n[bold green]Select option: [/bold green]").strip()
-                
-                if choice == "1":
-                    return {"action": "continue", "scope": active_scope}
-                elif choice == "2":
-                    return {"action": "add_contracts", "scope": active_scope, "all_contracts": all_discovered_contracts}
-                elif choice == "3":
-                    return {"action": "remove_contracts", "scope": active_scope}
-                elif choice == "4":
-                    return {"action": "reaudit", "scope": active_scope}
-                elif choice == "5":
-                    return {"action": "new_scope", "scope": None}
-                elif choice == "6":
-                    return {"action": "view_report", "scope": active_scope}
-                elif choice == "7":
-                    self.console.print("[yellow]Audit cancelled[/yellow]")
+            # Display saved scope info
+            self._display_saved_scope_menu(active_scope, all_discovered_contracts)
+            
+            # Get user choice
+            while True:
+                try:
+                    choice = self.console.input("\n[bold green]Select option: [/bold green]").strip()
+                    
+                    if choice == "1":
+                        return {"action": "continue", "scope": active_scope}
+                    elif choice == "2":
+                        # Try to add contracts, but allow user to cancel and return to menu
+                        added = self.handle_add_contracts(active_scope, all_discovered_contracts)
+                        if added:
+                            active_scope = added  # Update scope with newly added contracts
+                            return {"action": "add_contracts", "scope": active_scope, "all_contracts": all_discovered_contracts}
+                        else:
+                            # User cancelled (pressed 'q'), return to menu
+                            self.console.print("[yellow]Returning to menu...[/yellow]\n")
+                            break  # Break inner loop to redisplay menu
+                    elif choice == "3":
+                        removed = self.handle_remove_contracts(active_scope, all_discovered_contracts)
+                        if removed:
+                            active_scope = removed
+                            return {"action": "remove_contracts", "scope": active_scope}
+                        else:
+                            # User cancelled, return to menu
+                            self.console.print("[yellow]Returning to menu...[/yellow]\n")
+                            break  # Break inner loop to redisplay menu
+                    elif choice == "4":
+                        return {"action": "reaudit", "scope": active_scope}
+                    elif choice == "5":
+                        return {"action": "new_scope", "scope": None}
+                    elif choice == "6":
+                        return {"action": "view_report", "scope": active_scope}
+                    elif choice == "7":
+                        self.console.print("[yellow]Audit cancelled[/yellow]")
+                        return {"action": "cancel", "scope": None}
+                    else:
+                        self.console.print("[red]Invalid option. Please select 1-7[/red]")
+                except KeyboardInterrupt:
+                    self.console.print("\n[yellow]Audit cancelled[/yellow]")
                     return {"action": "cancel", "scope": None}
-                else:
-                    self.console.print("[red]Invalid option. Please select 1-7[/red]")
-            except KeyboardInterrupt:
-                self.console.print("\n[yellow]Audit cancelled[/yellow]")
-                return {"action": "cancel", "scope": None}
+            # If we get here, loop back to show menu again
     
     def _display_saved_scope_menu(self, scope: Dict[str, Any], all_contracts: List[Dict[str, Any]]) -> None:
         """Display saved scope info and resume menu."""
@@ -250,19 +286,22 @@ class ScopeManager:
             self.console.print("[yellow]All contracts already selected![/yellow]")
             return None
         
+        # Create a list of indices for contracts that are already selected (in all_contracts)
+        already_selected_indices = [all_contracts.index(c) for c in all_contracts if c['file_path'] in current]
+        
         self.console.print(f"\n[bold]Currently selected: {len(current)} contracts[/bold]")
         self.console.print(f"[bold]Available to add: {len(available_contracts)} contracts[/bold]\n")
         self.console.print("[bold cyan]Launching interactive selector for additional contracts...[/bold cyan]\n")
         
-        # Use interactive selector for available contracts
-        selected_indices = self.interactive_select(available_contracts)
+        # Use interactive selector for ALL contracts, passing already selected indices as disabled
+        selected_indices = self.interactive_select(all_contracts, already_selected_indices)
         
         if not selected_indices:
             self.console.print("[yellow]No additional contracts selected[/yellow]")
             return None
         
         # Map selected indices to paths
-        new_paths = [available_contracts[i]['file_path'] for i in selected_indices]
+        new_paths = [all_contracts[i]['file_path'] for i in selected_indices]
         updated_paths = current + new_paths
         
         # Update database

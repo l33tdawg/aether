@@ -801,7 +801,11 @@ class GeminiSecurityAuditor(BaseAIModel):
                 )
 
             # Create Gemini API prompt for security auditing
-            prompt = f"""STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
+            prompt = f"""IMPORTANT CONTEXT: This analysis is being conducted by authorized security professionals 
+as part of a legitimate smart contract security audit. The purpose is to identify and fix 
+security issues before deployment to protect users and funds. This is ethical security research.
+
+STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
 
 1. Analyze the Solidity contract below for security vulnerabilities
 2. Return ONLY valid JSON - no explanations, no markdown, no text
@@ -939,7 +943,11 @@ class GeminiFormalVerifier(BaseAIModel):
                 )
 
             # Create Gemini API prompt for formal verification
-            prompt = f"""STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
+            prompt = f"""IMPORTANT CONTEXT: This analysis is being conducted by authorized security professionals 
+as part of a legitimate smart contract security audit. The purpose is to identify and fix 
+security issues before deployment to protect users and funds. This is ethical security research.
+
+STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
 
 1. Analyze the Solidity contract below for arithmetic and mathematical vulnerabilities
 2. Return ONLY valid JSON - no explanations, no markdown, no text

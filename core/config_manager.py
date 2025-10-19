@@ -310,6 +310,130 @@ class ConfigManager:
         self.config.etherscan_api_key = api_key
         self.save_config()
         self.console.print("[green]✓ Etherscan API key configured[/green]")
+    
+    def set_gemini_key(self, api_key: str) -> None:
+        """Set Gemini API key for LLM features."""
+        self.config.gemini_api_key = api_key
+        self.save_config()
+        self.console.print("[green]✓ Gemini API key configured[/green]")
+    
+    def validate_openai_key(self, api_key: Optional[str] = None) -> tuple[bool, str]:
+        """Validate OpenAI API key by making a test call.
+        
+        Args:
+            api_key: API key to validate. If None, uses configured key.
+            
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        key_to_test = api_key or self.config.openai_api_key
+        
+        if not key_to_test:
+            return False, "No API key provided"
+        
+        if not key_to_test.startswith('sk-'):
+            return False, "Invalid format (should start with 'sk-')"
+        
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=key_to_test)
+            
+            # Make a minimal test call
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=5
+            )
+            
+            return True, "Valid"
+        
+        except Exception as e:
+            error_msg = str(e)
+            if "invalid" in error_msg.lower() or "incorrect" in error_msg.lower():
+                return False, "Invalid API key"
+            elif "quota" in error_msg.lower():
+                return True, "Valid (but quota exceeded)"
+            else:
+                return False, f"Validation failed: {error_msg[:100]}"
+    
+    def validate_gemini_key(self, api_key: Optional[str] = None) -> tuple[bool, str]:
+        """Validate Gemini API key by making a test call.
+        
+        Args:
+            api_key: API key to validate. If None, uses configured key.
+            
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        key_to_test = api_key or self.config.gemini_api_key
+        
+        if not key_to_test:
+            return False, "No API key provided"
+        
+        try:
+            import httpx
+            
+            # Test Gemini API with a minimal request
+            url = "https://generativelanguage.googleapis.com/v1beta/models?key=" + key_to_test
+            
+            response = httpx.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                return True, "Valid"
+            elif response.status_code == 400:
+                return False, "Invalid API key"
+            elif response.status_code == 403:
+                return False, "API key forbidden or restricted"
+            else:
+                return False, f"Validation failed (status {response.status_code})"
+        
+        except Exception as e:
+            return False, f"Validation error: {str(e)[:100]}"
+    
+    def validate_etherscan_key(self, api_key: Optional[str] = None, network: str = 'mainnet') -> tuple[bool, str]:
+        """Validate Etherscan API key by making a test call.
+        
+        Args:
+            api_key: API key to validate. If None, uses configured key.
+            network: Network to test against (mainnet, polygon, arbitrum, base)
+            
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        key_to_test = api_key or self.config.etherscan_api_key
+        
+        if not key_to_test:
+            return False, "No API key provided"
+        
+        try:
+            import httpx
+            
+            # Test with a simple API call
+            base_urls = {
+                'mainnet': 'https://api.etherscan.io/api',
+                'polygon': 'https://api.polygonscan.com/api',
+                'arbitrum': 'https://api.arbiscan.io/api',
+                'base': 'https://api.basescan.org/api'
+            }
+            
+            base_url = base_urls.get(network, base_urls['mainnet'])
+            
+            url = f"{base_url}?module=stats&action=ethsupply&apikey={key_to_test}"
+            response = httpx.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == '1':
+                    return True, "Valid"
+                elif 'invalid' in data.get('result', '').lower():
+                    return False, "Invalid API key"
+                else:
+                    return False, f"API returned: {data.get('result', 'Unknown error')}"
+            else:
+                return False, f"HTTP {response.status_code}"
+        
+        except Exception as e:
+            return False, f"Validation error: {str(e)[:100]}"
 
     def get_workspace_path(self) -> Path:
         """Get workspace path as Path object."""

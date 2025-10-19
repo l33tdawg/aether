@@ -16,6 +16,70 @@ from core.graceful_shutdown import get_shutdown_handler
 from core.exploit_tester import ExploitTester
 
 
+def check_basic_setup(skip_check: bool = False) -> bool:
+    """Quick validation before running commands.
+    
+    Args:
+        skip_check: If True, skip the pre-flight check
+        
+    Returns:
+        True if setup looks good, False otherwise
+    """
+    if skip_check:
+        return True
+    
+    import os
+    import shutil
+    
+    issues = []
+    warnings = []
+    
+    # Check for Foundry (required for many features)
+    if not shutil.which('forge'):
+        issues.append("Foundry not found in PATH")
+        issues.append("  Install: curl -L https://foundry.paradigm.xyz | bash && foundryup")
+        issues.append("  Then add to PATH: export PATH=\"$PATH:$HOME/.foundry/bin\"")
+    
+    # Check for LLM API keys (required for AI features)
+    has_openai = bool(os.getenv('OPENAI_API_KEY'))
+    has_gemini = bool(os.getenv('GEMINI_API_KEY'))
+    
+    if not has_openai and not has_gemini:
+        warnings.append("No LLM API keys configured (OPENAI_API_KEY or GEMINI_API_KEY)")
+        warnings.append("  LLM-powered analysis will be unavailable")
+    
+    # Check config directory
+    config_dir = Path.home() / '.aether'
+    if not config_dir.exists():
+        warnings.append(f"Config directory not found: {config_dir}")
+        warnings.append("  Run 'python setup.py' for guided setup")
+    
+    # Display issues if any
+    if issues or warnings:
+        print("⚠️  Setup Check:")
+        
+        if issues:
+            print("\n❌ Issues detected:")
+            for issue in issues:
+                print(f"  {issue}")
+        
+        if warnings:
+            print("\n⚠️  Warnings:")
+            for warning in warnings:
+                print(f"  {warning}")
+        
+        if issues:
+            print("\n💡 Run 'python setup.py' for guided installation and configuration")
+            print("   Or use '--skip-setup-check' to bypass this check\n")
+            return False
+        else:
+            # Only warnings, continue
+            print("\n💡 Tip: Run 'python setup.py' to configure all features\n")
+            return True
+    
+    return True
+
+
 def main():
     """Main entry point for Aether CLI."""
     # Set up graceful shutdown handler for Ctrl+C
@@ -30,6 +94,13 @@ Examples:
   aether fuzz contracts/MyToken.sol --max-runs 1000
   aether run contracts/MyToken.sol --end-to-end
         """
+    )
+    
+    # Global options
+    parser.add_argument(
+        '--skip-setup-check',
+        action='store_true',
+        help='Skip the pre-flight dependency check'
     )
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
@@ -180,6 +251,15 @@ Examples:
     if not args.command:
         parser.print_help()
         return 1
+    
+    # Run pre-flight setup check (unless skipped or running certain commands)
+    skip_check_commands = ['version', 'config']  # Commands that don't need full setup
+    
+    if args.command not in skip_check_commands:
+        skip_check = getattr(args, 'skip_setup_check', False)
+        
+        if not check_basic_setup(skip_check=skip_check):
+            return 1
 
     # Handle special cases that don't need full CLI initialization
     if args.command == 'fetch' and args.list_networks:
