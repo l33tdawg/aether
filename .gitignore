@@ -170,3 +170,4 @@ docs/_build/
 !fetch_and_audit.py
 !foundry.lock
 !foundry.toml
+scripts/fix_unknown_vulnerability_types.py
