@@ -341,17 +341,70 @@ class EnhancedAetherAuditEngine:
 
 # Formal verification method removed - was simulated
 
-    def _calibrate_vulnerability_severity(self, vuln: Any, contract_content: str) -> Any:
-        """Calibrate vulnerability severity to prevent false positives."""
-        # Handle different vulnerability object types
-        if hasattr(vuln, 'severity'):
-            original_severity = vuln.severity
-            vuln_type = getattr(vuln, 'vulnerability_type', 'unknown')
+    def _normalize_vulnerability_dict(self, vuln: Any) -> Dict[str, Any]:
+        """Normalize vulnerability from any source to consistent dict structure."""
+        # Handle VulnerabilityMatch objects (dataclass or object with attributes)
+        if hasattr(vuln, '__dataclass_fields__') or hasattr(vuln, 'vulnerability_type'):
+            return {
+                'vulnerability_type': getattr(vuln, 'vulnerability_type', 'Unknown'),
+                'title': getattr(vuln, 'vulnerability_type', 'Unknown'),
+                'severity': getattr(vuln, 'severity', 'medium'),
+                'confidence': getattr(vuln, 'confidence', 0.0),
+                'line_number': getattr(vuln, 'line_number', 0),
+                'description': getattr(vuln, 'description', ''),
+                'code_snippet': getattr(vuln, 'code_snippet', ''),
+                'swc_id': getattr(vuln, 'swc_id', ''),
+                'category': getattr(vuln, 'category', ''),
+                'context': getattr(vuln, 'context', {})
+            }
+        
+        # Handle dict objects - normalize field names
         elif isinstance(vuln, dict):
-            original_severity = vuln.get('severity', 'medium')
-            vuln_type = vuln.get('vulnerability_type', vuln.get('type', 'unknown'))
-        else:
-            return vuln
+            # Extract vulnerability_type from various possible field names
+            vuln_type = (
+                vuln.get('vulnerability_type') or 
+                vuln.get('title') or 
+                vuln.get('type') or 
+                vuln.get('name') or
+                'Unknown'
+            )
+            
+            return {
+                'vulnerability_type': vuln_type,
+                'title': vuln_type,  # Alias for compatibility
+                'severity': vuln.get('severity', 'medium'),
+                'confidence': vuln.get('confidence', 0.0),
+                'line_number': vuln.get('line_number', vuln.get('line', 0)),
+                'description': vuln.get('description', ''),
+                'code_snippet': vuln.get('code_snippet', ''),
+                'swc_id': vuln.get('swc_id', ''),
+                'category': vuln.get('category', vuln_type),
+                'context': vuln.get('context', {}),
+                # Preserve original fields that aren't duplicated
+                **{k: v for k, v in vuln.items() if k not in ['vulnerability_type', 'title', 'type']}
+            }
+        
+        # Fallback for unknown types
+        return {
+            'vulnerability_type': 'Unknown',
+            'severity': 'medium',
+            'confidence': 0.0,
+            'line_number': 0,
+            'description': str(vuln),
+            'code_snippet': '',
+            'swc_id': '',
+            'category': '',
+            'context': {}
+        }
+
+    def _calibrate_vulnerability_severity(self, vuln: Any, contract_content: str) -> Dict[str, Any]:
+        """Calibrate vulnerability severity to prevent false positives."""
+        # Ensure vuln is a normalized dict
+        if not isinstance(vuln, dict):
+            vuln = self._normalize_vulnerability_dict(vuln)
+        
+        vuln_type = vuln.get('vulnerability_type', 'unknown')
+        original_severity = vuln.get('severity', 'medium')
         
         # Calibrate severity based on vulnerability type and context
         calibrated_severity = original_severity
@@ -376,11 +429,8 @@ class EnhancedAetherAuditEngine:
                 if original_severity == 'critical':
                     calibrated_severity = 'medium'
         
-        # Apply calibration
-        if hasattr(vuln, 'severity'):
-            vuln.severity = calibrated_severity
-        elif isinstance(vuln, dict):
-            vuln['severity'] = calibrated_severity
+        # Apply calibration (vuln is always a dict now)
+        vuln['severity'] = calibrated_severity
         
         return vuln
 
@@ -450,13 +500,12 @@ class EnhancedAetherAuditEngine:
         
         for vuln_data in all_vulnerabilities:
             vuln = vuln_data['vulnerability']
-            calibrated_vuln = self._calibrate_vulnerability_severity(vuln, contract_content)
+            # Normalize vulnerability to consistent dict structure
+            normalized_vuln = self._normalize_vulnerability_dict(vuln)
+            # Apply severity calibration
+            calibrated_vuln = self._calibrate_vulnerability_severity(normalized_vuln, contract_content)
             # Preserve source tag for downstream triage/reporting
-            try:
-                if isinstance(calibrated_vuln, dict):
-                    calibrated_vuln['source'] = vuln_data.get('source', calibrated_vuln.get('source'))
-            except Exception:
-                pass
+            calibrated_vuln['source'] = vuln_data.get('source', 'unknown')
             validated_vulnerabilities.append(calibrated_vuln)
         
         # Optional post-filter for Foundry workload control
@@ -615,23 +664,9 @@ class EnhancedAetherAuditEngine:
         # Step 3: Convert VulnerabilityMatch objects to dicts for LLM validation
         vulnerability_dicts = []
         for vuln in initial_vulnerabilities:
-            if hasattr(vuln, 'vulnerability_type'):
-                # Convert VulnerabilityMatch to dict
-                vuln_dict = {
-                    'vulnerability_type': vuln.vulnerability_type,
-                    'severity': vuln.severity,
-                    'confidence': vuln.confidence,
-                    'line_number': vuln.line_number,
-                    'description': vuln.description,
-                    'code_snippet': vuln.code_snippet,
-                    'swc_id': vuln.swc_id,
-                    'category': vuln.category,
-                    'context': vuln.context or {}
-                }
-                vulnerability_dicts.append(vuln_dict)
-            else:
-                # Already a dict
-                vulnerability_dicts.append(vuln)
+            # Use normalization helper to ensure consistent dict structure
+            normalized = self._normalize_vulnerability_dict(vuln)
+            vulnerability_dicts.append(normalized)
         
         # Step 4: Pre-LLM triage to reduce noise and cost (LLM-specific path)
         triaged_vulnerabilities = self._triage_vulnerabilities(vulnerability_dicts, for_llm=True)
@@ -970,7 +1005,7 @@ class EnhancedAetherAuditEngine:
             unique_findings = {}
             for vuln_dict in validated_vulnerabilities:
                 key = (
-                    vuln_dict.get('vulnerability_type', vuln_dict.get('title', 'unknown')),
+                    vuln_dict.get('vulnerability_type') or vuln_dict.get('title') or 'Unknown Vulnerability',
                     vuln_dict.get('line_number', vuln_dict.get('line', 0)),
                     vuln_dict.get('file_path', vuln_dict.get('file', ''))
                 )
@@ -985,7 +1020,7 @@ class EnhancedAetherAuditEngine:
                 finding = VulnerabilityFinding(
                     id=str(uuid.uuid4()),
                     audit_result_id=audit_id,
-                    vulnerability_type=vuln_dict.get('vulnerability_type', vuln_dict.get('title', 'unknown')),
+                    vulnerability_type=vuln_dict.get('vulnerability_type') or vuln_dict.get('title') or 'Unknown Vulnerability',
                     severity=vuln_dict.get('severity', 'medium'),
                     confidence=vuln_dict.get('confidence', 0.0),
                     description=vuln_dict.get('description', ''),
