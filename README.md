@@ -1,5 +1,5 @@
 # Aether - Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories 
-# A Smart Contract Security Analysis and PoC Generation Framework 
+## A Smart Contract Security Analysis and PoC Generation Framework 
 
 Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and optionally validating those tests on mainnet forks. It combines static analysis, prompt-driven LLM analysis, and AI-ensemble reasoning with reporting and persistence.
 
