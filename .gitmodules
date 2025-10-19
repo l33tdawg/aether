@@ -1,0 +1,3 @@
+[submodule "output/rocketpool_simple_test_env/lib/forge-std"]
+	path = output/rocketpool_simple_test_env/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
