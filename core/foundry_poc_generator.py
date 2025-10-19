@@ -5,6 +5,8 @@ import time
 import logging
 import subprocess
 import asyncio
+import tempfile
+import traceback
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
@@ -26,15 +28,12 @@ logger = logging.getLogger(__name__)
 
 # AST-based contract analysis
 try:
-    from slither.core.ast.ast import ASTNode
-    from slither.core.declarations.contract import Contract
-    from slither.core.declarations.function import Function
-    from slither.core.declarations.modifier import Modifier
-    from slither.core.variables.variable import Variable
+    from slither import Slither
     AST_ANALYSIS_AVAILABLE = True
+    logger.info("Slither AST analysis available")
 except ImportError:
     AST_ANALYSIS_AVAILABLE = False
-    logger.warning("Slither AST analysis not available. Falling back to regex-based analysis.")
+    logger.debug("Slither not available - will use regex fallback")
 
 
 # Data classes for structured results
@@ -941,7 +940,8 @@ class FoundryPoCGenerator:
                     'template_description': template['description'],
                     'available_functions': available_functions,
                     'abi_data': abi_data or {},
-                    'solc_version': solc_version
+                    'solc_version': solc_version,
+                    'file_path': finding.file_path
                 }
                 return self._generate_template_poc(context, template)
             except Exception as e:
@@ -963,7 +963,8 @@ class FoundryPoCGenerator:
                 'template_description': template['description'],
                 'available_functions': available_functions,
                 'abi_data': abi_data or {},
-                'solc_version': solc_version
+                'solc_version': solc_version,
+                'file_path': finding.file_path
             }
 
             # ← NEW: Generate with BRUTAL prompt that rejects stubs
@@ -1193,8 +1194,9 @@ GENERATE NOW:
         
         # ← NEW: Extract real contract analysis
         contract_code = context.get('contract_source', '')
-        external_functions = self._extract_external_functions(contract_code)
-        modifiers = self._extract_modifiers(contract_code)
+        file_path = context.get('file_path', None)
+        external_functions = self._extract_external_functions(contract_code, file_path)
+        modifiers = self._extract_modifiers(contract_code, file_path)
 
         # Enhanced contract context extraction
         contract_context = self._extract_enhanced_contract_context(contract_code, context)
@@ -4880,24 +4882,145 @@ contract TestContract is IPump {
         except Exception:
             pass
 
-    def _extract_external_functions(self, contract_code: str) -> str:
+    def _get_solc_path_for_version(self, version: str) -> Optional[str]:
+        """Get the path to solc binary for a specific version."""
+        try:
+            # Try solcx path (most common)
+            solcx_path = os.path.expanduser(f"~/.solcx/solc-v{version}")
+            if os.path.exists(solcx_path):
+                return solcx_path
+            
+            # Try solc-select path
+            solc_select_path = os.path.expanduser(f"~/.solc-select/artifacts/solc-{version}/solc-{version}")
+            if os.path.exists(solc_select_path):
+                return solc_select_path
+            
+            # Try with different format (e.g., 0.7.6 -> solc-0.7.6)
+            import shutil
+            solc_cmd = f"solc-{version}"
+            if shutil.which(solc_cmd):
+                return solc_cmd
+            
+            logger.debug(f"Could not find solc binary for version {version}")
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error finding solc for version {version}: {e}")
+            return None
+
+    def _build_remappings_for_file(self, file_path: str) -> List[str]:
+        """Build Slither-compatible remappings based on file location."""
+        try:
+            file_path_obj = Path(file_path)
+            
+            # Check if file is in a cached repo
+            if '.aether/repos' in str(file_path):
+                # Extract repo directory
+                parts = file_path_obj.parts
+                aether_idx = parts.index('.aether')
+                repos_idx = parts.index('repos')
+                if repos_idx + 1 < len(parts):
+                    repo_name = parts[repos_idx + 1]
+                    project_root = Path.home() / '.aether' / 'repos' / repo_name
+                    
+                    if project_root.exists():
+                        remaps = []
+                        
+                        # Add OpenZeppelin remapping (v3.x or v4.x)
+                        oz_path = project_root / 'lib' / 'openzeppelin-contracts'
+                        if oz_path.exists():
+                            remaps.append(f"@openzeppelin/={oz_path}/")
+                            logger.debug(f"Added OpenZeppelin remap: {oz_path}")
+                        
+                        # Add contract/ and interface/ remappings
+                        contracts_path = project_root / 'contracts'
+                        if contracts_path.exists():
+                            remaps.append(f"contract/={contracts_path}/contract/")
+                            remaps.append(f"interface/={contracts_path}/interface/")
+                            logger.debug(f"Added contract/interface remaps from: {contracts_path}")
+                        
+                        # Add forge-std remapping
+                        forge_std_path = project_root / 'lib' / 'forge-std' / 'src'
+                        if forge_std_path.exists():
+                            remaps.append(f"forge-std/={forge_std_path}/")
+                        
+                        return remaps
+            
+            # Fallback: try to detect project from file path
+            current_dir = file_path_obj.parent
+            while current_dir != current_dir.parent:
+                if (current_dir / 'foundry.toml').exists() or (current_dir / 'lib').exists():
+                    # Found a project root
+                    remaps = []
+                    
+                    oz_path = current_dir / 'lib' / 'openzeppelin-contracts'
+                    if oz_path.exists():
+                        remaps.append(f"@openzeppelin/={oz_path}/")
+                    
+                    contracts_path = current_dir / 'contracts'
+                    if contracts_path.exists():
+                        remaps.append(f"contract/={contracts_path}/contract/")
+                        remaps.append(f"interface/={contracts_path}/interface/")
+                    
+                    forge_std_path = current_dir / 'lib' / 'forge-std' / 'src'
+                    if forge_std_path.exists():
+                        remaps.append(f"forge-std/={forge_std_path}/")
+                    
+                    return remaps
+                
+                current_dir = current_dir.parent
+            
+            logger.debug("Could not build remappings, no project root found")
+            return []
+            
+        except Exception as e:
+            logger.debug(f"Error building remappings: {e}")
+            return []
+
+    def _extract_external_functions(self, contract_code: str, file_path: Optional[str] = None) -> str:
         """Extract external and public function signatures from contract code using AST analysis."""
         try:
             if not AST_ANALYSIS_AVAILABLE:
-                # Fallback to regex if AST not available
+                logger.debug("AST analysis not available, using regex fallback")
                 return self._extract_external_functions_regex(contract_code)
 
-            # Create temporary file for Slither analysis
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
-                f.write(contract_code)
-                temp_file = f.name
+            # Detect Solidity version from contract code
+            solc_version = self._detect_solidity_version(contract_code)
+            logger.debug(f"Detected Solidity version: {solc_version}")
 
+            # Prefer actual file path for analysis (better import resolution)
+            if not file_path or not os.path.exists(file_path):
+                logger.warning("No valid file path provided, falling back to regex")
+                return self._extract_external_functions_regex(contract_code)
+            
+            analysis_file = file_path
+            logger.debug(f"Using file for Slither analysis: {file_path}")
+
+            # Get solc path for the detected version
+            solc_path = self._get_solc_path_for_version(solc_version)
+            if not solc_path:
+                logger.warning(f"Could not find solc {solc_version}, falling back to regex")
+                return self._extract_external_functions_regex(contract_code)
+            
+            # Build remappings from project if file is in a known repo
+            remaps = self._build_remappings_for_file(file_path)
+            
+            # Change to /tmp to avoid Foundry EVM version conflicts
+            orig_cwd = os.getcwd()
+            os.chdir('/tmp')
+            
             try:
-                # Import slither here to avoid issues if not installed
-                from slither import Slither
-
                 # Analyze contract with Slither
-                slither = Slither(temp_file)
+                slither_args = {
+                    'solc': solc_path,
+                    'solc_disable_warnings': True
+                }
+                
+                if remaps:
+                    slither_args['solc_remaps'] = remaps
+                    logger.debug(f"Using {len(remaps)} remappings")
+                
+                slither = Slither(analysis_file, **slither_args)
 
                 functions = []
                 for contract in slither.contracts:
@@ -4906,7 +5029,7 @@ contract TestContract is IPump {
                             # Get function signature with parameters
                             params = []
                             for param in function.parameters:
-                                param_type = param.type_str
+                                param_type = str(param.type)
                                 if hasattr(param, 'name') and param.name:
                                     params.append(f"{param_type} {param.name}")
                                 else:
@@ -4923,16 +5046,19 @@ contract TestContract is IPump {
                             functions.append(signature)
 
                 if functions:
+                    logger.info(f"Slither extracted {len(functions)} external/public functions")
                     return '\n'.join(functions[:15])  # First 15 functions
                 else:
-                    return "No external functions detected"
+                    logger.warning("Slither found no external functions, falling back to regex")
+                    return self._extract_external_functions_regex(contract_code)
 
             finally:
-                # Clean up temporary file
-                os.unlink(temp_file)
+                # Restore original working directory
+                os.chdir(orig_cwd)
 
         except Exception as e:
             logger.warning(f"Error extracting functions with AST: {e}")
+            logger.debug(f"Full error: {traceback.format_exc()}")
             # Fallback to regex
             return self._extract_external_functions_regex(contract_code)
 
@@ -4955,24 +5081,50 @@ contract TestContract is IPump {
             logger.warning(f"Error extracting functions with regex: {e}")
             return "Function extraction failed"
 
-    def _extract_modifiers(self, contract_code: str) -> str:
+    def _extract_modifiers(self, contract_code: str, file_path: Optional[str] = None) -> str:
         """Extract modifier definitions from contract code using AST analysis."""
         try:
             if not AST_ANALYSIS_AVAILABLE:
-                # Fallback to regex if AST not available
+                logger.debug("AST analysis not available, using regex fallback")
                 return self._extract_modifiers_regex(contract_code)
 
-            # Create temporary file for Slither analysis
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
-                f.write(contract_code)
-                temp_file = f.name
+            # Detect Solidity version from contract code
+            solc_version = self._detect_solidity_version(contract_code)
+            logger.debug(f"Detected Solidity version: {solc_version}")
 
+            # Prefer actual file path for analysis (better import resolution)
+            if not file_path or not os.path.exists(file_path):
+                logger.warning("No valid file path provided, falling back to regex")
+                return self._extract_modifiers_regex(contract_code)
+            
+            analysis_file = file_path
+            logger.debug(f"Using file for Slither analysis: {file_path}")
+
+            # Get solc path for the detected version
+            solc_path = self._get_solc_path_for_version(solc_version)
+            if not solc_path:
+                logger.warning(f"Could not find solc {solc_version}, falling back to regex")
+                return self._extract_modifiers_regex(contract_code)
+            
+            # Build remappings from project if file is in a known repo
+            remaps = self._build_remappings_for_file(file_path)
+            
+            # Change to /tmp to avoid Foundry EVM version conflicts
+            orig_cwd = os.getcwd()
+            os.chdir('/tmp')
+            
             try:
-                # Import slither here to avoid issues if not installed
-                from slither import Slither
-
                 # Analyze contract with Slither
-                slither = Slither(temp_file)
+                slither_args = {
+                    'solc': solc_path,
+                    'solc_disable_warnings': True
+                }
+                
+                if remaps:
+                    slither_args['solc_remaps'] = remaps
+                    logger.debug(f"Using {len(remaps)} remappings")
+                
+                slither = Slither(analysis_file, **slither_args)
 
                 modifiers = []
                 for contract in slither.contracts:
@@ -4980,7 +5132,7 @@ contract TestContract is IPump {
                         # Get modifier parameters
                         params = []
                         for param in modifier.parameters:
-                            param_type = param.type_str
+                            param_type = str(param.type)
                             if hasattr(param, 'name') and param.name:
                                 params.append(f"{param_type} {param.name}")
                             else:
@@ -4992,16 +5144,19 @@ contract TestContract is IPump {
                         modifiers.append(signature)
 
                 if modifiers:
+                    logger.info(f"Slither extracted {len(modifiers)} modifiers")
                     return '\n'.join(modifiers[:10])  # First 10 modifiers
                 else:
-                    return "No modifiers detected"
+                    logger.debug("Slither found no modifiers, falling back to regex")
+                    return self._extract_modifiers_regex(contract_code)
 
             finally:
-                # Clean up temporary file
-                os.unlink(temp_file)
+                # Restore original working directory
+                os.chdir(orig_cwd)
 
         except Exception as e:
             logger.warning(f"Error extracting modifiers with AST: {e}")
+            logger.debug(f"Full error: {traceback.format_exc()}")
             # Fallback to regex
             return self._extract_modifiers_regex(contract_code)
 
@@ -5080,8 +5235,9 @@ Step 6: Victim's funds are stolen atomically"""
         """Create a SPECIFIC and DETAILED prompt with real contract context."""
         
         # Extract real contract analysis
-        external_functions = self._extract_external_functions(contract_code)
-        modifiers = self._extract_modifiers(contract_code)
+        file_path = context.get('file_path', None)
+        external_functions = self._extract_external_functions(contract_code, file_path)
+        modifiers = self._extract_modifiers(contract_code, file_path)
         attack_chain = self._analyze_attack_chain(NormalizedFinding(
             id='temp',
             vulnerability_type=context['vulnerability_type'],
