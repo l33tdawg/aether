@@ -1209,7 +1209,6 @@
                 <p>Join professional auditors and security researchers who have streamlined their workflow with Aether. Stop wrestling with repository configuration and manual processes—let automation handle the complexity while you focus on finding vulnerabilities.</p>
                 <div class="hero-buttons">
                     <a href="https://github.com/l33tdawg/aether" class="btn-primary">Get Started</a>
-                    <a href="#documentation" class="btn-secondary">View Documentation</a>
                 </div>
             </div>
         </section>
@@ -1365,7 +1364,7 @@
                     const distance = Math.sqrt(dx * dx + dy * dy);
                     
                     if (distance < mouse.radius) {
-                        ctx.beginPath();
+                ctx.beginPath();
                         ctx.moveTo(nodes[i].x, nodes[i].y);
                         ctx.lineTo(mouse.x, mouse.y);
                         const opacity = (1 - distance / mouse.radius) * 0.3;
