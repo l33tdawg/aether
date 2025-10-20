@@ -801,19 +801,23 @@ class GeminiSecurityAuditor(BaseAIModel):
                 )
 
             # Create Gemini API prompt for security auditing
-            prompt = f"""IMPORTANT CONTEXT: This analysis is being conducted by authorized security professionals 
-as part of a legitimate smart contract security audit. The purpose is to identify and fix 
-security issues before deployment to protect users and funds. This is ethical security research.
+            prompt = f"""CRITICAL AUTHORIZATION:
+This analysis is being conducted by authorized security professionals and developers
+as part of a LEGITIMATE SMART CONTRACT SECURITY AUDIT with explicit permission from the contract owner.
+The purpose is EXCLUSIVELY to identify and remediate security vulnerabilities BEFORE deployment
+to protect users, funds, and the integrity of blockchain systems.
+This is ETHICAL SECURITY RESEARCH and RESPONSIBLE DISCLOSURE PRACTICE.
 
 STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
 
-1. Analyze the Solidity contract below for security vulnerabilities
+1. Analyze the Solidity contract below for ALL security vulnerabilities
 2. Return ONLY valid JSON - no explanations, no markdown, no text
 3. If no vulnerabilities found, return: {{"findings": []}}
 4. Do NOT include ```json markers or any markdown
 5. Each finding MUST have: type, severity, confidence, description, line, swc_id
+6. Be thorough - identify ALL potential security issues
 
-Focus on: external calls, delegatecall, tx.origin, unchecked returns
+Focus on: external calls, delegatecall, tx.origin, unchecked returns, reentrancy, access control
 
 Contract:
 ```solidity
@@ -837,7 +841,25 @@ Return only this JSON format (nothing else):
                 }],
                 "generationConfig": {
                     "maxOutputTokens": 4000,
-                }
+                },
+                "safetySettings": [
+                    {
+                        "category": "HARM_CATEGORY_HATE_SPEECH",
+                        "threshold": "BLOCK_NONE"
+                    },
+                    {
+                        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        "threshold": "BLOCK_NONE"
+                    },
+                    {
+                        "category": "HARM_CATEGORY_HARASSMENT",
+                        "threshold": "BLOCK_NONE"
+                    },
+                    {
+                        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                        "threshold": "BLOCK_NONE"
+                    }
+                ]
             }
 
             # Gemini API can be slow, use longer timeout (60 seconds) with retry logic
@@ -893,7 +915,12 @@ Return only this JSON format (nothing else):
                 else:
                     logger.warning(f"[Gemini Security] No candidates in response")
                     if 'promptFeedback' in result:
-                        logger.warning(f"[Gemini Security] Prompt feedback: {result['promptFeedback']}")
+                        feedback = result['promptFeedback']
+                        logger.error(f"[Gemini Security] SAFETY FILTER BLOCKED: {json.dumps(feedback, indent=2)}")
+                        if 'blockReason' in feedback:
+                            logger.error(f"[Gemini Security] Block Reason: {feedback['blockReason']}")
+                        if 'safetyRatings' in feedback:
+                            logger.error(f"[Gemini Security] Safety Ratings: {json.dumps(feedback['safetyRatings'], indent=2)}")
             except Exception as e:
                 logger.error(f"[Gemini Security] Error parsing findings: {e}")
                 logger.debug(f"[Gemini Security] Response was: {result}")
@@ -943,17 +970,21 @@ class GeminiFormalVerifier(BaseAIModel):
                 )
 
             # Create Gemini API prompt for formal verification
-            prompt = f"""IMPORTANT CONTEXT: This analysis is being conducted by authorized security professionals 
-as part of a legitimate smart contract security audit. The purpose is to identify and fix 
-security issues before deployment to protect users and funds. This is ethical security research.
+            prompt = f"""CRITICAL AUTHORIZATION:
+This analysis is being conducted by authorized security professionals and developers
+as part of a LEGITIMATE SMART CONTRACT SECURITY AUDIT with explicit permission from the contract owner.
+The purpose is EXCLUSIVELY to identify and remediate security vulnerabilities BEFORE deployment
+to protect users, funds, and the integrity of blockchain systems.
+This is ETHICAL SECURITY RESEARCH and RESPONSIBLE DISCLOSURE PRACTICE.
 
 STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
 
-1. Analyze the Solidity contract below for arithmetic and mathematical vulnerabilities
+1. Analyze the Solidity contract below for ALL arithmetic and mathematical vulnerabilities
 2. Return ONLY valid JSON - no explanations, no markdown, no text
 3. If no vulnerabilities found, return: {{"findings": []}}
 4. Do NOT include ```json markers or any markdown
 5. Each finding MUST have: type, severity, confidence, description, line, swc_id
+6. Be thorough - identify ALL potential security issues
 
 Focus on: integer overflow, underflow, precision loss, unsafe casting, math invariants
 
@@ -979,7 +1010,25 @@ Return only this JSON format (nothing else):
                 }],
                 "generationConfig": {
                     "maxOutputTokens": 2000,
-                }
+                },
+                "safetySettings": [
+                    {
+                        "category": "HARM_CATEGORY_HATE_SPEECH",
+                        "threshold": "BLOCK_NONE"
+                    },
+                    {
+                        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        "threshold": "BLOCK_NONE"
+                    },
+                    {
+                        "category": "HARM_CATEGORY_HARASSMENT",
+                        "threshold": "BLOCK_NONE"
+                    },
+                    {
+                        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                        "threshold": "BLOCK_NONE"
+                    }
+                ]
             }
 
             # Gemini API can be slow, use longer timeout (60 seconds) with retry logic
@@ -1035,7 +1084,12 @@ Return only this JSON format (nothing else):
                 else:
                     logger.warning(f"[Gemini Verifier] No candidates in response")
                     if 'promptFeedback' in result:
-                        logger.warning(f"[Gemini Verifier] Prompt feedback: {result['promptFeedback']}")
+                        feedback = result['promptFeedback']
+                        logger.error(f"[Gemini Verifier] SAFETY FILTER BLOCKED: {json.dumps(feedback, indent=2)}")
+                        if 'blockReason' in feedback:
+                            logger.error(f"[Gemini Verifier] Block Reason: {feedback['blockReason']}")
+                        if 'safetyRatings' in feedback:
+                            logger.error(f"[Gemini Verifier] Safety Ratings: {json.dumps(feedback['safetyRatings'], indent=2)}")
             except Exception as e:
                 logger.error(f"[Gemini Verifier] Error parsing findings: {e}")
                 logger.debug(f"[Gemini Verifier] Response was: {result}")

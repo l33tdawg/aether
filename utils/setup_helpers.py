@@ -212,17 +212,21 @@ class APIKeyValidator:
         try:
             import httpx
             
-            # Test with a simple API call
-            base_urls = {
-                'mainnet': 'https://api.etherscan.io/api',
-                'polygon': 'https://api.polygonscan.com/api',
-                'arbitrum': 'https://api.arbiscan.io/api',
-                'base': 'https://api.basescan.org/api'
+            # Test with a simple API call (using V2 endpoint with chainid)
+            # V2 API requires chainid parameter
+            networks_config = {
+                'mainnet': {'base_url': 'https://api.etherscan.io', 'chainid': 1},
+                'polygon': {'base_url': 'https://api.polygonscan.com', 'chainid': 137},
+                'arbitrum': {'base_url': 'https://api.arbiscan.io', 'chainid': 42161},
+                'base': {'base_url': 'https://api.basescan.org', 'chainid': 8453}
             }
             
-            base_url = base_urls.get(network, base_urls['mainnet'])
+            network_config = networks_config.get(network, networks_config['mainnet'])
+            base_url = network_config['base_url']
+            chainid = network_config['chainid']
             
-            url = f"{base_url}?module=stats&action=ethsupply&apikey={api_key}"
+            # V2 API endpoint format: /v2/api?module=...&action=...&chainid=...&apikey=...
+            url = f"{base_url}/v2/api?module=stats&action=ethsupply&chainid={chainid}&apikey={api_key}"
             response = httpx.get(url, timeout=10)
             
             if response.status_code == 200:

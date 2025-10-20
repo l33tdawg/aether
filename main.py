@@ -5,6 +5,13 @@ AetherAudit + AetherFuzz: Agentic Smart Contract Auditing & Fuzzing Framework
 Main entry point for the CLI interface.
 """
 
+import warnings
+
+# Suppress pkg_resources deprecation warning from slither
+# This is a known issue in slither 0.10.0 that will be fixed in future versions
+# See: https://github.com/crytic/slither/issues
+warnings.filterwarnings("ignore", category=UserWarning, message=".*pkg_resources is deprecated.*")
+
 import argparse
 import asyncio
 import sys
@@ -43,6 +50,22 @@ def check_basic_setup(skip_check: bool = False) -> bool:
     # Check for LLM API keys (required for AI features)
     has_openai = bool(os.getenv('OPENAI_API_KEY'))
     has_gemini = bool(os.getenv('GEMINI_API_KEY'))
+    
+    # Also check config file if not in environment
+    if not has_openai or not has_gemini:
+        try:
+            from core.config_manager import ConfigManager
+            config_manager = ConfigManager()
+            if not has_openai and getattr(config_manager.config, 'openai_api_key', ''):
+                has_openai = True
+                # Load it into environment for use by engines
+                os.environ['OPENAI_API_KEY'] = config_manager.config.openai_api_key
+            if not has_gemini and getattr(config_manager.config, 'gemini_api_key', ''):
+                has_gemini = True
+                # Load it into environment for use by engines
+                os.environ['GEMINI_API_KEY'] = config_manager.config.gemini_api_key
+        except Exception:
+            pass
     
     if not has_openai and not has_gemini:
         warnings.append("No LLM API keys configured (OPENAI_API_KEY or GEMINI_API_KEY)")
@@ -131,7 +154,8 @@ Examples:
     audit_parser.add_argument('--no-cache', action='store_true', help='Do not cache results [GitHub audit]')
     audit_parser.add_argument('--dry-run', action='store_true', help='Show what would be analyzed, do not analyze [GitHub audit]')
     audit_parser.add_argument('--github-token', help='GitHub token for private repositories [GitHub audit]')
-    audit_parser.add_argument('--interactive-scope', action='store_true', help='Interactively select which contracts to audit (for bug bounty scoping) [GitHub audit]')
+    audit_parser.add_argument('--interactive-scope', action='store_true', default=True, help='Interactively select which contracts to audit (for bug bounty scoping) - enabled by default for GitHub audits [GitHub audit]')
+    audit_parser.add_argument('--skip-scope-selector', action='store_true', help='Skip the interactive contract selector for GitHub audits [GitHub audit]')
 
     # Fuzz command
     fuzz_parser = subparsers.add_parser('fuzz', help='Run dynamic fuzzing and exploit validation')
@@ -298,7 +322,8 @@ Examples:
                     verbose=args.verbose,
                     dry_run=args.dry_run,
                     github_token=args.github_token,
-                    interactive_scope=args.interactive_scope
+                    interactive_scope=args.interactive_scope,
+                    skip_scope_selector=args.skip_scope_selector
                 )
 
             result = asyncio.run(cli.run_audit(

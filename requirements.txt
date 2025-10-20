@@ -27,6 +27,8 @@ eth-utils>=4.0.0
 slither-analyzer==0.10.0
 # Note: Mythril has dependency conflicts with Python 3.12 in version 0.23.25
 # Primary integration uses Slither which is fully functional
+# Lock setuptools version to avoid pkg_resources deprecation warning (removal: Nov 30, 2025)
+setuptools<81
 
 # Foundry/Anvil integration
 # Install separately: curl -L https://foundry.paradigm.xyz | bash

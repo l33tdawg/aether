@@ -2,6 +2,11 @@
 Main CLI implementation for AetherAudit + AetherFuzz.
 """
 
+import warnings
+
+# Suppress pkg_resources deprecation warning from slither
+warnings.filterwarnings("ignore", category=UserWarning, message=".*pkg_resources is deprecated.*")
+
 import asyncio
 import json
 import os
@@ -546,7 +551,8 @@ class AetherCLI:
         verbose: bool = False,
         dry_run: bool = False,
         github_token: Optional[str] = None,
-        interactive_scope: bool = False
+        interactive_scope: bool = False,
+        skip_scope_selector: bool = False
     ) -> int:
         auditor = GitHubAuditor()
         
@@ -568,7 +574,7 @@ class AetherCLI:
             verbose=verbose,
             dry_run=dry_run,
             github_token=github_token,
-            interactive_scope=interactive_scope
+            interactive_scope=interactive_scope and not skip_scope_selector
         )
 
         result = auditor.audit(github_url, options)
