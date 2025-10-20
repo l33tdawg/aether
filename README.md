@@ -32,7 +32,7 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
   - **Vulnerability-aware contract context** extraction based on vulnerability type
   - LLM-based Foundry tests via `core/llm_foundry_generator.py`
   - Enhanced Foundry validation and submission formatting via `core/enhanced_foundry_integration.py`
-  - Optional exploit testing and fork verification via `core/exploit_tester.py` and `fork-verify` command
+  - Optional exploit testing and fork verification via `core/exploit_tester.py` and the `fork-verify` command (implemented by `core/fork_verifier.py`)
 
 - Reporting
   - Markdown/JSON/HTML report generation from audit data
@@ -60,13 +60,6 @@ This interactive installer will:
 - ✓ Configure API keys with validation
 - ✓ Create configuration files
 - ✓ Verify everything works
-
-**Current Status**: All components are installed and operational:
-- Python 3.12.8 ✓
-- Foundry 1.3.5-stable ✓
-- Slither 0.10.0 ✓
-- Multiple Solidity versions (0.4.26 through 0.8.30) ✓
-- API keys configured and validated ✓
 
 **Non-interactive mode** (for CI/CD):
 ```bash
@@ -303,8 +296,7 @@ This uses findings persisted by the GitHub audit workflow and attempts PoC gener
   - `tests/test_poc_generator_improvements.py` - Integration testing
 
 - Known inconsistencies and caveats:
-  - References to formal verification and learning systems exist in comments but are disabled or removed.
-  - Model and feature names may vary between modules; treat AI ensemble as experimental and subject to change.
+  - AI ensemble is experimental and subject to change.
   - Some modules print colored output or symbols; functionality does not depend on them.
 
 
