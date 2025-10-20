@@ -20,19 +20,20 @@ class ScopeManager:
         self.console = Console()
         self.db = db or AetherDatabase()
     
-    def interactive_select(self, items: List[Dict[str, Any]], disabled_indices: Optional[List[int]] = None) -> List[int]:
+    def interactive_select(self, items: List[Dict[str, Any]], disabled_indices: Optional[List[int]] = None, pre_selected: Optional[List[int]] = None) -> List[int]:
         """
         Interactive multi-select using curses with arrow keys and spacebar.
         
         Args:
             items: List of dicts with 'file_path' and 'contract_name' keys
             disabled_indices: List of indices that are disabled/already selected
+            pre_selected: List of indices that should start as checked
             
         Returns:
             List of selected indices
         """
         try:
-            return curses.wrapper(self._curses_select, items, disabled_indices or [])
+            return curses.wrapper(self._curses_select, items, disabled_indices or [], pre_selected or [])
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Selection cancelled[/yellow]")
             return []
@@ -40,53 +41,79 @@ class ScopeManager:
             self.console.print(f"[red]Selection error: {e}[/red]")
             return []
     
-    def _curses_select(self, stdscr, items: List[Dict[str, Any]], disabled_indices: List[int]) -> List[int]:
+    def _curses_select(self, stdscr, items: List[Dict[str, Any]], disabled_indices: List[int], pre_selected: List[int]) -> List[int]:
         """Curses-based interactive selector."""
         curses.curs_set(0)  # Hide cursor
-        selected = [False] * len(items)
+        selected = [i in pre_selected for i in range(len(items))]
         position = 0
+        filter_text = ""  # For filtering items
         
         # Color pairs
         curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Highlight
         curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Selected
         curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)   # Info
         curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_BLACK)  # Disabled (dimmed)
+        curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK) # Filter active
+        
+        def get_filtered_indices():
+            """Return indices that match the current filter."""
+            if not filter_text:
+                return list(range(len(items)))
+            return [i for i in range(len(items)) if filter_text.lower() in items[i].get('file_path', '').lower()]
         
         while True:
             stdscr.clear()
             height, width = stdscr.getmaxyx()
             
+            # Get filtered items
+            filtered_indices = get_filtered_indices()
+            
             # Draw header
             header = "📋 SELECT CONTRACTS TO AUDIT (Use ↑↓ arrows, SPACE to toggle, ENTER to confirm)"
             stdscr.addstr(0, 0, header[:width], curses.color_pair(3) | curses.A_BOLD)
             
+            # Draw filter status if filtering
+            if filter_text:
+                filter_line = f"🔍 Filter: '{filter_text}' ({len(filtered_indices)} matches)  [ESC] Clear filter"
+                stdscr.addstr(1, 0, filter_line[:width], curses.color_pair(5) | curses.A_BOLD)
+                info_row = 2
+            else:
+                info_row = 1
+            
             # Draw instructions
             new_selected_count = sum(1 for i, s in enumerate(selected) if s and i not in disabled_indices)
-            instructions = "Selected: {} / {}  |  [q]uit without selecting".format(
-                new_selected_count, len([i for i in range(len(items)) if i not in disabled_indices])
-            )
-            stdscr.addstr(1, 0, instructions[:width], curses.color_pair(3))
+            available_count = len([i for i in range(len(items)) if i not in disabled_indices])
+            instructions = f"Selected: {new_selected_count} / {available_count}  |  [F]ilter | [A]ll | [N]one | [Q]uit"
+            stdscr.addstr(info_row, 0, instructions[:width], curses.color_pair(3))
             
             # Draw separator
-            stdscr.addstr(2, 0, "─" * width, curses.color_pair(3))
+            stdscr.addstr(info_row + 1, 0, "─" * width, curses.color_pair(3))
             
             # Draw items
-            start_row = 3
-            max_visible = height - 6
+            start_row = info_row + 2
+            max_visible = height - info_row - 4
+            
+            # Handle position bounds with filtered list
+            if filtered_indices and position >= len(filtered_indices):
+                position = len(filtered_indices) - 1
             
             # Calculate scroll position
-            scroll_offset = max(0, min(position - max_visible // 2, len(items) - max_visible))
+            if filtered_indices:
+                scroll_offset = max(0, min(position - max_visible // 2, len(filtered_indices) - max_visible))
+            else:
+                scroll_offset = 0
             
-            for i, item in enumerate(items[scroll_offset:scroll_offset + max_visible]):
-                actual_index = i + scroll_offset
+            for i, filtered_idx in enumerate(filtered_indices[scroll_offset:scroll_offset + max_visible]):
+                actual_index = filtered_idx
                 row = start_row + i
                 
+                item = items[actual_index]
                 file_path = item.get('file_path', '')
                 contract_name = item.get('contract_name', 'Unknown')
                 
                 # Format the line
                 is_disabled = actual_index in disabled_indices
-                is_current = (actual_index == position)
+                is_current = (i + scroll_offset == position)
                 
                 if is_disabled:
                     checkbox = "✓"  # Already selected
@@ -113,7 +140,7 @@ class ScopeManager:
             
             # Draw footer
             footer_row = height - 1
-            footer = "[↑/↓] Move | [SPACE] Toggle | [ENTER] Confirm | [Q] Quit"
+            footer = "[↑/↓] Move | [SPACE] Toggle | [ENTER] Confirm | [F]ilter"
             stdscr.addstr(footer_row, 0, footer[:width], curses.color_pair(3))
             
             stdscr.refresh()
@@ -125,22 +152,58 @@ class ScopeManager:
                 if key == ord('q') or key == ord('Q'):
                     return []
                 
+                elif key == ord('\x1b'):  # ESC key - clear filter
+                    filter_text = ""
+                    position = 0
+                
+                elif key == ord('f') or key == ord('F'):  # Filter
+                    # Prompt for filter text
+                    curses.curs_set(1)  # Show cursor
+                    filter_input = ""
+                    while True:
+                        stdscr.clear()
+                        stdscr.addstr(0, 0, "Enter filter text (e.g., '/old', 'mock'): ")
+                        stdscr.addstr(1, 0, f"Current: {filter_input}")
+                        stdscr.refresh()
+                        
+                        try:
+                            ch = stdscr.getch()
+                            if ch == ord('\n'):  # Enter
+                                filter_text = filter_input
+                                position = 0
+                                curses.curs_set(0)  # Hide cursor
+                                break
+                            elif ch == 127 or ch == curses.KEY_BACKSPACE:  # Backspace
+                                filter_input = filter_input[:-1]
+                            elif 32 <= ch <= 126:  # Printable characters
+                                filter_input += chr(ch)
+                            elif ch == ord('\x1b'):  # ESC - cancel filter
+                                curses.curs_set(0)
+                                break
+                        except:
+                            pass
+                
                 elif key == ord(' '):  # Spacebar
-                    # Only toggle if not disabled
-                    if position not in disabled_indices:
-                        selected[position] = not selected[position]
+                    # Only toggle if not disabled and we have filtered items
+                    if filtered_indices and position < len(filtered_indices):
+                        actual_index = filtered_indices[position]
+                        if actual_index not in disabled_indices:
+                            selected[actual_index] = not selected[actual_index]
                 
                 elif key == curses.KEY_UP:
-                    position = (position - 1) % len(items)
+                    if filtered_indices:
+                        position = (position - 1) % len(filtered_indices)
                 
                 elif key == curses.KEY_DOWN:
-                    position = (position + 1) % len(items)
+                    if filtered_indices:
+                        position = (position + 1) % len(filtered_indices)
                 
                 elif key == curses.KEY_HOME:
                     position = 0
                 
                 elif key == curses.KEY_END:
-                    position = len(items) - 1
+                    if filtered_indices:
+                        position = len(filtered_indices) - 1
                 
                 elif key == ord('\n'):  # Enter/Return
                     new_selections = [i for i, s in enumerate(selected) if s and i not in disabled_indices]
@@ -150,13 +213,14 @@ class ScopeManager:
                         continue
                     return new_selections
                 
-                elif key == ord('a') or key == ord('A'):  # Select all
-                    for i in range(len(items)):
-                        if i not in disabled_indices:
-                            selected[i] = True
+                elif key == ord('a') or key == ord('A'):  # Select all (in filtered view)
+                    for idx in filtered_indices:
+                        if idx not in disabled_indices:
+                            selected[idx] = True
                 
-                elif key == ord('n') or key == ord('N'):  # Select none
-                    selected = [False] * len(items)
+                elif key == ord('n') or key == ord('N'):  # Select none (in filtered view)
+                    for idx in filtered_indices:
+                        selected[idx] = False
                 
             except KeyboardInterrupt:
                 return []
@@ -188,7 +252,8 @@ class ScopeManager:
                         added = self.handle_add_contracts(active_scope, all_discovered_contracts)
                         if added:
                             active_scope = added  # Update scope with newly added contracts
-                            return {"action": "add_contracts", "scope": active_scope, "all_contracts": all_discovered_contracts}
+                            self.console.print("[yellow]Returning to menu...[/yellow]\n")
+                            break  # Break inner loop to redisplay menu
                         else:
                             # User cancelled (pressed 'q'), return to menu
                             self.console.print("[yellow]Returning to menu...[/yellow]\n")
@@ -197,7 +262,8 @@ class ScopeManager:
                         removed = self.handle_remove_contracts(active_scope, all_discovered_contracts)
                         if removed:
                             active_scope = removed
-                            return {"action": "remove_contracts", "scope": active_scope}
+                            self.console.print("[yellow]Returning to menu...[/yellow]\n")
+                            break  # Break inner loop to redisplay menu
                         else:
                             # User cancelled, return to menu
                             self.console.print("[yellow]Returning to menu...[/yellow]\n")
@@ -314,34 +380,45 @@ class ScopeManager:
         return scope
     
     def handle_remove_contracts(self, scope: Dict[str, Any], all_contracts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Allow user to remove contracts from scope."""
+        """Allow user to remove contracts from scope using interactive selector."""
         current = scope['selected_contracts']
         
-        self.console.print("\n[bold]Currently selected contracts:[/bold]")
-        for i, c in enumerate(all_contracts):
-            if c['file_path'] in current:
-                self.console.print(f"  [{i}] {c['file_path']} ({c.get('contract_name', 'Unknown')})")
+        # Filter to selected contracts only
+        selected_contracts = [c for c in all_contracts if c['file_path'] in current]
         
-        user_input = self.console.input("\n[bold green]Enter indices to remove (comma-separated) or 'cancel': [/bold green]").strip()
-        
-        if user_input.lower() == 'cancel':
+        if not selected_contracts:
+            self.console.print("[yellow]No contracts to remove![/yellow]")
             return None
         
-        try:
-            remove_indices = [int(x.strip()) for x in user_input.split(',')]
-            remove_paths = {all_contracts[i]['file_path'] for i in remove_indices if i < len(all_contracts)}
-            updated_paths = [p for p in current if p not in remove_paths]
-            
-            self.db.update_scope_contracts(scope['id'], updated_paths)
-            scope['selected_contracts'] = updated_paths
-            scope['total_selected'] = len(updated_paths)
-            scope['total_pending'] = len(updated_paths) - scope['total_audited']
-            
-            self.console.print(f"\n[green]✓ Removed {len(remove_paths)} contracts. Total: {len(updated_paths)}[/green]")
-            return scope
-        except (ValueError, IndexError):
-            self.console.print("[red]Invalid input[/red]")
+        # Create a list of indices for contracts that are NOT in selected_contracts (in all_contracts)
+        # These will be disabled in the selector
+        not_selected_indices = [all_contracts.index(c) for c in all_contracts if c['file_path'] not in current]
+        
+        self.console.print(f"\n[bold]Currently selected: {len(current)} contracts[/bold]")
+        self.console.print(f"[bold]Available to remove: {len(selected_contracts)} contracts[/bold]\n")
+        self.console.print("[bold cyan]Launching interactive selector to remove contracts...[/bold cyan]")
+        self.console.print("[bold cyan](Check contracts = will be REMOVED | Uncheck to keep)[/bold cyan]\n")
+        
+        # Use interactive selector for ALL contracts, with unselected indices disabled
+        # Note: We do NOT pre-select the currently selected contracts - user must explicitly check to remove
+        selected_indices = self.interactive_select(all_contracts, not_selected_indices, pre_selected=[])
+        
+        if not selected_indices:
+            self.console.print("[yellow]No contracts selected for removal[/yellow]")
             return None
+        
+        # Map selected indices to paths to remove
+        remove_paths = {all_contracts[i]['file_path'] for i in selected_indices}
+        updated_paths = [p for p in current if p not in remove_paths]
+        
+        # Update database
+        self.db.update_scope_contracts(scope['id'], updated_paths)
+        scope['selected_contracts'] = updated_paths
+        scope['total_selected'] = len(updated_paths)
+        scope['total_pending'] = max(0, scope['total_pending'] - len(remove_paths))
+        
+        self.console.print(f"\n[green]✓ Removed {len(remove_paths)} contracts. Total: {len(updated_paths)}[/green]")
+        return scope
     
     def handle_reaudit(self, scope: Dict[str, Any]) -> Dict[str, Any]:
         """Reset scope for fresh re-analysis."""

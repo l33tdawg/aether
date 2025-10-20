@@ -230,20 +230,6 @@ class GitHubAuditor:
                             contracts_analyzed = len(rel_paths)
                             self.console.print(f"\n[green]Resuming with saved scope: {scope['total_audited']}/{scope['total_selected']} audited[/green]\n")
                         
-                        elif action == 'add_contracts':
-                            # User wants to add more contracts
-                            updated_scope = self.scope_manager.handle_add_contracts(scope, contract_info_list)
-                            if updated_scope:
-                                rel_paths = updated_scope['selected_contracts']
-                                contracts_analyzed = len(rel_paths)
-                        
-                        elif action == 'remove_contracts':
-                            # User wants to remove contracts
-                            updated_scope = self.scope_manager.handle_remove_contracts(scope, contract_info_list)
-                            if updated_scope:
-                                rel_paths = updated_scope['selected_contracts']
-                                contracts_analyzed = len(rel_paths)
-                        
                         elif action == 'reaudit':
                             # Fresh re-analysis of all selected contracts
                             updated_scope = self.scope_manager.handle_reaudit(scope)
