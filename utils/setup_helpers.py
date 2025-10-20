@@ -21,21 +21,21 @@ class DependencyDetector:
         'forge': {
             'description': 'Foundry (forge/anvil)',
             'check_cmd': ['forge', '--version'],
-            'version_pattern': r'forge (\d+\.\d+\.\d+)',
+            'version_pattern': r'forge Version: ([^\s]+)',
             'install_instructions': 'curl -L https://foundry.paradigm.xyz | bash && foundryup',
             'required': True
         },
         'anvil': {
             'description': 'Foundry Anvil (local testnet)',
             'check_cmd': ['anvil', '--version'],
-            'version_pattern': r'anvil (\d+\.\d+\.\d+)',
+            'version_pattern': r'anvil Version: ([^\s]+)',
             'install_instructions': 'Installed with Foundry',
             'required': True
         },
         'slither': {
             'description': 'Slither static analyzer',
             'check_cmd': ['slither', '--version'],
-            'version_pattern': r'(\d+\.\d+\.\d+)',
+            'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
             'install_instructions': 'pip install slither-analyzer',
             'required': False
         },
@@ -409,6 +409,18 @@ def test_import(module_name: str) -> Tuple[bool, str]:
         __import__(module_name)
         return True, "OK"
     except ImportError as e:
+        # Handle common package name variations
+        variations = {
+            'pyyaml': 'yaml',
+            'yaml': 'pyyaml'
+        }
+        alt_name = variations.get(module_name.lower())
+        if alt_name:
+            try:
+                __import__(alt_name)
+                return True, f"OK (imported as {alt_name})"
+            except ImportError:
+                pass
         return False, f"Import failed: {str(e)}"
     except Exception as e:
         return False, f"Error: {str(e)}"

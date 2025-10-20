@@ -61,6 +61,13 @@ This interactive installer will:
 - ✓ Create configuration files
 - ✓ Verify everything works
 
+**Current Status**: All components are installed and operational:
+- Python 3.12.8 ✓
+- Foundry 1.3.5-stable ✓
+- Slither 0.10.0 ✓
+- Multiple Solidity versions (0.4.26 through 0.8.30) ✓
+- API keys configured and validated ✓
+
 **Non-interactive mode** (for CI/CD):
 ```bash
 python setup.py --non-interactive
@@ -68,12 +75,14 @@ python setup.py --non-interactive
 
 ## Requirements
 
-- Python 3.11+
-- Foundry (forge/anvil) installed and on PATH for Foundry-related features
-- Optional: Slither for static analysis integration
-- API keys for LLM features:
-  - `OPENAI_API_KEY`
-  - `GEMINI_API_KEY`
+- **Python 3.11+** (currently tested with Python 3.12.8)
+- **Foundry (forge/anvil)** installed and on PATH for Foundry-related features
+- **solc-select** for multiple Solidity compiler versions (supports 0.4.x through 0.8.x)
+- **Optional: Slither** for static analysis integration (v0.10.0 recommended)
+- **API keys for LLM features:**
+  - `OPENAI_API_KEY` (for GPT models)
+  - `GEMINI_API_KEY` (for Gemini models)
+  - `ETHERSCAN_API_KEY` (optional, for fetching verified contracts)
 
 ## Manual Setup
 
@@ -82,15 +91,21 @@ If you prefer manual installation or the automated setup fails:
 ### Install system tools:
 
 ```bash
-# Foundry
+# Foundry (required for PoC generation)
 curl -L https://foundry.paradigm.xyz | bash
 foundryup
 
 # Add Foundry to PATH if needed
 export PATH="$PATH:$HOME/.foundry/bin"
 
-# Slither (optional but recommended)
-pip install slither-analyzer
+# Slither (optional but recommended for static analysis)
+pip install slither-analyzer==0.10.0
+
+# solc-select (required for multiple Solidity versions)
+pip install solc-select
+
+# Install common Solidity compiler versions
+solc-select install 0.4.26 0.8.0 0.8.19 0.8.20 latest
 ```
 
 ### Install Python dependencies:
@@ -250,7 +265,13 @@ This uses findings persisted by the GitHub audit workflow and attempts PoC gener
   - Ensure `forge`/`anvil` are installed and on `PATH` (`foundryup` and `export PATH="$PATH:$HOME/.foundry/bin"`).
 
 - Slither not found
-  - Install with `pip install slither-analyzer`. If unavailable, the pipeline skips Slither.
+  - Install with `pip install slither-analyzer==0.10.0`. If unavailable, the pipeline skips Slither.
+  - Note: Slither may not be detected by the dependency checker if installed outside PATH, but should still work.
+
+- solc not found or wrong version
+  - Install solc-select: `pip install solc-select`
+  - Install required versions: `solc-select install 0.4.26 0.8.0 0.8.19 0.8.20 latest`
+  - Switch versions as needed: `solc-select use 0.8.19`
 
 - LLM features not working
   - Verify `OPENAI_API_KEY` and/or `GEMINI_API_KEY` are set.
