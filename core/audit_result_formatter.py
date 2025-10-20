@@ -11,9 +11,66 @@ from typing import Any, Dict, List
 
 class AuditResultFormatter:
     def format_for_display(self, findings: List[Dict[str, Any]]) -> str:
+        """
+        Format findings for display, handling both flat and nested structures.
+        
+        Nested structure (from GitHub auditor):
+        {
+            'contract': 'path/to/contract.sol',
+            'analysis_type': 'enhanced',
+            'summary': {
+                'vulnerabilities': [
+                    {'type': '...', 'severity': '...', 'line': 0, 'description': '...'}
+                ]
+            }
+        }
+        
+        Flat structure (legacy):
+        {
+            'severity': '...',
+            'contract': '...',
+            'line': '...'
+        }
+        """
         lines: List[str] = []
-        for i, f in enumerate(findings, 1):
-            lines.append(f"[{i}] {f.get('severity','unknown').upper()}: {f.get('contract','?')}:{f.get('summary',{}).get('line', '?')} - {f.get('analysis_type','')}".strip())
+        finding_num = 1
+        
+        for f in findings:
+            # Check if this is nested structure (GitHub auditor format)
+            summary = f.get('summary', {})
+            if isinstance(summary, dict) and 'vulnerabilities' in summary:
+                # Extract vulnerabilities from nested structure
+                vulnerabilities = summary.get('vulnerabilities', [])
+                contract_path = f.get('contract', '?')
+                analysis_type = f.get('analysis_type', '')
+                
+                for vuln in vulnerabilities:
+                    severity = vuln.get('severity', 'unknown').upper()
+                    line = vuln.get('line', '?')
+                    vuln_type = vuln.get('type', 'Unknown')
+                    description = vuln.get('description', '')[:100]  # Truncate long descriptions
+                    
+                    line_display = f"[{finding_num}] {severity}: {contract_path}:{line} - {analysis_type}"
+                    if vuln_type and vuln_type != 'Unknown':
+                        line_display += f"\n    {vuln_type}"
+                    if description:
+                        line_display += f"\n    {description}"
+                    
+                    lines.append(line_display)
+                    finding_num += 1
+            else:
+                # Legacy flat structure
+                severity = f.get('severity', 'unknown').upper()
+                contract = f.get('contract', '?')
+                line = f.get('summary', {}).get('line', '?') if isinstance(f.get('summary'), dict) else '?'
+                analysis_type = f.get('analysis_type', '')
+                
+                lines.append(f"[{finding_num}] {severity}: {contract}:{line} - {analysis_type}".strip())
+                finding_num += 1
+        
+        if not lines:
+            return "No findings to display"
+        
         return "\n".join(lines)
 
     def format_for_json(self, findings: List[Dict[str, Any]]) -> Dict[str, Any]:

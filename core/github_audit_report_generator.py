@@ -171,7 +171,8 @@ class GitHubAuditReportGenerator:
                 except json.JSONDecodeError:
                     findings_data = {}
                 
-                findings_list = findings_data.get('findings', [])
+                # Try both possible keys: 'vulnerabilities' (from enhanced analyzer) and 'findings' (legacy)
+                findings_list = findings_data.get('vulnerabilities', findings_data.get('findings', []))
                 findings_count = len(findings_list)
                 total_findings += findings_count
                 
@@ -291,13 +292,15 @@ class GitHubAuditReportGenerator:
                 content += f"#### {severity.title()} Severity\n\n"
                 
                 for finding in by_severity[severity]:
-                    title = finding.get('title', finding.get('description', 'Unknown'))
+                    title = finding.get('title', finding.get('type', finding.get('description', 'Unknown')))
                     desc = finding.get('description', '')
                     confidence = finding.get('confidence', 0)
+                    line = finding.get('line', finding.get('line_number', 'Unknown'))
                     
                     content += f"""**{title}**
+- Line: {line}
 - Confidence: {confidence:.1%}
-- Description: {desc[:200]}...
+- Description: {desc}
 
 """
         
@@ -482,15 +485,16 @@ The following {len(clean_contracts)} contracts had no findings:
             else:
                 for finding in contract.findings:
                     severity = finding.get('severity', 'unknown').lower()
-                    title = finding.get('title', finding.get('description', 'Unknown'))
+                    title = finding.get('title', finding.get('type', finding.get('description', 'Unknown')))
                     desc = finding.get('description', '')
                     confidence = finding.get('confidence', 0)
+                    line = finding.get('line', finding.get('line_number', 'Unknown'))
                     
                     html += f"""
             <div class="finding {severity}">
                 <h4><span class="severity-{severity}">●</span> {title}</h4>
-                <div class="meta">Severity: <strong>{severity.title()}</strong> | Confidence: {confidence:.0%}</div>
-                <p>{desc[:300]}...</p>
+                <div class="meta">Line: <strong>{line}</strong> | Severity: <strong>{severity.title()}</strong> | Confidence: {confidence:.0%}</div>
+                <p>{desc}</p>
             </div>
 """
             

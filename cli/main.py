@@ -584,13 +584,56 @@ class AetherCLI:
             'framework': result.framework,
             'repo_name': result.project_path.name,
         }
+        
+        # Generate comprehensive reports automatically
+        try:
+            from core.github_audit_report_generator import GitHubAuditReportGenerator
+            
+            # Determine output directory
+            if output:
+                # If output file specified, use its directory
+                output_dir = str(Path(output).parent) if Path(output).parent != Path('.') else './output/reports'
+            else:
+                output_dir = './output/reports'
+            
+            # Get project_id from auditor's database
+            project = auditor.db.get_project(github_url)
+            project_id = int(project['id']) if project else None
+            
+            if project_id:
+                # Generate comprehensive reports in all formats
+                report_generator = GitHubAuditReportGenerator(db_path=auditor.db.db_path)
+                
+                print(f"\n📊 Generating comprehensive audit reports...")
+                report_paths = report_generator.generate_report(
+                    output_dir=output_dir,
+                    project_id=project_id,
+                    format='all'  # Generate markdown, JSON, and HTML
+                )
+                
+                if report_paths:
+                    print(f"✅ Reports generated:")
+                    for path in report_paths.split(', '):
+                        print(f"   📄 {path}")
+                else:
+                    print("⚠️  No reports generated (no findings available)")
+            else:
+                print("⚠️  Could not generate reports: project not found in database")
+                
+        except Exception as e:
+            print(f"⚠️  Report generation failed: {e}")
+            if verbose:
+                import traceback
+                traceback.print_exc()
+        
+        # Display findings based on format
         if fmt == 'json':
             payload = formatter.format_for_json(result.findings)
             if output:
                 import json as _json
                 with open(output, 'w') as f:
                     _json.dump(payload, f, indent=2)
-                print(f"📊 JSON written: {output}")
+                print(f"\n📊 JSON written: {output}")
             else:
                 print(payload)
         elif fmt == 'immunefi':
@@ -598,7 +641,7 @@ class AetherCLI:
             if output:
                 with open(output, 'w') as f:
                     f.write(md)
-                print(f"📄 Immunefi report written: {output}")
+                print(f"\n📄 Immunefi report written: {output}")
             else:
                 print(md)
         else:
