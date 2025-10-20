@@ -212,6 +212,16 @@ python main.py generate-foundry --from-results ./output/results.json --out ./out
 python main.py generate-foundry --from-report ./output/report.md --out ./output/pocs
 ```
 
+LLM-based PoC generation is the default. Ensure `OPENAI_API_KEY` (and/or `GEMINI_API_KEY`) is set for best results. Template-only mode (no LLM) is available but not recommended except for offline/CI smoke runs:
+
+```bash
+python scripts/generate_foundry_pocs.py \
+  --results ./output/results.json \
+  --contract ./contracts/MyContract.sol \
+  --output ./output/pocs \
+  --template-only
+```
+
 **Enhanced PoC Generation Features:**
 - **AST-based analysis** provides 100% accurate contract function extraction
 - **Production-ready prompts** generate exploits suitable for $100k+ bug bounty submissions
