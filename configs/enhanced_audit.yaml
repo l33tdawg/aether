@@ -21,13 +21,7 @@ tools:
       exclude_informational: false
       timeout: 600
 
-  - name: mythril
-    type: symbolic_execution
-    enabled: true
-    config:
-      solc_json: true
-      output: json
-      timeout: 600
+  # mythril disabled (removed)
 
   - name: llm_gpt
     type: reasoning
@@ -56,7 +50,7 @@ node_configs:
     analyze_imports: true
 
   StaticAnalysisNode:
-    tools: [slither, mythril]
+    tools: [slither]
     severity_threshold: low
     output_format: structured
     enhanced_mode: true
