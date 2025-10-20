@@ -798,6 +798,47 @@ class EnhancedReportGenerator:
             'compliance': str(compliance_dir) if include_compliance else None
         }
 
+    def generate_per_contract_report(self, results: Dict[str, Any], contract_name: str, output_dir: str, include_compliance: bool = True):
+        """Generate comprehensive report package for a specific contract"""
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Generate standard Markdown report
+        markdown_path = output_path / f"{contract_name}_report_{timestamp}.md"
+        self.report_generator.generate_comprehensive_report(results, str(markdown_path))
+
+        # Generate HTML dashboard
+        dashboard_path = output_path / f"{contract_name}_dashboard_{timestamp}.html"
+        self.visualizer.generate_html_dashboard(results, str(dashboard_path))
+
+        # Generate compliance reports if requested
+        compliance_dir = None
+        if include_compliance:
+            compliance_dir = output_path / "compliance"
+            compliance_dir.mkdir(exist_ok=True)
+
+            for standard in ['SOC2', 'PCI-DSS', 'GDPR']:
+                compliance_path = compliance_dir / f"{contract_name}_compliance_{standard.lower()}_{timestamp}.md"
+                self.compliance_reporter.generate_compliance_report(results, standard, str(compliance_path))
+
+        # Generate Excel report
+        excel_path = output_path / f"{contract_name}_data_{timestamp}.xlsx"
+        self.visualizer.generate_excel_report(results, str(excel_path))
+
+        # Generate PDF report
+        pdf_path = output_path / f"{contract_name}_report_{timestamp}.pdf"
+        self.visualizer.generate_pdf_report(results, str(pdf_path))
+
+        return {
+            'markdown': str(markdown_path),
+            'dashboard': str(dashboard_path),
+            'excel': str(excel_path),
+            'pdf': str(pdf_path),
+            'compliance': str(compliance_dir) if include_compliance else None
+        }
+
     def generate_risk_assessment(self, vulnerabilities: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate comprehensive risk assessment"""
         prioritized_vulns = self.risk_scorer.prioritize_vulnerabilities(vulnerabilities)

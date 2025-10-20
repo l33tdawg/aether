@@ -618,6 +618,7 @@ class AetherCLI:
         phase3: bool = False,
         ai_ensemble: bool = False,
         enhanced_reports: bool = False,
+        per_contract_reports: bool = False,
         compliance_only: bool = False,
         export_formats: List[str] = None,
         foundry: bool = False,
@@ -755,11 +756,83 @@ class AetherCLI:
             report_path = os.path.join(full_output_dir, "audit_report.md")
 
             # Determine if bug bounty submission should be generated
-            # Generate when enhanced reports are requested or foundry validation is used
-            bug_bounty_submission = enhanced_reports or foundry
+            # Generate when enhanced reports or per-contract reports are requested or foundry validation is used
+            bug_bounty_submission = enhanced_reports or per_contract_reports or foundry
 
+            # Generate per-contract reports if requested
+            if per_contract_reports:
+                print("📊 Generating per-contract enhanced reports...")
+                
+                # Determine scope name from contract path
+                if os.path.isdir(contract_path):
+                    scope_name = Path(contract_path).name
+                else:
+                    scope_name = Path(contract_path).parent.name if Path(contract_path).parent.name else "contracts"
+                
+                # Create scope-based directory structure
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                if output_dir_provided_by_user:
+                    scope_dir = os.path.join(output_dir, f"{scope_name}_audit_{timestamp}")
+                else:
+                    scope_dir = f"output/{scope_name}_audit_{timestamp}"
+                os.makedirs(scope_dir, exist_ok=True)
+                
+                print(f"📁 Scope directory: {scope_dir}")
+                
+                try:
+                    # Use the enhanced report generator
+                    enhanced_report_gen = audit_engine.enhanced_report_generator
+                    
+                    # Create per-contract directory and reports
+                    contract_report_dir = os.path.join(scope_dir, contract_name, "reports")
+                    os.makedirs(contract_report_dir, exist_ok=True)
+                    
+                    # Generate comprehensive enhanced reports for this contract
+                    report_files = enhanced_report_gen.generate_per_contract_report(
+                        report_data, 
+                        contract_name, 
+                        contract_report_dir,
+                        include_compliance=not compliance_only
+                    )
+                    
+                    print(f"✅ Generated enhanced reports for {contract_name}:")
+                    print(f"   📄 Markdown: {report_files.get('markdown', 'N/A')}")
+                    print(f"   🌐 Dashboard: {report_files.get('dashboard', 'N/A')}")
+                    print(f"   📊 Excel: {report_files.get('excel', 'N/A')}")
+                    print(f"   📋 PDF: {report_files.get('pdf', 'N/A')}")
+                    
+                    # Copy contract source to contract directory
+                    if os.path.isfile(contract_path):
+                        contract_dest = os.path.join(scope_dir, contract_name, f"{contract_name}.sol")
+                        os.makedirs(os.path.dirname(contract_dest), exist_ok=True)
+                        shutil.copy2(contract_path, contract_dest)
+                        print(f"   📄 Contract: {contract_dest}")
+                    
+                    # Export results in requested formats
+                    if export_formats:
+                        print(f"📤 Exporting results in formats: {', '.join(export_formats)}")
+                        exported_files = audit_engine.enhanced_report_generator.export_results(results, contract_report_dir, export_formats)
+                        print(f"✅ Exported files: {exported_files}")
+                    
+                    # Generate bug bounty submission
+                    if bug_bounty_submission:
+                        bounty_path = os.path.join(scope_dir, contract_name, f"{contract_name}_bug_bounty_submission.md")
+                        bounty_content = report_generator.generate_bug_bounty_submission(report_data)
+                        with open(bounty_path, 'w') as f:
+                            f.write(bounty_content)
+                        print(f"✅ Generated bug bounty submission: {bounty_path}")
+                    
+                    print(f"\n📂 All reports for {contract_name} saved to: {os.path.join(scope_dir, contract_name)}")
+                    print(f"\n💡 To generate Foundry tests from these results:")
+                    print(f"   python main.py generate-foundry --from-results {os.path.join(contract_report_dir, 'results.json')}")
+                    
+                except Exception as e:
+                    print(f"⚠️  Per-contract report generation failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
             # Generate enhanced reports if requested
-            if enhanced_reports or compliance_only:
+            elif enhanced_reports or compliance_only:
                 print("📊 Generating enhanced reports...")
 
                 try:
@@ -1169,6 +1242,7 @@ class AetherCLI:
         phase3: bool = False,
         ai_ensemble: bool = False,
         enhanced_reports: bool = False,
+        per_contract_reports: bool = False,
         compliance_only: bool = False,
         export_formats: List[str] = None,
         foundry: bool = False
@@ -1226,6 +1300,71 @@ class AetherCLI:
             # Transform flow results into expected report structure
             report_data = self._transform_results_for_report(results)
             report_generator.generate_comprehensive_report(report_data, report_path)
+
+            # Generate per-contract reports if requested
+            if per_contract_reports:
+                print("📊 Generating per-contract enhanced reports...")
+                
+                # Determine scope name from contract path
+                if os.path.isdir(contract_path):
+                    scope_name = Path(contract_path).name
+                else:
+                    scope_name = Path(contract_path).parent.name if Path(contract_path).parent.name else "contracts"
+                
+                # Create scope-based directory structure
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                scope_dir = f"output/{scope_name}_audit_{timestamp}"
+                os.makedirs(scope_dir, exist_ok=True)
+                
+                print(f"📁 Scope directory: {scope_dir}")
+                
+                try:
+                    # We need an audit engine to get the enhanced report generator
+                    # Initialize audit engine temporarily
+                    openai_api_key = self._get_openai_api_key()
+                    from core.audit_engine import AetherAuditEngine
+                    audit_engine = AetherAuditEngine(verbose=verbose, openai_api_key=openai_api_key)
+                    enhanced_report_gen = audit_engine.enhanced_report_generator
+                    
+                    # Create per-contract directory and reports
+                    contract_report_dir = os.path.join(scope_dir, contract_name, "reports")
+                    os.makedirs(contract_report_dir, exist_ok=True)
+                    
+                    # Generate comprehensive enhanced reports for this contract
+                    report_files = enhanced_report_gen.generate_per_contract_report(
+                        report_data, 
+                        contract_name, 
+                        contract_report_dir,
+                        include_compliance=not compliance_only
+                    )
+                    
+                    print(f"✅ Generated enhanced reports for {contract_name}:")
+                    print(f"   📄 Markdown: {report_files.get('markdown', 'N/A')}")
+                    print(f"   🌐 Dashboard: {report_files.get('dashboard', 'N/A')}")
+                    print(f"   📊 Excel: {report_files.get('excel', 'N/A')}")
+                    print(f"   📋 PDF: {report_files.get('pdf', 'N/A')}")
+                    
+                    # Copy contract source to contract directory
+                    if os.path.isfile(contract_path):
+                        contract_dest = os.path.join(scope_dir, contract_name, f"{contract_name}.sol")
+                        os.makedirs(os.path.dirname(contract_dest), exist_ok=True)
+                        shutil.copy2(contract_path, contract_dest)
+                        print(f"   📄 Contract: {contract_dest}")
+                    
+                    # Export results in requested formats
+                    if export_formats:
+                        print(f"📤 Exporting results in formats: {', '.join(export_formats)}")
+                        exported_files = enhanced_report_gen.export_results(results, contract_report_dir, export_formats)
+                        print(f"✅ Exported files: {exported_files}")
+                    
+                    print(f"\n📂 All reports for {contract_name} saved to: {os.path.join(scope_dir, contract_name)}")
+                    print(f"\n💡 To generate Foundry tests from these results:")
+                    print(f"   python main.py generate-foundry --from-results {os.path.join(contract_report_dir, 'results.json')}")
+                    
+                except Exception as e:
+                    print(f"⚠️  Per-contract report generation failed: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             # Generate bug bounty submission template for quick copy-paste
             bounty_path = os.path.join(output_dir, f"{contract_name}-bug_bounty_submission.md")

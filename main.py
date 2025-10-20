@@ -140,6 +140,7 @@ Examples:
     audit_parser.add_argument('--foundry', action='store_true', help='Enable Foundry validation with PoC generation for bug bounty submissions')
     audit_parser.add_argument('--llm-validation', action='store_true', help='Enable LLM-based false positive filtering and Foundry test generation')
     audit_parser.add_argument('--enhanced-reports', action='store_true', help='Generate enhanced reports with dashboards, compliance, and multiple formats')
+    audit_parser.add_argument('--per-contract-reports', action='store_true', help='Generate separate enhanced reports for each contract in scope-based directory structure')
     audit_parser.add_argument('--compliance-only', action='store_true', help='Generate only compliance reports (SOC2, PCI-DSS, GDPR, etc.)')
     audit_parser.add_argument('--export-formats', nargs='+', choices=['json', 'xml', 'excel', 'pdf'], default=['json'], help='Export formats for results (default: json)')
     # GitHub audit options (activated when argument is a GitHub URL)
@@ -173,6 +174,7 @@ Examples:
     run_parser.add_argument('--phase3', action='store_true', help='Enable Phase 3 AI features (AI ensemble, learning system, formal verification)')
     run_parser.add_argument('--ai-ensemble', action='store_true', help='Use enhanced AI ensemble with specialized GPT-5-mini agents')
     run_parser.add_argument('--enhanced-reports', action='store_true', help='Generate enhanced reports with dashboards, compliance, and multiple formats')
+    run_parser.add_argument('--per-contract-reports', action='store_true', help='Generate separate enhanced reports for each contract in scope-based directory structure')
     run_parser.add_argument('--compliance-only', action='store_true', help='Generate only compliance reports (SOC2, PCI-DSS, GDPR, etc.)')
     run_parser.add_argument('--export-formats', nargs='+', choices=['json', 'xml', 'excel', 'pdf'], default=['json'], help='Export formats for results (default: json)')
     run_parser.add_argument('--flow', default='configs/full_pipeline.yaml', help='YAML flow configuration')
@@ -335,6 +337,7 @@ Examples:
                 phase3=args.phase3,
                 ai_ensemble=args.ai_ensemble,
                 enhanced_reports=args.enhanced_reports,
+                per_contract_reports=args.per_contract_reports,
                 compliance_only=args.compliance_only,
                 export_formats=args.export_formats,
                 foundry=args.foundry,
@@ -404,6 +407,7 @@ Examples:
                 phase3=args.phase3,
                 ai_ensemble=args.ai_ensemble,
                 enhanced_reports=args.enhanced_reports,
+                per_contract_reports=args.per_contract_reports,
                 compliance_only=args.compliance_only,
                 export_formats=args.export_formats,
                 foundry=args.foundry
