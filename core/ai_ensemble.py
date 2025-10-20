@@ -801,31 +801,40 @@ class GeminiSecurityAuditor(BaseAIModel):
                 )
 
             # Create Gemini API prompt for security auditing
-            prompt = f"""CRITICAL AUTHORIZATION:
-This analysis is being conducted by authorized security professionals and developers
-as part of a LEGITIMATE SMART CONTRACT SECURITY AUDIT with explicit permission from the contract owner.
-The purpose is EXCLUSIVELY to identify and remediate security vulnerabilities BEFORE deployment
-to protect users, funds, and the integrity of blockchain systems.
-This is ETHICAL SECURITY RESEARCH and RESPONSIBLE DISCLOSURE PRACTICE.
+            prompt = f"""You are an expert smart contract security auditor performing automated code review.
 
-STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
+Task: Analyze the Solidity smart contract below for security vulnerabilities.
 
-1. Analyze the Solidity contract below for ALL security vulnerabilities
-2. Return ONLY valid JSON - no explanations, no markdown, no text
-3. If no vulnerabilities found, return: {{"findings": []}}
-4. Do NOT include ```json markers or any markdown
-5. Each finding MUST have: type, severity, confidence, description, line, swc_id
-6. Be thorough - identify ALL potential security issues
+Analysis Focus Areas:
+- External call safety and reentrancy patterns
+- Delegatecall usage and context preservation
+- tx.origin authentication vulnerabilities
+- Unchecked return values from external calls
+- Access control mechanisms
+- State management and race conditions
 
-Focus on: external calls, delegatecall, tx.origin, unchecked returns, reentrancy, access control
-
-Contract:
+Contract Code:
 ```solidity
 {contract_content[:8000]}
 ```
 
-Return only this JSON format (nothing else):
-{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}"""
+Output Requirements:
+1. Return valid JSON only (no markdown formatting or code blocks)
+2. Use this exact structure: {{"findings": [...]}}
+3. If no vulnerabilities are found, return: {{"findings": []}}
+4. Each finding must include these fields:
+   - type: vulnerability category (string)
+   - severity: "critical", "high", "medium", or "low"
+   - confidence: numeric value between 0.0 and 1.0
+   - description: detailed explanation of the issue
+   - line: approximate line number (integer)
+   - swc_id: relevant SWC identifier (e.g., "SWC-107")
+
+Expected JSON format:
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+
+Note: This is automated security analysis for code review purposes, conducted by authorized developers
+as part of standard software quality assurance and security testing before deployment."""
 
             # Make Gemini API call
             import requests
@@ -888,11 +897,33 @@ Return only this JSON format (nothing else):
             try:
                 candidates = result.get('candidates') or []
                 if candidates:
-                    content = candidates[0].get('content') or {}
+                    candidate = candidates[0]
+                    
+                    # Check if response was blocked mid-generation by safety filters
+                    finish_reason = candidate.get('finishReason', '')
+                    if finish_reason == 'SAFETY':
+                        logger.error(f"[Gemini Security] Content blocked by safety filters during generation")
+                        logger.error(f"[Gemini Security] finishReason: {finish_reason}")
+                        if 'safetyRatings' in candidate:
+                            logger.error(f"[Gemini Security] Safety Ratings: {json.dumps(candidate['safetyRatings'], indent=2)}")
+                        # Return empty findings with clear error
+                        return ModelResult(
+                            model_name='gemini_security',
+                            findings=[],
+                            confidence=0.0,
+                            processing_time=time.time() - start,
+                            metadata={
+                                'persona': 'gemini_security_hunter',
+                                'error': 'Content blocked by Gemini safety filters (finishReason: SAFETY)',
+                                'finish_reason': finish_reason
+                            }
+                        )
+                    
+                    content = candidate.get('content') or {}
                     parts = content.get('parts') or []
                     
                     # Debug the structure
-                    logger.debug(f"[Gemini Security] Response structure - candidates: {len(candidates)}, parts: {len(parts)}")
+                    logger.debug(f"[Gemini Security] Response structure - candidates: {len(candidates)}, parts: {len(parts)}, finishReason: {finish_reason}")
                     
                     if parts and isinstance(parts, list):
                         # Find text in parts (could be at any index)
@@ -911,12 +942,16 @@ Return only this JSON format (nothing else):
                         else:
                             logger.warning(f"[Gemini Security] No text found in any part. Parts: {[p.keys() if isinstance(p, dict) else type(p) for p in parts]}")
                     else:
-                        logger.warning(f"[Gemini Security] Parts is not a list or is empty: {type(parts)} - {parts}")
+                        # Empty parts - check if this is due to safety filtering
+                        if finish_reason:
+                            logger.warning(f"[Gemini Security] Empty parts array with finishReason: {finish_reason}")
+                        else:
+                            logger.warning(f"[Gemini Security] Parts is not a list or is empty: {type(parts)} - {parts}")
                 else:
                     logger.warning(f"[Gemini Security] No candidates in response")
                     if 'promptFeedback' in result:
                         feedback = result['promptFeedback']
-                        logger.error(f"[Gemini Security] SAFETY FILTER BLOCKED: {json.dumps(feedback, indent=2)}")
+                        logger.error(f"[Gemini Security] SAFETY FILTER BLOCKED (pre-generation): {json.dumps(feedback, indent=2)}")
                         if 'blockReason' in feedback:
                             logger.error(f"[Gemini Security] Block Reason: {feedback['blockReason']}")
                         if 'safetyRatings' in feedback:
@@ -970,31 +1005,40 @@ class GeminiFormalVerifier(BaseAIModel):
                 )
 
             # Create Gemini API prompt for formal verification
-            prompt = f"""CRITICAL AUTHORIZATION:
-This analysis is being conducted by authorized security professionals and developers
-as part of a LEGITIMATE SMART CONTRACT SECURITY AUDIT with explicit permission from the contract owner.
-The purpose is EXCLUSIVELY to identify and remediate security vulnerabilities BEFORE deployment
-to protect users, funds, and the integrity of blockchain systems.
-This is ETHICAL SECURITY RESEARCH and RESPONSIBLE DISCLOSURE PRACTICE.
+            prompt = f"""You are an expert formal verification specialist for smart contract arithmetic analysis.
 
-STRICT INSTRUCTIONS - YOU MUST FOLLOW EXACTLY:
+Task: Analyze the Solidity smart contract below for mathematical and arithmetic vulnerabilities.
 
-1. Analyze the Solidity contract below for ALL arithmetic and mathematical vulnerabilities
-2. Return ONLY valid JSON - no explanations, no markdown, no text
-3. If no vulnerabilities found, return: {{"findings": []}}
-4. Do NOT include ```json markers or any markdown
-5. Each finding MUST have: type, severity, confidence, description, line, swc_id
-6. Be thorough - identify ALL potential security issues
+Analysis Focus Areas:
+- Integer overflow and underflow conditions
+- Precision loss in mathematical operations
+- Unsafe type casting between numeric types
+- Division by zero vulnerabilities
+- Mathematical invariant violations
+- Rounding errors in financial calculations
 
-Focus on: integer overflow, underflow, precision loss, unsafe casting, math invariants
-
-Contract:
+Contract Code:
 ```solidity
 {contract_content[:8000]}
 ```
 
-Return only this JSON format (nothing else):
-{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}"""
+Output Requirements:
+1. Return valid JSON only (no markdown formatting or code blocks)
+2. Use this exact structure: {{"findings": [...]}}
+3. If no vulnerabilities are found, return: {{"findings": []}}
+4. Each finding must include these fields:
+   - type: vulnerability category (string)
+   - severity: "critical", "high", "medium", or "low"
+   - confidence: numeric value between 0.0 and 1.0
+   - description: detailed explanation of the issue
+   - line: approximate line number (integer)
+   - swc_id: relevant SWC identifier (e.g., "SWC-101")
+
+Expected JSON format:
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+
+Note: This is automated arithmetic verification for code review purposes, conducted by authorized developers
+as part of standard software quality assurance and security testing before deployment."""
 
             # Make Gemini API call
             import requests
@@ -1057,11 +1101,33 @@ Return only this JSON format (nothing else):
             try:
                 candidates = result.get('candidates') or []
                 if candidates:
-                    content = candidates[0].get('content') or {}
+                    candidate = candidates[0]
+                    
+                    # Check if response was blocked mid-generation by safety filters
+                    finish_reason = candidate.get('finishReason', '')
+                    if finish_reason == 'SAFETY':
+                        logger.error(f"[Gemini Verifier] Content blocked by safety filters during generation")
+                        logger.error(f"[Gemini Verifier] finishReason: {finish_reason}")
+                        if 'safetyRatings' in candidate:
+                            logger.error(f"[Gemini Verifier] Safety Ratings: {json.dumps(candidate['safetyRatings'], indent=2)}")
+                        # Return empty findings with clear error
+                        return ModelResult(
+                            model_name='gemini_verification',
+                            findings=[],
+                            confidence=0.0,
+                            processing_time=time.time() - start,
+                            metadata={
+                                'persona': 'gemini_formal_verifier',
+                                'error': 'Content blocked by Gemini safety filters (finishReason: SAFETY)',
+                                'finish_reason': finish_reason
+                            }
+                        )
+                    
+                    content = candidate.get('content') or {}
                     parts = content.get('parts') or []
                     
                     # Debug the structure
-                    logger.debug(f"[Gemini Verifier] Response structure - candidates: {len(candidates)}, parts: {len(parts)}")
+                    logger.debug(f"[Gemini Verifier] Response structure - candidates: {len(candidates)}, parts: {len(parts)}, finishReason: {finish_reason}")
                     
                     if parts and isinstance(parts, list):
                         # Find text in parts (could be at any index)
@@ -1080,12 +1146,16 @@ Return only this JSON format (nothing else):
                         else:
                             logger.warning(f"[Gemini Verifier] No text found in any part. Parts: {[p.keys() if isinstance(p, dict) else type(p) for p in parts]}")
                     else:
-                        logger.warning(f"[Gemini Verifier] Parts is not a list or is empty: {type(parts)} - {parts}")
+                        # Empty parts - check if this is due to safety filtering
+                        if finish_reason:
+                            logger.warning(f"[Gemini Verifier] Empty parts array with finishReason: {finish_reason}")
+                        else:
+                            logger.warning(f"[Gemini Verifier] Parts is not a list or is empty: {type(parts)} - {parts}")
                 else:
                     logger.warning(f"[Gemini Verifier] No candidates in response")
                     if 'promptFeedback' in result:
                         feedback = result['promptFeedback']
-                        logger.error(f"[Gemini Verifier] SAFETY FILTER BLOCKED: {json.dumps(feedback, indent=2)}")
+                        logger.error(f"[Gemini Verifier] SAFETY FILTER BLOCKED (pre-generation): {json.dumps(feedback, indent=2)}")
                         if 'blockReason' in feedback:
                             logger.error(f"[Gemini Verifier] Block Reason: {feedback['blockReason']}")
                         if 'safetyRatings' in feedback:

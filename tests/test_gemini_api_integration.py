@@ -86,11 +86,11 @@ class TestGeminiAPIRequestFormat:
                     assert 'contents' in payload
                     assert 'parts' in payload['contents'][0]
                     
-                    # Verify authorization context is in the prompt
+                    # Verify authorization context is in the prompt (now in professional tone)
                     prompt_text = payload['contents'][0]['parts'][0]['text']
-                    assert 'CRITICAL AUTHORIZATION' in prompt_text
-                    assert 'LEGITIMATE SMART CONTRACT SECURITY AUDIT' in prompt_text
-                    assert 'ETHICAL SECURITY RESEARCH' in prompt_text
+                    assert 'automated security analysis' in prompt_text.lower() or 'automated code review' in prompt_text.lower()
+                    assert 'authorized developers' in prompt_text.lower()
+                    assert 'security testing' in prompt_text.lower() or 'quality assurance' in prompt_text.lower()
 
 
 class TestGeminiSafetySettings:
@@ -536,3 +536,203 @@ class TestGeminiCompleteness:
                     assert 'type' in finding or 'severity' in finding
                     # At minimum, some fields should be present
                     assert len(finding) > 0
+
+
+class TestGeminiEmptyPartsHandling:
+    """Test handling of empty parts array from Gemini API (safety filtering scenarios)."""
+
+    @pytest.mark.asyncio
+    async def test_gemini_safety_blocked_mid_generation_security_auditor(self):
+        """Test that GeminiSecurityAuditor handles finishReason: SAFETY correctly."""
+        auditor = GeminiSecurityAuditor()
+        test_contract = "contract Test { function test() public {} }"
+        
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            # Response with finishReason: SAFETY and empty parts
+            mock_response.json.return_value = {
+                'candidates': [{
+                    'content': {
+                        'parts': []  # Empty parts array
+                    },
+                    'finishReason': 'SAFETY',
+                    'safetyRatings': [
+                        {
+                            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                            'probability': 'HIGH'
+                        }
+                    ]
+                }]
+            }
+            mock_response.raise_for_status.return_value = None
+            mock_post.return_value = mock_response
+            
+            with patch('core.config_manager.ConfigManager') as mock_config:
+                mock_config_instance = MagicMock()
+                mock_config_instance.config.gemini_api_key = 'test-key'
+                mock_config.return_value = mock_config_instance
+                
+                result = await auditor.analyze_contract(test_contract)
+                
+                # Should return empty findings
+                assert result.findings == []
+                # Should have error in metadata
+                assert 'error' in result.metadata
+                assert 'safety filters' in result.metadata['error'].lower()
+                assert result.metadata.get('finish_reason') == 'SAFETY'
+                # Confidence should be 0
+                assert result.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_gemini_safety_blocked_mid_generation_formal_verifier(self):
+        """Test that GeminiFormalVerifier handles finishReason: SAFETY correctly."""
+        verifier = GeminiFormalVerifier()
+        test_contract = "contract Test { function test() public {} }"
+        
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            # Response with finishReason: SAFETY and empty parts
+            mock_response.json.return_value = {
+                'candidates': [{
+                    'content': {
+                        'parts': []  # Empty parts array
+                    },
+                    'finishReason': 'SAFETY',
+                    'safetyRatings': [
+                        {
+                            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                            'probability': 'MEDIUM'
+                        }
+                    ]
+                }]
+            }
+            mock_response.raise_for_status.return_value = None
+            mock_post.return_value = mock_response
+            
+            with patch('core.config_manager.ConfigManager') as mock_config:
+                mock_config_instance = MagicMock()
+                mock_config_instance.config.gemini_api_key = 'test-key'
+                mock_config.return_value = mock_config_instance
+                
+                result = await verifier.analyze_contract(test_contract)
+                
+                # Should return empty findings
+                assert result.findings == []
+                # Should have error in metadata
+                assert 'error' in result.metadata
+                assert 'safety filters' in result.metadata['error'].lower()
+                assert result.metadata.get('finish_reason') == 'SAFETY'
+                # Confidence should be 0
+                assert result.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_gemini_finish_reason_logged(self):
+        """Test that finishReason SAFETY triggers proper error logging."""
+        auditor = GeminiSecurityAuditor()
+        test_contract = "contract Test { function test() public {} }"
+        
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                'candidates': [{
+                    'content': {
+                        'parts': []
+                    },
+                    'finishReason': 'SAFETY',
+                    'safetyRatings': [
+                        {
+                            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                            'probability': 'HIGH'
+                        }
+                    ]
+                }]
+            }
+            mock_response.raise_for_status.return_value = None
+            mock_post.return_value = mock_response
+            
+            with patch('core.config_manager.ConfigManager') as mock_config:
+                mock_config_instance = MagicMock()
+                mock_config_instance.config.gemini_api_key = 'test-key'
+                mock_config.return_value = mock_config_instance
+                
+                # Capture log output
+                with patch('core.ai_ensemble.logger') as mock_logger:
+                    result = await auditor.analyze_contract(test_contract)
+                    
+                    # Should log error about safety filtering
+                    assert mock_logger.error.called
+                    # Check that one of the error calls mentions safety filters
+                    error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
+                    assert any('safety filters' in str(call).lower() for call in error_calls)
+
+    @pytest.mark.asyncio
+    async def test_gemini_empty_parts_without_finish_reason(self):
+        """Test handling of empty parts without a finishReason."""
+        auditor = GeminiSecurityAuditor()
+        test_contract = "contract Test { function test() public {} }"
+        
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            # Response with empty parts but no finishReason (unusual but possible)
+            mock_response.json.return_value = {
+                'candidates': [{
+                    'content': {
+                        'parts': []
+                    }
+                }]
+            }
+            mock_response.raise_for_status.return_value = None
+            mock_post.return_value = mock_response
+            
+            with patch('core.config_manager.ConfigManager') as mock_config:
+                mock_config_instance = MagicMock()
+                mock_config_instance.config.gemini_api_key = 'test-key'
+                mock_config.return_value = mock_config_instance
+                
+                with patch('core.ai_ensemble.logger') as mock_logger:
+                    result = await auditor.analyze_contract(test_contract)
+                    
+                    # Should handle gracefully
+                    assert result is not None
+                    assert result.findings == []
+                    # Should log warning about empty parts
+                    assert mock_logger.warning.called
+
+    @pytest.mark.asyncio
+    async def test_gemini_empty_parts_graceful_return(self):
+        """Test that empty parts returns valid ModelResult without crashing."""
+        auditor = GeminiSecurityAuditor()
+        test_contract = "contract Test { function test() public {} }"
+        
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                'candidates': [{
+                    'content': {
+                        'parts': []
+                    },
+                    'finishReason': 'SAFETY'
+                }]
+            }
+            mock_response.raise_for_status.return_value = None
+            mock_post.return_value = mock_response
+            
+            with patch('core.config_manager.ConfigManager') as mock_config:
+                mock_config_instance = MagicMock()
+                mock_config_instance.config.gemini_api_key = 'test-key'
+                mock_config.return_value = mock_config_instance
+                
+                # Should not raise exception
+                result = await auditor.analyze_contract(test_contract)
+                
+                # Verify valid ModelResult structure
+                assert hasattr(result, 'model_name')
+                assert hasattr(result, 'findings')
+                assert hasattr(result, 'confidence')
+                assert hasattr(result, 'processing_time')
+                assert hasattr(result, 'metadata')
+                assert result.model_name == 'gemini_security'
+                assert isinstance(result.findings, list)
+                assert isinstance(result.confidence, float)
+                assert isinstance(result.processing_time, float)
+                assert isinstance(result.metadata, dict)
