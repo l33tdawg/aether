@@ -32,26 +32,182 @@
             box-sizing: border-box;
         }
 
+        html {
+            scroll-behavior: smooth;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
             line-height: 1.6;
             color: #1a1a1a;
             background-color: #ffffff;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        ::selection {
+            background-color: #4f46e5;
+            color: #ffffff;
+        }
+
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #4338ca, #6d28d9);
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 0 24px;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Blockchain Background Animation */
+        .blockchain-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+            opacity: 0.6;
+        }
+
+        .network-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .floating-hexagon {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            opacity: 0.1;
+            animation: float 20s infinite ease-in-out;
+        }
+
+        .floating-hexagon::before {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            clip-path: polygon(30% 0%, 70% 0%, 100% 50%, 70% 100%, 30% 100%, 0% 50%);
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0) rotate(0deg);
+            }
+            25% {
+                transform: translateY(-30px) rotate(90deg);
+            }
+            50% {
+                transform: translateY(0) rotate(180deg);
+            }
+            75% {
+                transform: translateY(30px) rotate(270deg);
+            }
+        }
+
+        /* Parallax Layers */
+        .parallax-layer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+        }
+
+        .grid-pattern {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(79, 70, 229, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(79, 70, 229, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: gridMove 20s linear infinite;
+        }
+
+        @keyframes gridMove {
+            0% {
+                transform: translateY(0);
+            }
+            100% {
+                transform: translateY(50px);
+            }
+        }
+
+        /* Scroll Reveal Animations */
+        .reveal {
+            opacity: 0;
+            transform: translateY(50px);
+            transition: all 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .reveal-delay-1 {
+            transition-delay: 0.1s;
+        }
+
+        .reveal-delay-2 {
+            transition-delay: 0.2s;
+        }
+
+        .reveal-delay-3 {
+            transition-delay: 0.3s;
+        }
+
+        .reveal-delay-4 {
+            transition-delay: 0.4s;
+        }
+
+        .reveal-delay-5 {
+            transition-delay: 0.5s;
+        }
+
+        .reveal-delay-6 {
+            transition-delay: 0.6s;
         }
 
         /* Header */
         header {
-            background-color: #ffffff;
-            border-bottom: 1px solid #e5e5e5;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(229, 229, 229, 0.5);
             position: sticky;
             top: 0;
             z-index: 100;
+            transition: all 0.3s ease;
+        }
+
+        header.scrolled {
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
         }
 
         .header-content {
@@ -66,12 +222,30 @@
             font-weight: 700;
             color: #1a1a1a;
             text-decoration: none;
+            transition: transform 0.3s ease;
+        }
+
+        .logo:hover {
+            transform: translateX(5px);
         }
 
         .logo::before {
             content: "Ξ";
             color: #4f46e5;
             margin-right: 8px;
+            display: inline-block;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.8;
+                transform: scale(1.05);
+            }
         }
 
         nav ul {
@@ -92,24 +266,65 @@
         }
 
         .cta-button {
-            background-color: #4f46e5;
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
             color: white;
             padding: 12px 24px;
-            border-radius: 6px;
+            border-radius: 8px;
             text-decoration: none;
             font-weight: 600;
-            transition: background-color 0.2s ease;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 10px rgba(79, 70, 229, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cta-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .cta-button:hover::before {
+            left: 100%;
         }
 
         .cta-button:hover {
-            background-color: #4338ca;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(79, 70, 229, 0.5);
         }
 
         /* Hero Section */
         .hero {
-            background-color: #ffffff;
-            padding: 80px 0;
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            padding: 120px 0 100px;
             text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(79, 70, 229, 0.08) 0%, transparent 70%);
+            animation: heroGlow 15s ease-in-out infinite;
+        }
+
+        @keyframes heroGlow {
+            0%, 100% {
+                transform: translate(0, 0) scale(1);
+            }
+            50% {
+                transform: translate(-5%, -5%) scale(1.1);
+            }
         }
 
         .hero h1 {
@@ -117,15 +332,32 @@
             font-weight: 800;
             margin-bottom: 24px;
             color: #1a1a1a;
+            background: linear-gradient(135deg, #1a1a1a 0%, #4f46e5 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: fadeInUp 1s ease-out;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .hero p {
             font-size: 20px;
             color: #666;
             margin-bottom: 40px;
-            max-width: 600px;
+            max-width: 700px;
             margin-left: auto;
             margin-right: auto;
+            animation: fadeInUp 1s ease-out 0.2s both;
         }
 
         .hero-buttons {
@@ -133,21 +365,41 @@
             gap: 16px;
             justify-content: center;
             flex-wrap: wrap;
+            animation: fadeInUp 1s ease-out 0.4s both;
         }
 
         .btn-primary {
-            background-color: #4f46e5;
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
             color: white;
             padding: 16px 32px;
             border-radius: 8px;
             text-decoration: none;
             font-weight: 600;
             font-size: 16px;
-            transition: background-color 0.2s ease;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(79, 70, 229, 0.3);
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .btn-primary:hover::before {
+            left: 100%;
         }
 
         .btn-primary:hover {
-            background-color: #4338ca;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(79, 70, 229, 0.4);
         }
 
         .btn-secondary {
@@ -159,26 +411,62 @@
             text-decoration: none;
             font-weight: 600;
             font-size: 16px;
-            transition: all 0.2s ease;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-secondary::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: #4f46e5;
+            transform: translate(-50%, -50%);
+            transition: width 0.5s ease, height 0.5s ease;
+            z-index: -1;
+        }
+
+        .btn-secondary:hover::before {
+            width: 300px;
+            height: 300px;
         }
 
         .btn-secondary:hover {
-            background-color: #4f46e5;
             color: white;
+            transform: translateY(-2px);
         }
 
         /* Features Section */
         .features {
-            background-color: #fafafa;
-            padding: 80px 0;
+            background: linear-gradient(180deg, #fafafa 0%, #ffffff 100%);
+            padding: 100px 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .features::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: -10%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(124, 58, 237, 0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: float 25s ease-in-out infinite;
         }
 
         .features h2 {
             text-align: center;
-            font-size: 36px;
-            font-weight: 700;
+            font-size: 42px;
+            font-weight: 800;
             margin-bottom: 16px;
             color: #1a1a1a;
+            position: relative;
         }
 
         .features > p {
@@ -195,67 +483,116 @@
             text-align: center;
             font-size: 24px;
             font-weight: 600;
-            color: #1a1a1a;
+            color: #4f46e5;
             margin-bottom: 20px;
             letter-spacing: -0.025em;
+            text-transform: uppercase;
+            font-size: 14px;
+            letter-spacing: 2px;
         }
 
         .features-description {
             text-align: center;
             font-size: 18px;
-            color: #666;
+            color: #64748b;
             margin-bottom: 64px;
-            max-width: 700px;
+            max-width: 750px;
             margin-left: auto;
             margin-right: auto;
-            line-height: 1.7;
+            line-height: 1.8;
         }
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 40px;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 32px;
         }
 
         .feature-card {
-            background-color: white;
-            padding: 32px;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            border: 1px solid #e5e7eb;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            transition: all 0.4s cubic-bezier(0.22, 0.61, 0.36, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #4f46e5, #7c3aed);
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform 0.4s ease;
+        }
+
+        .feature-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .feature-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 20px 60px rgba(79, 70, 229, 0.15);
+            background: rgba(255, 255, 255, 0.95);
+            border-color: rgba(79, 70, 229, 0.2);
         }
 
         .feature-card h3 {
-            font-size: 20px;
-            font-weight: 600;
+            font-size: 22px;
+            font-weight: 700;
             margin-bottom: 16px;
             color: #1a1a1a;
+            transition: color 0.3s ease;
+        }
+
+        .feature-card:hover h3 {
+            color: #4f46e5;
         }
 
         .feature-card p {
-            color: #666;
-            line-height: 1.7;
+            color: #64748b;
+            line-height: 1.8;
         }
 
         .feature-icon {
-            width: 48px;
-            height: 48px;
-            background-color: #eef2ff;
-            border-radius: 8px;
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
             position: relative;
             color: #4f46e5;
             font-weight: 600;
+            transition: all 0.4s ease;
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.1);
+        }
+
+        .feature-card:hover .feature-icon {
+            transform: scale(1.1) rotate(5deg);
+            box-shadow: 0 8px 24px rgba(79, 70, 229, 0.2);
         }
 
         .feature-icon::before {
             content: '';
-            width: 24px;
-            height: 24px;
+            width: 28px;
+            height: 28px;
             background-color: currentColor;
+            transition: transform 0.4s ease;
+        }
+
+        .feature-card:hover .feature-icon::before {
+            transform: scale(1.1);
         }
 
         .feature-icon.search::before {
@@ -290,14 +627,28 @@
 
         /* Code Section */
         .code-section {
-            background-color: #ffffff;
-            padding: 80px 0;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            padding: 100px 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .code-section::before {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: -10%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(79, 70, 229, 0.08) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: float 20s ease-in-out infinite reverse;
         }
 
         .code-section h2 {
             text-align: center;
-            font-size: 36px;
-            font-weight: 700;
+            font-size: 42px;
+            font-weight: 800;
             margin-bottom: 16px;
             color: #1a1a1a;
         }
@@ -314,70 +665,80 @@
 
         .code-subtitle {
             text-align: center;
-            font-size: 24px;
+            font-size: 14px;
             font-weight: 600;
-            color: #1a1a1a;
+            color: #4f46e5;
             margin-bottom: 20px;
-            letter-spacing: -0.025em;
+            letter-spacing: 2px;
+            text-transform: uppercase;
         }
 
         .code-description {
             text-align: center;
             font-size: 18px;
-            color: #666;
+            color: #64748b;
             margin-bottom: 64px;
-            max-width: 750px;
+            max-width: 800px;
             margin-left: auto;
             margin-right: auto;
-            line-height: 1.7;
+            line-height: 1.8;
         }
 
         .code-block {
-            background-color: #0f172a;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             color: #e2e8f0;
-            padding: 40px;
-            border-radius: 12px;
+            padding: 48px;
+            border-radius: 16px;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
             font-size: 14px;
-            line-height: 1.6;
+            line-height: 1.8;
             overflow-x: auto;
             margin-bottom: 40px;
-            border: 1px solid #1e293b;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            border: 1px solid rgba(79, 70, 229, 0.2);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
             position: relative;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .code-block:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.2);
         }
 
         .code-block::before {
             content: '';
             position: absolute;
-            top: 16px;
-            left: 16px;
+            top: 20px;
+            left: 20px;
             width: 12px;
             height: 12px;
             background-color: #ef4444;
             border-radius: 50%;
-            box-shadow: 0 0 0 2px #fca5a5;
+            box-shadow: 20px 0 0 #f59e0b, 40px 0 0 #10b981;
+            animation: pulse 2s ease-in-out infinite;
         }
 
-        .code-block::after {
-            content: '';
-            position: absolute;
-            top: 16px;
-            left: 36px;
-            width: 12px;
-            height: 12px;
-            background-color: #f59e0b;
-            border-radius: 50%;
-            box-shadow: 0 0 0 2px #fcd34d;
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.6;
+            }
         }
 
         .code-block .code-header {
             position: absolute;
-            top: 16px;
-            right: 16px;
+            top: 20px;
+            right: 20px;
             color: #64748b;
             font-size: 12px;
-            font-weight: 500;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 12px;
+            background: rgba(100, 116, 139, 0.1);
+            border-radius: 4px;
         }
 
         .code-block .comment {
@@ -398,9 +759,10 @@
 
         /* Workflow Section */
         .workflow {
-            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             padding: 120px 0;
             position: relative;
+            overflow: hidden;
         }
 
         .workflow::before {
@@ -410,112 +772,172 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: radial-gradient(circle at 20% 80%, rgba(79, 70, 229, 0.05) 0%, transparent 50%),
-                        radial-gradient(circle at 80% 20%, rgba(79, 70, 229, 0.05) 0%, transparent 50%);
+            background: 
+                radial-gradient(circle at 20% 30%, rgba(79, 70, 229, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(124, 58, 237, 0.15) 0%, transparent 50%);
             pointer-events: none;
+        }
+
+        .workflow::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: 
+                linear-gradient(rgba(79, 70, 229, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(79, 70, 229, 0.05) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            opacity: 0.5;
         }
 
         .workflow h2 {
             text-align: center;
-            font-size: 42px;
+            font-size: 48px;
             font-weight: 800;
             margin-bottom: 20px;
-            color: #1a1a1a;
+            color: #ffffff;
             position: relative;
+            z-index: 2;
         }
 
         .workflow h2::after {
             content: '';
             position: absolute;
-            bottom: -8px;
+            bottom: -12px;
             left: 50%;
             transform: translateX(-50%);
-            width: 80px;
+            width: 100px;
             height: 4px;
-            background: linear-gradient(90deg, #4f46e5, #7c3aed);
+            background: linear-gradient(90deg, #4f46e5, #7c3aed, #4f46e5);
             border-radius: 2px;
+            box-shadow: 0 0 20px rgba(79, 70, 229, 0.6);
         }
 
         .workflow-subtitle {
             text-align: center;
-            font-size: 22px;
-            font-weight: 600;
-            color: #4f46e5;
+            font-size: 14px;
+            font-weight: 700;
+            color: #a78bfa;
             margin-bottom: 32px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 3px;
+            position: relative;
+            z-index: 2;
         }
 
         .workflow > p {
             text-align: center;
             font-size: 20px;
-            color: #475569;
+            color: #cbd5e1;
             margin-bottom: 80px;
-            max-width: 800px;
+            max-width: 850px;
             margin-left: auto;
             margin-right: auto;
             line-height: 1.8;
             font-weight: 400;
             padding: 0 20px;
+            position: relative;
+            z-index: 2;
         }
 
         .workflow-steps {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 24px;
+            gap: 28px;
             position: relative;
+            z-index: 2;
         }
 
         .workflow-step {
-            background: white;
-            padding: 32px 24px;
-            border-radius: 16px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-            border: 1px solid rgba(79, 70, 229, 0.1);
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            padding: 40px 28px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             text-align: center;
             position: relative;
-            transition: all 0.3s ease;
+            transition: all 0.5s cubic-bezier(0.22, 0.61, 0.36, 1);
+            overflow: hidden;
+        }
+
+        .workflow-step::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(79, 70, 229, 0.1), rgba(124, 58, 237, 0.1));
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+
+        .workflow-step:hover::before {
+            opacity: 1;
         }
 
         .workflow-step:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
-            border-color: rgba(79, 70, 229, 0.2);
+            transform: translateY(-12px) scale(1.02);
+            box-shadow: 0 25px 60px rgba(79, 70, 229, 0.4);
+            border-color: rgba(79, 70, 229, 0.5);
+            background: rgba(255, 255, 255, 0.08);
         }
 
         .workflow-step-number {
-            width: 64px;
-            height: 64px;
+            width: 72px;
+            height: 72px;
             background: linear-gradient(135deg, #4f46e5, #7c3aed);
             color: white;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 700;
-            font-size: 24px;
-            margin: 0 auto 24px;
-            box-shadow: 0 8px 20px rgba(79, 70, 229, 0.3);
+            font-weight: 800;
+            font-size: 28px;
+            margin: 0 auto 28px;
+            box-shadow: 0 10px 30px rgba(79, 70, 229, 0.5);
+            position: relative;
+            z-index: 1;
+            transition: all 0.5s ease;
+        }
+
+        .workflow-step:hover .workflow-step-number {
+            transform: scale(1.15) rotate(360deg);
+            box-shadow: 0 15px 40px rgba(79, 70, 229, 0.7);
         }
 
         .workflow-step h3 {
-            font-size: 22px;
+            font-size: 24px;
             font-weight: 700;
-            margin-bottom: 16px;
-            color: #1a1a1a;
+            margin-bottom: 20px;
+            color: #ffffff;
             line-height: 1.3;
+            position: relative;
+            z-index: 1;
+            transition: all 0.3s ease;
+        }
+
+        .workflow-step:hover h3 {
+            color: #a78bfa;
         }
 
         .workflow-step p {
-            color: #64748b;
-            line-height: 1.7;
-            font-size: 16px;
+            color: #cbd5e1;
+            line-height: 1.8;
+            font-size: 15px;
             margin-bottom: 0;
+            position: relative;
+            z-index: 1;
         }
 
         .workflow-step p strong {
-            color: #4f46e5;
-            font-weight: 600;
+            color: #a78bfa;
+            font-weight: 700;
         }
 
 
@@ -638,7 +1060,12 @@
     </style>
 </head>
 <body>
-    <header>
+    <div class="blockchain-bg">
+        <canvas id="networkCanvas" class="network-canvas"></canvas>
+        <div class="grid-pattern"></div>
+    </div>
+
+    <header id="mainHeader">
         <div class="container">
             <div class="header-content">
                 <a href="#home" class="logo">Aether</a>
@@ -673,37 +1100,37 @@
                 <p class="features-description">End-to-end security analysis platform that transforms manual, error-prone processes into streamlined, automated workflows. From repository ingestion to exploit validation, Aether handles the complexity so you can focus on what matters—finding and reporting critical vulnerabilities.</p>
 
                 <div class="features-grid">
-                    <div class="feature-card">
+                    <div class="feature-card reveal">
                         <div class="feature-icon search"></div>
                         <h3>Multi-Layer Analysis</h3>
                         <p>Combines static analysis with pattern-based detectors, Slither integration, and advanced vulnerability detection for comprehensive smart contract security assessment.</p>
                     </div>
 
-                    <div class="feature-card">
+                    <div class="feature-card reveal reveal-delay-1">
                         <div class="feature-icon ai"></div>
                         <h3>AI-Powered Detection</h3>
                         <p>Advanced LLM analysis with OpenAI and Gemini integration, AI ensemble coordination, intelligent false positive filtering, and automated vulnerability classification for production-ready security intelligence.</p>
                     </div>
 
-                    <div class="feature-card">
+                    <div class="feature-card reveal reveal-delay-2">
                         <div class="feature-icon poc"></div>
                         <h3>AI-Enhanced PoC Generation</h3>
                         <p>AST-based contract analysis with AI-powered exploit generation, iterative compilation fixes, intelligent attack chain analysis, and production-ready Foundry tests optimized for high-value bug bounty submissions.</p>
                     </div>
 
-                    <div class="feature-card">
+                    <div class="feature-card reveal reveal-delay-3">
                         <div class="feature-icon foundry"></div>
                         <h3>Foundry Integration</h3>
                         <p>Native Foundry support with automated test generation, fork verification, and comprehensive exploit validation against mainnet state.</p>
                     </div>
 
-                    <div class="feature-card">
+                    <div class="feature-card reveal reveal-delay-4">
                         <div class="feature-icon github"></div>
                         <h3>GitHub Workflow Integration</h3>
                         <p>Interactive repository analysis with intelligent contract discovery, scope management, and persistent audit trails for systematic security reviews.</p>
                     </div>
 
-                    <div class="feature-card">
+                    <div class="feature-card reveal reveal-delay-5">
                         <div class="feature-icon report"></div>
                         <h3>Professional Reporting</h3>
                         <p>Comprehensive reporting in multiple formats with vulnerability classification, risk assessment, and actionable remediation guidance for security teams.</p>
@@ -718,7 +1145,7 @@
                 <p class="code-subtitle">Enterprise-Grade Security Intelligence Platform</p>
                 <p class="code-description">Advanced analysis engine delivering the depth, accuracy, and actionable insights that professional security auditors and enterprise teams require for mission-critical smart contract assessments and vulnerability management.</p>
 
-                <div class="code-block">
+                <div class="code-block reveal">
                     <div class="code-header">Terminal</div>
 <!-- Example: Comprehensive audit workflow -->
 <span class="keyword">python</span> main.py audit <span class="string">https://github.com/owner/repo</span> \
@@ -747,28 +1174,28 @@
             <div class="container">
                 <h2>Complete Security Workflow</h2>
                 <p class="workflow-subtitle">From Repository to Revenue: The Complete Pipeline</p>
-                <p class="workflow-description">Frictionless security analysis pipeline that eliminates manual setup and configuration. Simply provide a repository URL and Aether handles everything—from intelligent contract discovery and scope management to comprehensive vulnerability analysis and automated exploit generation.</p>
+                <p>Frictionless security analysis pipeline that eliminates manual setup and configuration. Simply provide a repository URL and Aether handles everything—from intelligent contract discovery and scope management to comprehensive vulnerability analysis and automated exploit generation.</p>
 
                 <div class="workflow-steps">
-                    <div class="workflow-step">
+                    <div class="workflow-step reveal">
                         <div class="workflow-step-number">1</div>
                         <h3>Repository Intake</h3>
                         <p><strong>One URL, Zero Setup.</strong> Provide any GitHub repository URL—Aether automatically clones, discovers contracts, and configures the analysis environment.</p>
                     </div>
 
-                    <div class="workflow-step">
+                    <div class="workflow-step reveal reveal-delay-1">
                         <div class="workflow-step-number">2</div>
                         <h3>Comprehensive Audit</h3>
                         <p><strong>Automated Intelligence.</strong> Multi-layered analysis with AI-powered detection eliminates manual configuration and scope definition—get results in minutes, not hours.</p>
                     </div>
 
-                    <div class="workflow-step">
+                    <div class="workflow-step reveal reveal-delay-2">
                         <div class="workflow-step-number">3</div>
                         <h3>Intelligent Reporting</h3>
                         <p><strong>Executive-Ready Output.</strong> AI-classified findings with risk assessments and remediation guidance—professional reports without the manual effort.</p>
                     </div>
 
-                    <div class="workflow-step">
+                    <div class="workflow-step reveal reveal-delay-3">
                         <div class="workflow-step-number">4</div>
                         <h3>PoC Generation</h3>
                         <p><strong>Battle-Tested Exploits.</strong> Automated Foundry test generation with AI-powered exploit creation—production-ready proofs-of-concept without coding.</p>
@@ -825,5 +1252,247 @@
             </div>
         </div>
     </footer>
+
+    <script>
+        // Blockchain network animation
+        const canvas = document.getElementById('networkCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        let mouse = {
+            x: null,
+            y: null,
+            radius: 150
+        };
+
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = e.x;
+            mouse.y = e.y;
+        });
+
+        window.addEventListener('mouseout', () => {
+            mouse.x = null;
+            mouse.y = null;
+        });
+
+        class Node {
+            constructor() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.vx = (Math.random() - 0.5) * 0.5;
+                this.vy = (Math.random() - 0.5) * 0.5;
+                this.radius = 2;
+                this.baseRadius = 2;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.x < 0 || this.x > canvas.width) this.vx *= -1;
+                if (this.y < 0 || this.y > canvas.height) this.vy *= -1;
+
+                // Mouse interaction
+                if (mouse.x && mouse.y) {
+                    const dx = mouse.x - this.x;
+                    const dy = mouse.y - this.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < mouse.radius) {
+                        this.radius = this.baseRadius + (1 - distance / mouse.radius) * 3;
+                        
+                        // Slight attraction to mouse
+                        const force = (mouse.radius - distance) / mouse.radius;
+                        const angle = Math.atan2(dy, dx);
+                        this.vx += Math.cos(angle) * force * 0.03;
+                        this.vy += Math.sin(angle) * force * 0.03;
+                    } else {
+                        this.radius = this.baseRadius;
+                    }
+                }
+                
+                // Damping
+                this.vx *= 0.99;
+                this.vy *= 0.99;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(79, 70, 229, 0.6)';
+                ctx.fill();
+                
+                // Add glow effect
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(79, 70, 229, 0.5)';
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        const nodes = [];
+        const nodeCount = 60;
+
+        for (let i = 0; i < nodeCount; i++) {
+            nodes.push(new Node());
+        }
+
+        function connectNodes() {
+            const maxDistance = 150;
+            
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const dx = nodes[i].x - nodes[j].x;
+                    const dy = nodes[i].y - nodes[j].y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < maxDistance) {
+                        ctx.beginPath();
+                        ctx.moveTo(nodes[i].x, nodes[i].y);
+                        ctx.lineTo(nodes[j].x, nodes[j].y);
+                        const opacity = (1 - distance / maxDistance) * 0.25;
+                        ctx.strokeStyle = `rgba(79, 70, 229, ${opacity})`;
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+                }
+                
+                // Connect to mouse
+                if (mouse.x && mouse.y) {
+                    const dx = mouse.x - nodes[i].x;
+                    const dy = mouse.y - nodes[i].y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < mouse.radius) {
+                        ctx.beginPath();
+                        ctx.moveTo(nodes[i].x, nodes[i].y);
+                        ctx.lineTo(mouse.x, mouse.y);
+                        const opacity = (1 - distance / mouse.radius) * 0.3;
+                        ctx.strokeStyle = `rgba(124, 58, 237, ${opacity})`;
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        // Resize canvas on window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        // Scroll reveal animation
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -100px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.reveal').forEach(el => {
+            observer.observe(el);
+        });
+
+        // Header scroll effect
+        const header = document.getElementById('mainHeader');
+        let lastScroll = 0;
+
+        window.addEventListener('scroll', () => {
+            const currentScroll = window.pageYOffset;
+            
+            if (currentScroll > 50) {
+                header.classList.add('scrolled');
+            } else {
+                header.classList.remove('scrolled');
+            }
+            
+            lastScroll = currentScroll;
+        });
+
+        // Parallax effect for background elements
+        window.addEventListener('scroll', () => {
+            const scrolled = window.pageYOffset;
+            const parallaxElements = document.querySelectorAll('.blockchain-bg');
+            
+            parallaxElements.forEach(el => {
+                const speed = 0.5;
+                el.style.transform = `translateY(${scrolled * speed}px)`;
+            });
+        });
+
+        // Smooth scroll for navigation links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Page load animation
+        window.addEventListener('load', () => {
+            document.body.style.opacity = '0';
+            document.body.style.transition = 'opacity 0.5s ease';
+            
+            requestAnimationFrame(() => {
+                document.body.style.opacity = '1';
+            });
+        });
+
+        // Performance optimization - reduce canvas rendering on slow devices
+        let lastFrameTime = Date.now();
+        const targetFPS = 60;
+        const frameInterval = 1000 / targetFPS;
+
+        function optimizedAnimate() {
+            const now = Date.now();
+            const elapsed = now - lastFrameTime;
+
+            if (elapsed > frameInterval) {
+                lastFrameTime = now - (elapsed % frameInterval);
+                
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                nodes.forEach(node => {
+                    node.update();
+                    node.draw();
+                });
+                
+                connectNodes();
+            }
+            
+            requestAnimationFrame(optimizedAnimate);
+        }
+
+        // Replace the original animate call
+        optimizedAnimate();
+
+        // Add subtle particle effects on scroll
+        let scrollTimeout;
+        window.addEventListener('scroll', () => {
+            clearTimeout(scrollTimeout);
+            canvas.style.opacity = '0.4';
+            
+            scrollTimeout = setTimeout(() => {
+                canvas.style.opacity = '0.6';
+            }, 150);
+        });
+
+        canvas.style.transition = 'opacity 0.3s ease';
+    </script>
 </body>
 </html>
