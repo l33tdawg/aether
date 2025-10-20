@@ -171,3 +171,6 @@ docs/_build/
 !foundry.lock
 !foundry.toml
 scripts/fix_unknown_vulnerability_types.py
+
+# Local web UI (ignored until release)
+webui/
