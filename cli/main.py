@@ -33,6 +33,12 @@ from core.graceful_shutdown import register_database
 from core.exploit_tester import ExploitTester
 
 
+# Optional monkeypatch targets for tests. These placeholders allow tests to patch
+# Slither and AetherDatabase on this module path (cli.main.Slither / .AetherDatabase).
+Slither = None  # type: ignore
+AetherDatabase = None  # type: ignore
+
+
 class AetherCLI:
     """Main CLI class for AetherAudit + AetherFuzz."""
 
@@ -351,6 +357,8 @@ class AetherCLI:
         min_severity: str = "low",
         types_filter: Optional[str] = None,
         only_consensus: bool = False,
+        project_id: Optional[int] = None,
+        scope_id: Optional[int] = None,
         verbose: bool = False
     ) -> int:
         """Generate Foundry PoCs post-report from structured results (preferred)."""
@@ -362,8 +370,10 @@ class AetherCLI:
             return order.get((s or "").lower(), 0)
 
         try:
-            if not from_results and not from_report:
-                print("❌ Provide --from-results or --from-report")
+            # Determine source: results/report or database
+            load_from_db = bool(project_id)
+            if not from_results and not from_report and not load_from_db:
+                print("❌ Provide --from-results, --from-report, or --project-id to load from DB")
                 return 1
 
             if from_results and not os.path.exists(from_results):
@@ -373,7 +383,68 @@ class AetherCLI:
             # Load vulnerabilities
             vulns = []
             base_dir = None
-            if from_results:
+            if load_from_db:
+                # Load findings/contracts from database by project/scope
+                try:
+                    # Prefer module-level AetherDatabase (test monkeypatch), fallback to import
+                    ADBRef = globals().get('AetherDatabase')
+                    if not ADBRef:
+                        from core.database_manager import AetherDatabase as ADBRef  # type: ignore
+                    adb = ADBRef()
+                    # Determine contracts in scope
+                    contract_paths = None
+                    if scope_id:
+                        active = adb.get_active_scope(project_id)
+                        # If provided scope_id is not the active one, try fetching it directly
+                        if active and active.get('id') == scope_id:
+                            contract_paths = active.get('selected_contracts', [])
+                        else:
+                            # Direct fetch of scope by id
+                            with adb._connect() as conn:
+                                row = conn.execute('SELECT selected_contracts FROM audit_scopes WHERE id = ?', (scope_id,)).fetchone()
+                                if row:
+                                    import json as _json
+                                    contract_paths = _json.loads(row[0])
+                    if not contract_paths:
+                        # Fallback: all contracts for project
+                        contracts = adb.get_contracts(project_id)
+                        contract_paths = [c['file_path'] for c in contracts]
+
+                    # Gather analysis results for those contracts
+                    findings_accum = []
+                    for p in contract_paths:
+                        with adb._connect() as conn:
+                            row = conn.execute('SELECT id FROM contracts WHERE project_id = ? AND file_path = ?', (project_id, p)).fetchone()
+                            if not row:
+                                continue
+                            contract_id = row[0]
+                            res = conn.execute('SELECT findings, status FROM analysis_results WHERE contract_id = ? ORDER BY analyzed_at DESC LIMIT 1', (contract_id,)).fetchone()
+                            if not res:
+                                continue
+                            status = res[1]
+                            if status != 'success':
+                                continue
+                            try:
+                                data = json.loads(res[0]) if res[0] else {}
+                                items = (data.get('audit', {}) or {}).get('vulnerabilities', []) or data.get('vulnerabilities', []) or []
+                                # Normalize expected fields
+                                for it in items:
+                                    it['file'] = it.get('file') or p
+                                findings_accum.extend(items)
+                            except Exception:
+                                continue
+
+                    vulns = findings_accum
+                    base_dir = os.getcwd()
+                    if not vulns:
+                        print("⚠️  No vulnerabilities found in database for given project/scope")
+                        return 0
+                except Exception as e:
+                    print(f"❌ Failed to load from database: {e}")
+                    if verbose:
+                        import traceback; traceback.print_exc()
+                    return 1
+            elif from_results:
                 with open(from_results, 'r') as f:
                     data = json.load(f)
                 vulns = (data.get('audit', {}) or {}).get('vulnerabilities', []) or []
@@ -465,6 +536,19 @@ class AetherCLI:
                 os.makedirs(gen_root, exist_ok=True)
 
             generator = LLMFoundryGenerator()
+            context_overrides = {}
+            # Global DB-derived context (e.g., solc) if available
+            try:
+                if project_id:
+                    ADBRef = globals().get('AetherDatabase')
+                    if not ADBRef:
+                        from core.database_manager import AetherDatabase as ADBRef  # type: ignore
+                    _adb_global = ADBRef()
+                    _artifacts = _adb_global.get_build_artifacts(project_id)
+                    if _artifacts and isinstance(_artifacts.get('solc_version'), str):
+                        context_overrides['solc_version'] = _artifacts['solc_version']
+            except Exception:
+                pass
             manifest = {"suites": []}
 
             # For each contract file group
@@ -486,6 +570,101 @@ class AetherCLI:
                     contract_code = cf.read()
 
                 contract_name = os.path.splitext(os.path.basename(contract_file))[0]
+
+                # Attempt to enrich context from DB and artifacts (ABI, solc, symbols)
+                try:
+                    if project_id:
+                        # Prefer module-level AetherDatabase (test monkeypatch), fallback to import
+                        ADBRef = globals().get('AetherDatabase')
+                        if not ADBRef:
+                            from core.database_manager import AetherDatabase as ADBRef  # type: ignore
+                        adb = ADBRef()
+                        artifacts = adb.get_build_artifacts(project_id)
+                        if artifacts and isinstance(artifacts.get('solc_version'), str):
+                            context_overrides['solc_version'] = artifacts['solc_version']
+                except Exception:
+                    pass
+
+                # Load ABI if Foundry artifact exists (out/<Contract>.sol/<Contract>.json)
+                try:
+                    out_dir_root = os.path.join(os.getcwd(), 'out')
+                    guess_dir = os.path.join(out_dir_root, f"{contract_name}.sol")
+                    guess_file = os.path.join(guess_dir, f"{contract_name}.json")
+                    if os.path.exists(guess_file):
+                        import json as _json
+                        with open(guess_file, 'r') as af:
+                            art = _json.load(af)
+                            abi = art.get('abi') or art.get('metadata', {}).get('output', {}).get('abi')
+                            if abi:
+                                context_overrides['abi'] = abi
+                except Exception:
+                    pass
+
+                # Use Slither (if available) to extract richer symbols
+                try:
+                    # Prefer test-monkeypatched Slither if present, else import
+                    patched = globals().get('Slither')
+                    if patched is not None:
+                        SlitherRef = patched
+                    else:
+                        try:
+                            from slither import Slither as _ImportedSlither  # type: ignore
+                        except Exception:
+                            _ImportedSlither = None  # type: ignore
+                        SlitherRef = _ImportedSlither
+                    if not SlitherRef:
+                        raise ImportError("Slither not available")
+
+                    s = SlitherRef(contract_file)
+                    fn_names = []
+                    fn_sigs = []
+                    ev_names = []
+                    mod_names = []
+                    for c in s.contracts:
+                        if c.name != contract_name:
+                            continue
+                        for f in c.functions_declared:
+                            # Limit to public/external for test calls
+                            vis = str(getattr(f, 'visibility', ''))
+                            if 'public' in vis or 'external' in vis:
+                                fn_names.append(f.name)
+                                try:
+                                    fn_sigs.append(f.signature_str)
+                                except Exception:
+                                    pass
+                        for e in getattr(c, 'events_declared', []) or []:
+                            ev_names.append(e.name)
+                        for m in getattr(c, 'modifiers_declared', []) or []:
+                            mod_names.append(m.name)
+                    if fn_names:
+                        context_overrides['contract_functions'] = sorted(set(fn_names))
+                    if fn_sigs:
+                        context_overrides['function_signatures'] = sorted(set(fn_sigs))
+                    elif context_overrides.get('contract_functions'):
+                        # Ensure signatures present even if Slither didn't provide
+                        context_overrides['function_signatures'] = list(context_overrides['contract_functions'])
+                    if ev_names:
+                        context_overrides['events'] = sorted(set(ev_names))
+                    if mod_names:
+                        context_overrides['modifiers'] = sorted(set(mod_names))
+                except Exception:
+                    pass
+
+                # Fallback: ensure at least a basic function list is provided to the generator
+                if 'contract_functions' not in context_overrides:
+                    try:
+                        import re as _re
+                        basic = _re.findall(r"function\s+(\w+)\s*\([^)]*\)\s*(?:public|external)", contract_code)
+                        if basic:
+                            context_overrides['contract_functions'] = sorted(set(basic))
+                    except Exception:
+                        pass
+                # Fallback: ensure function_signatures exist if we at least have names
+                if 'function_signatures' not in context_overrides and 'contract_functions' in context_overrides:
+                    try:
+                        context_overrides['function_signatures'] = list(context_overrides['contract_functions'])
+                    except Exception:
+                        pass
                 # Map fields for generator
                 gen_vulns = []
                 for v in items:
@@ -500,7 +679,9 @@ class AetherCLI:
                 os.makedirs(out_dir_contract, exist_ok=True)
 
                 try:
-                    suites = await generator.generate_multiple_tests(gen_vulns, contract_code, contract_name, out_dir_contract)
+                    suites = await generator.generate_multiple_tests(
+                        gen_vulns, contract_code, contract_name, out_dir_contract, context_overrides
+                    )
                     for s in suites:
                         manifest['suites'].append({
                             'contract': contract_name,
@@ -1445,15 +1626,16 @@ class AetherCLI:
             return {'error': str(e)}
 
     async def run_generate_report(
-        self,
-        output_dir: Optional[str] = None,
-        format: str = "markdown",
-        scope_id: Optional[int] = None,
-        project_id: Optional[int] = None,
-        list_projects: bool = False,
-        list_scopes: Optional[int] = None,
-        verbose: bool = False
-    ) -> int:
+            self,
+            output_dir: Optional[str] = None,
+            format: str = "markdown",
+            scope_id: Optional[int] = None,
+            project_id: Optional[int] = None,
+            contract_id: Optional[int] = None,
+            list_projects: bool = False,
+            list_scopes: Optional[int] = None,
+            verbose: bool = False
+        ) -> int:
         """Generate audit reports from GitHub audit database findings."""
         try:
             from core.github_audit_report_generator import GitHubAuditReportGenerator
@@ -1495,8 +1677,23 @@ class AetherCLI:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 
+                # Before displaying, recalculate progress for each scope to avoid stale counts
+                try:
+                    try:
+                        from core.database_manager import AetherDatabase as _ADB  # type: ignore
+                    except Exception:
+                        _ADB = None  # type: ignore
+                    ADBRef = _ADB or globals().get('AetherDatabase')
+                    if ADBRef:
+                        adb = ADBRef(db_path=db_path)  # type: ignore
+                        recalc_needed = True
+                    else:
+                        recalc_needed = False
+                except Exception:
+                    recalc_needed = False
+                
                 cursor.execute("""
-                    SELECT id, status, total_selected, total_audited, total_pending, created_at
+                    SELECT id, status, total_selected, total_audited, total_pending, created_at, selected_contracts
                     FROM audit_scopes
                     WHERE project_id = ?
                     ORDER BY created_at DESC
@@ -1507,9 +1704,56 @@ class AetherCLI:
                     print(f"  (No scopes found for project {list_scopes})")
                 else:
                     for s in scopes:
-                        print(f"  Scope ID: {s['id']:3d} | Status: {s['status']:10s} | " +
-                              f"Audited: {s['total_audited']:3d}/{s['total_selected']:3d} | " +
-                              f"Pending: {s['total_pending']:3d}")
+                        sid = int(s['id'])
+                        total_selected = int(s['total_selected'] or 0)
+                        total_audited = int(s['total_audited'] or 0)
+                        total_pending = int(s['total_pending'] or 0)
+                        status = s['status']
+                        
+                        if recalc_needed:
+                            try:
+                                prog = adb.recalculate_scope_progress(sid)
+                                total_selected = int(prog.get('total_selected', total_selected))
+                                total_audited = int(prog.get('total_audited', total_audited))
+                                total_pending = int(prog.get('total_pending', total_pending))
+                                # If nothing pending, auto-mark completed for clarity
+                                if total_selected > 0 and total_pending == 0 and status != 'completed':
+                                    adb.complete_scope(sid)
+                                    status = 'completed'
+                            except Exception:
+                                pass
+                        
+                        print(
+                            f"  Scope ID: {sid:3d} | Status: {status:10s} | "
+                            f"Audited: {total_audited:3d}/{total_selected:3d} | "
+                            f"Pending: {total_pending:3d}"
+                        )
+                        # List individual contracts in this scope
+                        try:
+                            import json as _json
+                            selected = []
+                            raw_sel = s['selected_contracts']
+                            if raw_sel:
+                                selected = _json.loads(raw_sel) if isinstance(raw_sel, str) else list(raw_sel)
+                        except Exception:
+                            selected = []
+                        
+                        if selected:
+                            max_show = 20
+                            print("    Contracts:")
+                            # Reuse the same DB connection to resolve contract IDs
+                            for i, path in enumerate(selected[:max_show], 1):
+                                try:
+                                    row = conn.execute('SELECT id FROM contracts WHERE project_id = ? AND file_path = ?', (list_scopes, path)).fetchone()
+                                    cid = int(row[0]) if row else None
+                                except Exception:
+                                    cid = None
+                                if cid is not None:
+                                    print(f"      {i:2d}. [{cid}] {path}")
+                                else:
+                                    print(f"      {i:2d}. [??] {path}")
+                            if len(selected) > max_show:
+                                print(f"      ... and {len(selected) - max_show} more")
                 
                 conn.close()
                 return 0
@@ -1526,6 +1770,8 @@ class AetherCLI:
                 print(f"   Scope ID: {scope_id}")
             if project_id:
                 print(f"   Project ID: {project_id}")
+            if contract_id:
+                print(f"   Contract ID: {contract_id}")
             print()
             
             generator = GitHubAuditReportGenerator(db_path=db_path)
@@ -1533,6 +1779,7 @@ class AetherCLI:
                 output_dir=output_dir,
                 scope_id=scope_id,
                 project_id=project_id,
+                contract_id=contract_id,
                 format=format
             )
             
@@ -1543,7 +1790,7 @@ class AetherCLI:
             else:
                 print("❌ Failed to generate reports")
                 return 1
-
+        
         except Exception as e:
             print(f"❌ Error generating report: {e}")
             if verbose:
@@ -1551,8 +1798,13 @@ class AetherCLI:
                 traceback.print_exc()
             return 1
 
-    async def run_exploit_tests(self, project_name: str, fork_url: Optional[str] = None,
-                               anvil_port: int = 8545, verbose: bool = False) -> int:
+    async def run_exploit_tests(
+            self,
+            project_name: str,
+            fork_url: Optional[str] = None,
+            anvil_port: int = 8545,
+            verbose: bool = False,
+        ) -> int:
         """Run exploit tests for a project."""
         try:
             # Run comprehensive exploit tests

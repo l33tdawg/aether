@@ -194,10 +194,12 @@ Examples:
     foundry_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
 
     # Generate Foundry PoCs post-report
-    genf_parser = subparsers.add_parser('generate-foundry', help='Generate Foundry PoCs from results.json or report')
+    genf_parser = subparsers.add_parser('generate-foundry', help='Generate Foundry PoCs from results.json, report, or database')
     genf_parser.add_argument('--from-results', help='Path to structured results.json (preferred)')
     genf_parser.add_argument('--from-report', help='Path to audit_report.md (fallback parser)')
     genf_parser.add_argument('--out', help='Output directory for generated suites')
+    genf_parser.add_argument('--project-id', type=int, help='Load findings from database by project ID')
+    genf_parser.add_argument('--scope-id', type=int, help='Restrict to findings/contracts in specific audit scope ID')
     genf_parser.add_argument('--max-items', type=int, default=20, help='Max findings to generate tests for')
     genf_parser.add_argument('--min-severity', default='low', help='Min severity filter (low|medium|high|critical)')
     genf_parser.add_argument('--types', help='CSV of vulnerability types to include (match title/category)')
@@ -210,6 +212,7 @@ Examples:
     report_parser.add_argument('--format', choices=['markdown', 'json', 'html', 'all'], default='markdown', help='Report format (default: markdown)')
     report_parser.add_argument('--scope-id', type=int, help='Generate report for specific audit scope ID')
     report_parser.add_argument('--project-id', type=int, help='Generate report for specific project ID')
+    report_parser.add_argument('--contract-id', type=int, help='Restrict report to a single contract ID within the project')
     report_parser.add_argument('--list-projects', action='store_true', help='List all projects in database')
     report_parser.add_argument('--list-scopes', type=int, metavar='PROJECT_ID', help='List all audit scopes for a project')
     report_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
@@ -429,6 +432,8 @@ Examples:
                 min_severity=args.min_severity,
                 types_filter=args.types,
                 only_consensus=args.only_consensus,
+                project_id=getattr(args, 'project_id', None),
+                scope_id=getattr(args, 'scope_id', None),
                 verbose=args.verbose
             ))
             return rc
@@ -438,6 +443,7 @@ Examples:
                 format=args.format,
                 scope_id=args.scope_id,
                 project_id=args.project_id,
+                contract_id=getattr(args, 'contract_id', None),
                 list_projects=args.list_projects,
                 list_scopes=args.list_scopes,
                 verbose=args.verbose

@@ -197,6 +197,38 @@ DESCRIPTION: {context['description']}
 CODE CONTEXT:
 {context['code_context']}
 
+**CRITICAL: FALSE POSITIVE PATTERNS TO CHECK FIRST**
+
+Before marking any vulnerability as real, check these common false positive patterns:
+
+1. **SafeCast Integer Narrowing (SWC-101 FALSE POSITIVE)**
+   - Pattern: Code uses SafeCast.toUint96(), SafeCast.toUint128(), etc.
+   - Why it's safe: SafeCast INTENTIONALLY REVERTS if the value exceeds the target type's maximum
+   - This is SECURE BY DESIGN - revert-on-overflow is a validated security mechanism
+   - Check: Is there a maxSupply or similar cap check? That's intentional bounding.
+   - VERDICT: If finding mentions SafeCast and revert behavior → LIKELY FALSE POSITIVE
+   - Real vulnerability would require: Actual silent overflow (not revert) OR bypass of cap enforcement
+
+2. **Inherited Access Control (Access Control FALSE POSITIVE)**
+   - Pattern: Finding claims "privileged function missing onlyOwner" but function is inherited
+   - Why it's safe: Solidity inheritance applies modifiers transitively
+   - If parent contract has "onlyOwner" on mint(), the child contract inherits that protection
+   - Examples: ERC20WithPermit, MisfundRecovery, OpenZeppelin Ownable/AccessControl
+   - Check: Did the finding analyze the PARENT contract's access control?
+   - VERDICT: If finding only checked child contract → LIKELY FALSE POSITIVE
+   - Real vulnerability would require: Evidence that the function is actually callable without proper permission
+
+3. **Type Narrowing for Storage Optimization**
+   - Pattern: uint256 → uint96/uint128 narrowing with SafeCast
+   - Common in: Voting contracts, checkpoints, delegation tracking
+   - Why it's safe: Intentional design to enforce maximum values and save gas
+   - VERDICT: If described as precision loss or overflow risk → LIKELY FALSE POSITIVE
+
+4. **External Package Security Assumptions**
+   - Pattern: @openzeppelin, @thesis, or battle-tested external package is flagged
+   - Why it's safe: These are widely audited, maintained, and used by thousands of projects
+   - VERDICT: Unless concrete evidence of misconfiguration → LIKELY FALSE POSITIVE
+
 Please analyze this vulnerability and determine:
 1. Is this a real security vulnerability or a false positive?
 2. What is your confidence level (0.0 to 1.0)?
@@ -204,11 +236,12 @@ Please analyze this vulnerability and determine:
 4. If it's real, suggest corrected severity and description if needed.
 
 Consider these factors:
-- Is the reported vulnerability actually exploitable?
-- Are there proper mitigations already in place?
-- Is this expected behavior for the contract's design?
+- Is the reported vulnerability actually exploitable in practice?
+- Are there proper mitigations already in place (bounds checks, reverts, access control)?
+- Is this expected behavior for the contract's design (intentional revert pattern)?
 - Are there any access controls or validations that prevent exploitation?
-- Is this a common false positive pattern?
+- Is this a common false positive pattern (SafeCast, inherited access control)?
+- If accessing inherited functions, was parent contract's protection verified?
 
 Respond ONLY in JSON format (no extra text):
 {{

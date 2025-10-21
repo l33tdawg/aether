@@ -249,6 +249,32 @@ class AetherDatabase:
         conn.row_factory = sqlite3.Row
         return conn
 
+    # Convenience helpers used by CLI
+    def get_project_by_id(self, project_id: int) -> Optional[Dict[str, Any]]:
+        try:
+            with self._connect() as conn:
+                row = conn.execute('SELECT * FROM projects WHERE id = ?', (project_id,)).fetchone()
+                return dict(row) if row else None
+        except Exception:
+            return None
+
+    def get_scope_by_id(self, scope_id: int) -> Optional[Dict[str, Any]]:
+        try:
+            with self._connect() as conn:
+                row = conn.execute('SELECT * FROM audit_scopes WHERE id = ?', (scope_id,)).fetchone()
+                if not row:
+                    return None
+                import json as _json
+                return {
+                    'id': row['id'],
+                    'project_id': row['project_id'],
+                    'scope_name': row['scope_name'],
+                    'selected_contracts': _json.loads(row['selected_contracts']) if row['selected_contracts'] else [],
+                    'status': row['status'],
+                }
+        except Exception:
+            return None
+
     def init_schema(self) -> None:
         """Create tables required by the GitHub audit workflow if they do not exist."""
         with self._connect() as conn:

@@ -97,7 +97,8 @@ RULES:
         vulnerability: Dict[str,Any], 
         contract_code: str,
         contract_name: str,
-        output_dir: str
+        output_dir: str,
+        context_overrides: Optional[Dict[str, Any]] = None
     ) -> FoundryTestSuite:
         """Generate complete Foundry test suite for a vulnerability."""
         
@@ -105,7 +106,9 @@ RULES:
         
         try:
             # Generate test code using LLM
-            test_result = await self._generate_llm_test(vulnerability, contract_code, contract_name)
+            test_result = await self._generate_llm_test(
+                vulnerability, contract_code, contract_name, context_overrides or {}
+            )
             
             if not test_result.success:
                 raise Exception(f"Test generation failed: {test_result.error_message}")
@@ -169,7 +172,8 @@ fuzz = {{ runs = 256 }}
         self, 
         vulnerability: Dict[str, Any], 
         contract_code: str, 
-        contract_name: str
+        contract_name: str,
+        context_overrides: Dict[str, Any]
     ) -> TestGenerationResult:
         """Generate Foundry test using LLM."""
         
@@ -180,7 +184,9 @@ fuzz = {{ runs = 256 }}
             return self.generation_cache[cache_key]
         
         # Prepare context for LLM
-        context = self._prepare_test_context(vulnerability, contract_code, contract_name)
+        context = self._prepare_test_context(
+            vulnerability, contract_code, contract_name, context_overrides
+        )
         
         # Generate test prompt
         test_prompt = self._create_test_generation_prompt(context)
@@ -238,7 +244,8 @@ fuzz = {{ runs = 256 }}
         self, 
         vulnerability: Dict[str, Any], 
         contract_code: str, 
-        contract_name: str
+        contract_name: str,
+        context_overrides: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Prepare context for test generation."""
         
@@ -246,8 +253,30 @@ fuzz = {{ runs = 256 }}
         line_number = vulnerability.get('line_number', 0)
         context_lines = self._extract_code_context(contract_code, line_number, 15)
         
-        # Extract contract functions
+        # Extract contract functions (regex baseline)
         contract_functions = self._extract_contract_functions(contract_code)
+
+        # Apply overrides from ABI/Slither if provided
+        abi = None
+        solc_override = None
+        function_signatures = []
+        events = []
+        modifiers = []
+        if isinstance(context_overrides, dict) and context_overrides:
+            abi = context_overrides.get('abi')
+            solc_override = context_overrides.get('solc_version')
+            if isinstance(context_overrides.get('contract_functions'), list):
+                # Prefer explicit function list when provided
+                try:
+                    contract_functions = [str(n) for n in context_overrides.get('contract_functions') if n]
+                except Exception:
+                    pass
+            if isinstance(context_overrides.get('function_signatures'), list):
+                function_signatures = [str(s) for s in context_overrides.get('function_signatures') if s]
+            if isinstance(context_overrides.get('events'), list):
+                events = [str(e) for e in context_overrides.get('events') if e]
+            if isinstance(context_overrides.get('modifiers'), list):
+                modifiers = [str(m) for m in context_overrides.get('modifiers') if m]
         
         return {
             'vulnerability': vulnerability,
@@ -259,7 +288,11 @@ fuzz = {{ runs = 256 }}
             'code_context': context_lines,
             'contract_code': contract_code,
             'contract_functions': contract_functions,
-            'solc_version': self._extract_solc_version(contract_code)
+            'function_signatures': function_signatures,
+            'events': events,
+            'modifiers': modifiers,
+            'abi': abi,
+            'solc_version': solc_override or self._extract_solc_version(contract_code)
         }
     
     def _extract_code_context(self, contract_code: str, line_number: int, context_size: int = 15) -> str:
@@ -1190,7 +1223,8 @@ contract {contract_name}GenericExploit {{
         vulnerabilities: List[Dict[str, Any]], 
         contract_code: str,
         contract_name: str,
-        output_dir: str
+        output_dir: str,
+        context_overrides: Optional[Dict[str, Any]] = None
     ) -> List[FoundryTestSuite]:
         """Generate test suites for multiple vulnerabilities."""
         
@@ -1204,7 +1238,7 @@ contract {contract_name}GenericExploit {{
                 vuln_output_dir.mkdir(exist_ok=True)
                 
                 test_suite = await self.generate_test_suite(
-                    vuln, contract_code, contract_name, str(vuln_output_dir)
+                    vuln, contract_code, contract_name, str(vuln_output_dir), context_overrides
                 )
                 
                 test_suites.append(test_suite)

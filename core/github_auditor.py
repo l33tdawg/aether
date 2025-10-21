@@ -137,6 +137,7 @@ class GitHubAuditor:
         # Phase 2: build -> discovery -> analysis (basic)
         contracts_analyzed = 0
         findings: List[Dict[str, Any]] = []
+        current_scope_id: Optional[int] = None
 
         try:
             project = self.db.get_project(github_url)
@@ -216,6 +217,11 @@ class GitHubAuditor:
                         action = resume_info.get('action')
                         scope = resume_info.get('scope')
                         resume_scope_processed = True  # Mark that resume was processed
+                        if scope and scope.get('id'):
+                            try:
+                                current_scope_id = int(scope['id'])
+                            except Exception:
+                                current_scope_id = None
                         
                         # Recalculate actual progress from database
                         if scope.get('id'):
@@ -262,7 +268,11 @@ class GitHubAuditor:
                     
                     # Save scope to database
                     if project_id is not None:
-                        self.db.save_audit_scope(project_id, selected_paths)
+                        scope_rec = self.db.save_audit_scope(project_id, selected_paths)
+                        try:
+                            current_scope_id = int(scope_rec.get('id')) if scope_rec else None
+                        except Exception:
+                            current_scope_id = None
                     
                     rel_paths = selected_paths
                     self.console.print(f"[green]Auditing {len(rel_paths)} selected contracts out of {len(contract_info_list)} discovered[/green]\n")
@@ -294,6 +304,17 @@ class GitHubAuditor:
                 outcomes = []
             for oc in outcomes:
                 findings.append({'contract': oc.contract_path, 'analysis_type': oc.analysis_type, 'summary': oc.findings})
+
+        # Finalize scope progress after analysis
+        try:
+            if current_scope_id:
+                progress = self.db.recalculate_scope_progress(current_scope_id)
+                if isinstance(progress, dict) and int(progress.get('total_pending', 0)) == 0:
+                    # Mark scope as completed when no pending items remain
+                    self.db.complete_scope(current_scope_id)
+        except Exception:
+            # Non-fatal; reporting will still work
+            pass
 
         return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=contracts_analyzed, findings=findings)
 

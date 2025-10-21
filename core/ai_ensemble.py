@@ -849,7 +849,7 @@ as part of standard software quality assurance and security testing before deplo
                     }]
                 }],
                 "generationConfig": {
-                    "maxOutputTokens": 4000,
+                    "maxOutputTokens": 100000,
                 },
                 "safetySettings": [
                     {
@@ -918,6 +918,63 @@ as part of standard software quality assurance and security testing before deplo
                                 'finish_reason': finish_reason
                             }
                         )
+                    
+                    # Handle MAX_TOKENS finish reason
+                    if finish_reason == 'MAX_TOKENS':
+                        logger.warning(f"[Gemini Security] Response truncated by MAX_TOKENS limit. Retrying with condensed prompt...")
+                        # Create a shorter, more focused prompt
+                        condensed_prompt = f"""Analyze for CRITICAL security vulnerabilities only:
+```solidity
+{contract_content[:4000]}
+```
+Return JSON: {{"findings": [{{"type": "...", "severity": "critical|high", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+Return only JSON, no markdown."""
+                        
+                        try:
+                            retry_payload = {
+                                "contents": [{
+                                    "parts": [{
+                                        "text": condensed_prompt
+                                    }]
+                                }],
+                                "generationConfig": {
+                                    "maxOutputTokens": 1500,
+                                },
+                                "safetySettings": payload["safetySettings"]
+                            }
+                            
+                            retry_response = requests.post(url, json=retry_payload, timeout=60)
+                            retry_response.raise_for_status()
+                            result = retry_response.json()
+                            candidates = result.get('candidates') or []
+                            if not candidates:
+                                logger.error(f"[Gemini Security] Retry also failed - no candidates")
+                                return ModelResult(
+                                    model_name='gemini_security',
+                                    findings=[],
+                                    confidence=0.0,
+                                    processing_time=time.time() - start,
+                                    metadata={
+                                        'persona': 'gemini_security_hunter',
+                                        'error': 'MAX_TOKENS: Gemini cannot process this contract - response too long',
+                                        'finish_reason': 'MAX_TOKENS'
+                                    }
+                                )
+                            candidate = candidates[0]
+                            finish_reason = candidate.get('finishReason', '')
+                        except Exception as retry_error:
+                            logger.error(f"[Gemini Security] Retry failed: {retry_error}")
+                            return ModelResult(
+                                model_name='gemini_security',
+                                findings=[],
+                                confidence=0.0,
+                                processing_time=time.time() - start,
+                                metadata={
+                                    'persona': 'gemini_security_hunter',
+                                    'error': f'MAX_TOKENS: Retry failed - {str(retry_error)}',
+                                    'finish_reason': 'MAX_TOKENS'
+                                }
+                            )
                     
                     content = candidate.get('content') or {}
                     parts = content.get('parts') or []
@@ -1053,7 +1110,7 @@ as part of standard software quality assurance and security testing before deplo
                     }]
                 }],
                 "generationConfig": {
-                    "maxOutputTokens": 2000,
+                    "maxOutputTokens": 100000,
                 },
                 "safetySettings": [
                     {
@@ -1122,6 +1179,63 @@ as part of standard software quality assurance and security testing before deplo
                                 'finish_reason': finish_reason
                             }
                         )
+                    
+                    # Handle MAX_TOKENS finish reason
+                    if finish_reason == 'MAX_TOKENS':
+                        logger.warning(f"[Gemini Verifier] Response truncated by MAX_TOKENS limit. Retrying with condensed prompt...")
+                        # Create a shorter, more focused prompt
+                        condensed_prompt = f"""Analyze for CRITICAL arithmetic/overflow vulnerabilities only:
+```solidity
+{contract_content[:4000]}
+```
+Return JSON: {{"findings": [{{"type": "...", "severity": "critical|high", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+Return only JSON, no markdown."""
+                        
+                        try:
+                            retry_payload = {
+                                "contents": [{
+                                    "parts": [{
+                                        "text": condensed_prompt
+                                    }]
+                                }],
+                                "generationConfig": {
+                                    "maxOutputTokens": 1200,
+                                },
+                                "safetySettings": payload["safetySettings"]
+                            }
+                            
+                            retry_response = requests.post(url, json=retry_payload, timeout=60)
+                            retry_response.raise_for_status()
+                            result = retry_response.json()
+                            candidates = result.get('candidates') or []
+                            if not candidates:
+                                logger.error(f"[Gemini Verifier] Retry also failed - no candidates")
+                                return ModelResult(
+                                    model_name='gemini_verification',
+                                    findings=[],
+                                    confidence=0.0,
+                                    processing_time=time.time() - start,
+                                    metadata={
+                                        'persona': 'gemini_formal_verifier',
+                                        'error': 'MAX_TOKENS: Gemini cannot process this contract - response too long',
+                                        'finish_reason': 'MAX_TOKENS'
+                                    }
+                                )
+                            candidate = candidates[0]
+                            finish_reason = candidate.get('finishReason', '')
+                        except Exception as retry_error:
+                            logger.error(f"[Gemini Verifier] Retry failed: {retry_error}")
+                            return ModelResult(
+                                model_name='gemini_verification',
+                                findings=[],
+                                confidence=0.0,
+                                processing_time=time.time() - start,
+                                metadata={
+                                    'persona': 'gemini_formal_verifier',
+                                    'error': f'MAX_TOKENS: Retry failed - {str(retry_error)}',
+                                    'finish_reason': 'MAX_TOKENS'
+                                }
+                            )
                     
                     content = candidate.get('content') or {}
                     parts = content.get('parts') or []

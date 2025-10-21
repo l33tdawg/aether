@@ -46,6 +46,7 @@ class GitHubAuditReportGenerator:
         output_dir: Optional[str] = None,
         scope_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        contract_id: Optional[int] = None,
         format: str = "markdown"
     ) -> str:
         """
@@ -66,10 +67,10 @@ class GitHubAuditReportGenerator:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         # Gather all findings from database
-        findings_data = self._extract_findings(scope_id, project_id)
+        findings_data = self._extract_findings(scope_id, project_id, contract_id)
         
         if not findings_data:
-            print(f"❌ No findings found for scope_id={scope_id}, project_id={project_id}")
+            print(f"❌ No findings found for scope_id={scope_id}, project_id={project_id}, contract_id={contract_id}")
             return ""
         
         # Generate reports in requested format(s)
@@ -95,7 +96,8 @@ class GitHubAuditReportGenerator:
     def _extract_findings(
         self,
         scope_id: Optional[int] = None,
-        project_id: Optional[int] = None
+        project_id: Optional[int] = None,
+        contract_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """Extract all findings from database for specified scope/project."""
         conn = sqlite3.connect(self.db_path)
@@ -103,17 +105,31 @@ class GitHubAuditReportGenerator:
         cursor = conn.cursor()
         
         try:
-            # Get project info
-            if project_id:
-                cursor.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+            # Resolve project and contract when contract_id provided
+            project_info = None
+            single_contract = None
+            if contract_id:
+                cursor.execute("SELECT * FROM contracts WHERE id = ?", (contract_id,))
+                c_row = cursor.fetchone()
+                if not c_row:
+                    return {}
+                single_contract = dict(c_row)
+                pid = int(single_contract['project_id'])
+                cursor.execute("SELECT * FROM projects WHERE id = ?", (pid,))
+                p_row = cursor.fetchone()
+                if not p_row:
+                    return {}
+                project_info = dict(p_row)
             else:
-                cursor.execute("SELECT * FROM projects LIMIT 1")
-            
-            project = cursor.fetchone()
-            if not project:
-                return {}
-            
-            project_info = dict(project)
+                # Get project info
+                if project_id:
+                    cursor.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+                else:
+                    cursor.execute("SELECT * FROM projects LIMIT 1")
+                project = cursor.fetchone()
+                if not project:
+                    return {}
+                project_info = dict(project)
             
             # Get scope info if specified
             scope_info = None
@@ -129,8 +145,10 @@ class GitHubAuditReportGenerator:
             if scope:
                 scope_info = dict(scope)
             
-            # Get all contracts for this scope/project
-            if scope_id:
+            # Get contracts
+            if contract_id and single_contract:
+                contracts = [single_contract]
+            elif scope_id:
                 cursor.execute("""
                     SELECT DISTINCT c.* FROM contracts c
                     WHERE c.project_id = ? 
@@ -141,10 +159,10 @@ class GitHubAuditReportGenerator:
                         )
                     )
                 """, (project_info['id'], project_info['id']))
+                contracts = [dict(row) for row in cursor.fetchall()]
             else:
                 cursor.execute("SELECT * FROM contracts WHERE project_id = ?", (project_info['id'],))
-            
-            contracts = [dict(row) for row in cursor.fetchall()]
+                contracts = [dict(row) for row in cursor.fetchall()]
             
             # Get analysis results and findings for each contract
             contract_analyses = []
