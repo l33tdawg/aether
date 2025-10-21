@@ -1463,13 +1463,25 @@ GENERATE NOW:
 
     def _create_poc_generation_prompt(self, context: Dict[str, Any], template: Dict[str, Any]) -> str:
         # Create detailed prompt for LLM PoC generation using dynamic context with REAL contract analysis.
-        solc_version = context.get('solc_version', '0.8.19')
+        import re
+        
+        # Extract contract code early for solc detection
+        contract_code = context.get('contract_source', '')
+
+        # Detect Solidity version from context or pragma in contract code
+        solc_version = context.get('solc_version') or ''
+        if not solc_version and contract_code:
+            m = re.search(r"pragma\s+solidity\s+([0-9.]+)", contract_code, re.IGNORECASE)
+            if m:
+                solc_version = m.group(1)
+        if not solc_version:
+            solc_version = '0.8.19'
+
         is_solc_07 = solc_version.startswith('0.7')
         available_funcs = context.get('available_functions', [])
         funcs_str = ', '.join(available_funcs[:10]) if available_funcs else 'None detected - analyze contract'
         
         # ← NEW: Extract real contract analysis
-        contract_code = context.get('contract_source', '')
         file_path = context.get('file_path', None)
         external_functions = self._extract_external_functions(contract_code, file_path)
         modifiers = self._extract_modifiers(contract_code, file_path)
@@ -1488,13 +1500,13 @@ GENERATE NOW:
 🎯 MISSION: Generate a COMPLETE, WORKING exploit that demonstrates this vulnerability and would qualify for a $100k+ bounty.
 
 VULNERABILITY INTEL:
-Contract: {context['contract_name']}
-Vulnerability Type: {context['vulnerability_type']} ({context['vulnerability_class']})
-Severity: {context['severity']} (Critical/High/Medium)
-Location: Line {context['line_number']} - Entrypoint: {context['entrypoint']}
+Contract: {context.get('contract_name', 'Unknown')}
+Vulnerability Type: {context.get('vulnerability_type', 'unknown')} ({context.get('vulnerability_class', 'General')})
+Severity: {context.get('severity', 'medium')} (Critical/High/Medium)
+Location: Line {context.get('line_number', '?')} - Entrypoint: {context.get('entrypoint', 'N/A')}
 
 VULNERABILITY DESCRIPTION:
-{context['description']}
+{context.get('description', '')}
 
 🔍 CONTRACT ANALYSIS (100% Accurate - From AST):
 {external_functions}
@@ -1573,7 +1585,7 @@ Return ONLY valid JSON:
 
 📋 REQUIREMENTS (Code will be REJECTED if violated):
 
-1. **SOLIDITY VERSION**: Use EXACTLY "pragma solidity {solc_version};" (no ranges!)
+1. **SOLIDITY VERSION**: Use EXACTLY "pragma solidity {solc_version}" (no ranges!)
 2. **REAL FUNCTIONS ONLY**: Call ONLY functions from "TARGET FUNCTIONS" above
 3. **VALID ADDRESSES**: Use real 40-character hex addresses like 0x1234567890123456789012345678901234567890
 4. **NO PLACEHOLDERS**: Never use "0xYourAddress" or "DeployedContractAddress"
@@ -1612,7 +1624,7 @@ Return ONLY valid JSON:
 1. Attacker deploys malicious contract with exploit functions
 2. Attacker gains governance control (bribe, flash loan, insider attack)
 3. Governance approves malicious contract as 'network contract'
-4. Malicious contract calls {', '.join(context.get('available_functions', [])[:3])}
+4. Malicious contract calls {', '.join(context.get('available_functions', [])[:3]) or 'withdraw/withdrawEther or other privileged functions'}
 5. Funds drained immediately (no timelock, no multisig protection)
 6. Attacker transfers stolen funds to personal wallet
 
@@ -1633,7 +1645,7 @@ Attack Vector: {context.get('description', '')[:200]}""",
             'reentrancy': f"""ATTACK CHAIN for {contract_name} Reentrancy Attack:
 1. Attacker deploys contract with fallback function
 2. Attacker initiates legitimate interaction with protocol
-3. During execution, attacker contract re-enters vulnerable function
+3. During execution, an external call allows the attacker contract to re-enter the vulnerable function
 4. State changes occur multiple times before validation
 5. Attacker drains excess funds/tokens
 
@@ -1644,7 +1656,7 @@ Vulnerable Functions: {functions[:300] if functions != 'No external functions de
 1. Attacker identifies manipulatable price feed
 2. Attacker accumulates tokens to influence price
 3. Attacker executes large trades to skew price
-4. Protocol uses manipulated price for calculations
+4. Protocol uses manipulated, price-dependent values for critical calculations
 5. Attacker exploits price difference for profit
 
 Key Weakness: {modifiers[:200] if modifiers != 'No modifiers detected' else 'No price validation checks'}
@@ -2742,26 +2754,60 @@ solc_version = "{solc_version}"
             }
 
     def _parse_compile_errors(self, compiler_output: str) -> List[str]:
-        # Parse compiler errors from forge output.
-        errors = []
+        # Parse compiler errors from forge output and preserve identifiers when present.
+        errors: List[str] = []
 
         # Split by lines and look for error patterns
         lines = compiler_output.split('\n')
+        total = len(lines)
 
-        for line in lines:
-            # Look for typical Solidity compiler errors
-            if any(pattern in line.lower() for pattern in ['error', 'warning', 'declarationerror', 'typeerror', 'parsererror']):
-                # Extract meaningful error message
+        for idx, line in enumerate(lines):
+            lower = line.lower()
+            if any(pattern in lower for pattern in ['error', 'declarationerror', 'typeerror', 'parsererror']):
+                # Capture identifier if present between quotes or caret-highlighted next line
+                identifier = ''
+                # Look ahead for a line that looks like an offending identifier (e.g., function name line)
+                if idx + 3 < total:
+                    snippet = '\n'.join(lines[idx: idx + 4])
+                    import re
+                    m_call = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*;", snippet)
+                    if m_call:
+                        identifier = m_call.group(1)
+                if not identifier:
+                    for quote in ['"', "'"]:
+                        if quote in line:
+                            try:
+                                first = line.index(quote)
+                                second = line.index(quote, first + 1)
+                                identifier = line[first + 1:second]
+                            except ValueError:
+                                pass
+                if not identifier:
+                    # fallback: last word-like token
+                    import re
+                    m = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", line)
+                    if m:
+                        identifier = m[-1]
+
+                # Extract message part
                 if ':' in line:
-                    # Format: file:line:column: error: message
                     parts = line.split(':', 4)
                     if len(parts) >= 5:
-                        error_msg = f"{parts[3].strip()}: {parts[4].strip()}"
-                        errors.append(error_msg)
+                        msg = parts[4].strip()
+                        err_type = parts[3].strip()
+                        if identifier and identifier not in msg:
+                            msg = f"{msg} ({identifier})"
+                        errors.append(f"{err_type}: {msg}")
                     else:
-                        errors.append(line.strip())
+                        msg = line.strip()
+                        if identifier and identifier not in msg:
+                            msg = f"{msg} ({identifier})"
+                        errors.append(msg)
                 else:
-                    errors.append(line.strip())
+                    msg = line.strip()
+                    if identifier and identifier not in msg:
+                        msg = f"{msg} ({identifier})"
+                    errors.append(msg)
 
         return errors
 
