@@ -115,9 +115,12 @@ def fetch_available_gemini_models(api_key: str) -> Dict[str, List[str]]:
 class AetherSetup:
     """Main setup class for Aether installation and configuration."""
     
-    def __init__(self, interactive: bool = True):
+    def __init__(self, interactive: bool = True, reconfigure_all: bool = False, reconfigure_keys: bool = False, reconfigure_models: bool = False):
         self.console = Console()
         self.interactive = interactive
+        self.reconfigure_all = reconfigure_all
+        self.reconfigure_keys = reconfigure_keys
+        self.reconfigure_models = reconfigure_models
         self.project_root = PROJECT_ROOT
         self.config_dir = Path.home() / '.aether'
         self.config_file = self.config_dir / 'config.yaml'
@@ -134,10 +137,88 @@ class AetherSetup:
         }
         
         self.api_keys = {}
+        self.existing_config = None
+        
+        # Load existing configuration if available
+        self._load_existing_config()
+    
+    def _load_existing_config(self):
+        """Load existing configuration if available."""
+        try:
+            if self.config_file.exists():
+                from core.config_manager import ConfigManager
+                config_manager = ConfigManager()
+                self.existing_config = config_manager.config
+                
+                # Mark what's already configured
+                if getattr(self.existing_config, 'openai_api_key', ''):
+                    self.setup_status['api_keys'] = True
+                if self.config_file.exists():
+                    self.setup_status['config'] = True
+        except Exception as e:
+            # If config is corrupted, we'll reconfigure
+            self.existing_config = None
+    
+    def _show_existing_config(self):
+        """Show existing configuration summary."""
+        if not self.existing_config:
+            return
+        
+        self.console.print("\n[bold cyan]Existing Configuration Detected[/bold cyan]")
+        
+        # Show API keys (masked)
+        table = Table(title="Current Settings")
+        table.add_column("Setting", style="cyan")
+        table.add_column("Status", style="green")
+        table.add_column("Value")
+        
+        openai_key = getattr(self.existing_config, 'openai_api_key', '')
+        if openai_key:
+            table.add_row("OpenAI API Key", "✓ Configured", f"{openai_key[:10]}...")
+        else:
+            table.add_row("OpenAI API Key", "✗ Not set", "-")
+        
+        gemini_key = getattr(self.existing_config, 'gemini_api_key', '')
+        if gemini_key:
+            table.add_row("Gemini API Key", "✓ Configured", f"{gemini_key[:10]}...")
+        else:
+            table.add_row("Gemini API Key", "✗ Not set", "-")
+        
+        etherscan_key = getattr(self.existing_config, 'etherscan_api_key', '')
+        if etherscan_key:
+            table.add_row("Etherscan API Key", "✓ Configured", f"{etherscan_key[:10]}...")
+        else:
+            table.add_row("Etherscan API Key", "✗ Not set", "-")
+        
+        # Show model selections
+        if openai_key:
+            table.add_row("OpenAI Validation Model", "✓ Set", getattr(self.existing_config, 'openai_validation_model', 'gpt-5-chat-latest'))
+            table.add_row("OpenAI Analysis Model", "✓ Set", getattr(self.existing_config, 'openai_analysis_model', 'gpt-5-chat-latest'))
+            table.add_row("OpenAI Generation Model", "✓ Set", getattr(self.existing_config, 'openai_generation_model', 'gpt-5-mini'))
+        
+        if gemini_key:
+            table.add_row("Gemini Validation Model", "✓ Set", getattr(self.existing_config, 'gemini_validation_model', 'gemini-2.5-flash'))
+            table.add_row("Gemini Analysis Model", "✓ Set", getattr(self.existing_config, 'gemini_analysis_model', 'gemini-2.5-flash'))
+            table.add_row("Gemini Generation Model", "✓ Set", getattr(self.existing_config, 'gemini_generation_model', 'gemini-2.5-flash'))
+        
+        self.console.print(table)
+        self.console.print("\n[yellow]Tip:[/yellow] Use flags to reconfigure specific parts:")
+        self.console.print("  --reconfigure-all     Reconfigure everything")
+        self.console.print("  --reconfigure-keys    Reconfigure API keys only")
+        self.console.print("  --reconfigure-models  Reconfigure model selections only")
     
     def run(self):
         """Run the complete setup process."""
         self.print_welcome()
+        
+        # Show existing configuration if available
+        if self.existing_config and not self.reconfigure_all:
+            self._show_existing_config()
+            
+            if self.interactive:
+                if not Confirm.ask("\nProceed with setup?", default=True):
+                    self.console.print("[yellow]Setup cancelled.[/yellow]")
+                    return True
         
         # Step 1: Check Python version
         if not self.check_python_version():
@@ -365,6 +446,30 @@ Let's get started!
         """Configure API keys interactively."""
         self.console.print("\n[bold]Step 4: Configuring API keys...[/bold]")
         
+        # Skip if already configured and not reconfiguring
+        if self.existing_config and not self.reconfigure_all and not self.reconfigure_keys:
+            existing_openai = getattr(self.existing_config, 'openai_api_key', '')
+            existing_gemini = getattr(self.existing_config, 'gemini_api_key', '')
+            
+            if existing_openai or existing_gemini:
+                self.console.print("  [green]✓ API keys already configured[/green]")
+                
+                if self.interactive and not Confirm.ask("  Reconfigure API keys?", default=False):
+                    # Use existing keys
+                    if existing_openai:
+                        self.api_keys['OPENAI_API_KEY'] = existing_openai
+                    if existing_gemini:
+                        self.api_keys['GEMINI_API_KEY'] = existing_gemini
+                    if getattr(self.existing_config, 'etherscan_api_key', ''):
+                        self.api_keys['ETHERSCAN_API_KEY'] = self.existing_config.etherscan_api_key
+                    
+                    self.setup_status['api_keys'] = True
+                    
+                    # Skip to model selection if not reconfiguring models
+                    if not self.reconfigure_models:
+                        return self._configure_model_selection()
+                    return True
+        
         self.console.print("\n[cyan]API keys enable LLM-powered vulnerability analysis.[/cyan]")
         self.console.print("You can configure them now or later via environment variables.\n")
         
@@ -372,7 +477,9 @@ Let's get started!
         
         # OpenAI API Key
         self.console.print("[bold]OpenAI API Key[/bold] (for GPT models)")
-        openai_key = os.getenv('OPENAI_API_KEY', '')
+        # Check existing config first, then env var
+        existing_openai = getattr(self.existing_config, 'openai_api_key', '') if self.existing_config else ''
+        openai_key = existing_openai or os.getenv('OPENAI_API_KEY', '')
         
         if openai_key:
             self.console.print(f"  Found existing key: {openai_key[:10]}...")
@@ -400,7 +507,8 @@ Let's get started!
         
         # Gemini API Key
         self.console.print("\n[bold]Gemini API Key[/bold] (for Gemini models)")
-        gemini_key = os.getenv('GEMINI_API_KEY', '')
+        existing_gemini = getattr(self.existing_config, 'gemini_api_key', '') if self.existing_config else ''
+        gemini_key = existing_gemini or os.getenv('GEMINI_API_KEY', '')
         
         if gemini_key:
             self.console.print(f"  Found existing key: {gemini_key[:10]}...")
@@ -428,7 +536,8 @@ Let's get started!
         
         # Etherscan API Key (optional)
         self.console.print("\n[bold]Etherscan API Key[/bold] (optional, for fetching verified contracts)")
-        etherscan_key = os.getenv('ETHERSCAN_API_KEY', '')
+        existing_etherscan = getattr(self.existing_config, 'etherscan_api_key', '') if self.existing_config else ''
+        etherscan_key = existing_etherscan or os.getenv('ETHERSCAN_API_KEY', '')
         
         if etherscan_key:
             self.console.print(f"  Found existing key: {etherscan_key[:10]}...")
@@ -454,6 +563,34 @@ Let's get started!
                     self.api_keys['ETHERSCAN_API_KEY'] = etherscan_key
         else:
             self.console.print("  [yellow]Skipped Etherscan key configuration[/yellow]")
+        
+        # Configure model selections
+        return self._configure_model_selection()
+    
+    def _configure_model_selection(self) -> bool:
+        """Configure model selections for OpenAI and Gemini."""
+        # Skip if already configured and not reconfiguring
+        if self.existing_config and not self.reconfigure_all and not self.reconfigure_models:
+            existing_openai = getattr(self.existing_config, 'openai_api_key', '')
+            existing_gemini = getattr(self.existing_config, 'gemini_api_key', '')
+            
+            if existing_openai or existing_gemini:
+                self.console.print("\n[bold]Model Selection[/bold]")
+                self.console.print("  [green]✓ Models already configured[/green]")
+                
+                if self.interactive and not Confirm.ask("  Reconfigure models?", default=False):
+                    # Use existing model selections
+                    if existing_openai:
+                        self.api_keys['VALIDATION_MODEL'] = getattr(self.existing_config, 'openai_validation_model', 'gpt-5-chat-latest')
+                        self.api_keys['ANALYSIS_MODEL'] = getattr(self.existing_config, 'openai_analysis_model', 'gpt-5-chat-latest')
+                        self.api_keys['GENERATION_MODEL'] = getattr(self.existing_config, 'openai_generation_model', 'gpt-5-mini')
+                    
+                    if existing_gemini:
+                        self.api_keys['GEMINI_VALIDATION_MODEL'] = getattr(self.existing_config, 'gemini_validation_model', 'gemini-2.5-flash')
+                        self.api_keys['GEMINI_ANALYSIS_MODEL'] = getattr(self.existing_config, 'gemini_analysis_model', 'gemini-2.5-flash')
+                        self.api_keys['GEMINI_GENERATION_MODEL'] = getattr(self.existing_config, 'gemini_generation_model', 'gemini-2.5-flash')
+                    
+                    return True
         
         # Model Selection
         if self.api_keys.get('OPENAI_API_KEY'):
@@ -746,17 +883,44 @@ def main():
     
     parser = argparse.ArgumentParser(
         description="Aether Installer & Configurator",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python setup.py                     # Smart setup (skips configured items)
+  python setup.py --reconfigure-all   # Reconfigure everything
+  python setup.py --reconfigure-keys  # Reconfigure API keys only
+  python setup.py --reconfigure-models # Reconfigure model selections only
+        """
     )
     parser.add_argument(
         '--non-interactive',
         action='store_true',
         help='Run in non-interactive mode (use env vars)'
     )
+    parser.add_argument(
+        '--reconfigure-all',
+        action='store_true',
+        help='Reconfigure all settings (ignore existing configuration)'
+    )
+    parser.add_argument(
+        '--reconfigure-keys',
+        action='store_true',
+        help='Reconfigure API keys only'
+    )
+    parser.add_argument(
+        '--reconfigure-models',
+        action='store_true',
+        help='Reconfigure model selections only'
+    )
     
     args = parser.parse_args()
     
-    setup = AetherSetup(interactive=not args.non_interactive)
+    setup = AetherSetup(
+        interactive=not args.non_interactive,
+        reconfigure_all=args.reconfigure_all,
+        reconfigure_keys=args.reconfigure_keys,
+        reconfigure_models=args.reconfigure_models
+    )
     
     try:
         success = setup.run()
