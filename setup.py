@@ -221,19 +221,32 @@ class AetherSetup:
         print(f"DEBUG: existing_config = {self.existing_config is not None}")
         print(f"DEBUG: reconfigure_all = {self.reconfigure_all}")
         
-        self.print_welcome()
+        # Check if this is a fresh install or reconfiguration
+        is_fresh_install = not self.existing_config or self.reconfigure_all
         
-        # Show existing configuration if available
-        if self.existing_config and not self.reconfigure_all:
+        if is_fresh_install:
+            # Fresh install - show full welcome and proceed
+            self.print_welcome()
+        else:
+            # Existing config - show what's configured and ask if user wants to proceed
+            self.console.print("\n[bold cyan]Aether Setup[/bold cyan]")
+            self.console.print("Configuration already exists. Checking current settings...\n")
+            
             print("DEBUG: Showing existing config...")
             self._show_existing_config()
             
             if self.interactive:
-                if not Confirm.ask("\nProceed with setup?", default=True):
-                    self.console.print("[yellow]Setup cancelled.[/yellow]")
+                self.console.print("\n[bold]Options:[/bold]")
+                self.console.print("  [green]y[/green] - Continue setup (will ask before changing each section)")
+                self.console.print("  [yellow]n[/yellow] - Exit setup")
+                
+                if not Confirm.ask("\nProceed with setup?", default=False):
+                    self.console.print("[green]✓ Configuration is already set up![/green]")
+                    self.console.print("\n[yellow]Tip:[/yellow] To reconfigure:")
+                    self.console.print("  python setup.py --reconfigure-keys    # Update API keys")
+                    self.console.print("  python setup.py --reconfigure-models  # Update model selections")
+                    self.console.print("  python setup.py --reconfigure-all     # Full reconfiguration")
                     return True
-        else:
-            print(f"DEBUG: Skipping existing config display (existing={self.existing_config is not None}, reconfigure_all={self.reconfigure_all})")
         
         # Step 1: Check Python version
         if not self.check_python_version():
