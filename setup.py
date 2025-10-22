@@ -7,7 +7,7 @@ Interactive setup script for first-time installation and configuration.
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # Add project root to path for imports
 PROJECT_ROOT = Path(__file__).parent.absolute()
