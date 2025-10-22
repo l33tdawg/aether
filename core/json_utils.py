@@ -76,6 +76,10 @@ def sanitize_json_string(json_str: str, aggressive: bool = False) -> str:
     json_str = re.sub(r'}\s*{', '},{', json_str)
     json_str = re.sub(r']\s*\[', '],[', json_str)
     
+    # Fix unquoted numeric values and ranges (e.g., 800 - 1300 becomes "800 - 1300")
+    # Match pattern: ": <unquoted_value>," where value contains numbers and operators
+    json_str = re.sub(r':\s*([0-9]+\s*[-+*/]\s*[0-9]+)\s*,', r': "\1",', json_str)
+    
     # Ensure proper JSON structure
     open_braces = json_str.count('{')
     close_braces = json_str.count('}')
@@ -296,8 +300,11 @@ def parse_llm_json(raw_response: str, schema: Optional[str] = None, fallback: Op
         if not json_str or json_str == "{}":
             return fallback
         data = safe_json_parse(json_str, fallback)
-        if schema and isinstance(data, dict) and not validate_against_schema(data, schema):
-            return fallback
-        return data if isinstance(data, dict) else fallback
+        # Accept both dict and list responses - don't force dict-only return
+        if isinstance(data, (dict, list)):
+            if schema and isinstance(data, dict) and not validate_against_schema(data, schema):
+                return fallback
+            return data
+        return fallback
     except Exception:
         return fallback

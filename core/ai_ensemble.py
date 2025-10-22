@@ -146,22 +146,42 @@ class DeFiSecurityExpert(BaseAIModel):
     def _get_persona_prompt(self) -> str:
         return """You are a **DeFi Protocol Security Expert** with deep expertise in decentralized finance vulnerabilities.
 
-**Your Mission:** Identify DeFi-specific security risks that could lead to fund losses or protocol exploits.
+**Your Mission:** Identify REAL, EXPLOITABLE DeFi-specific security risks that could lead to fund losses or protocol exploits.
 
-**Focus Areas:**
-- **Flash Loan Attacks**: Complex multi-step attacks using flash loans
-- **Yield Farming Exploits**: Manipulation of reward distribution and staking mechanisms
-- **DEX Vulnerabilities**: Price oracle manipulation, front-running, sandwich attacks
-- **Lending Protocol Risks**: Liquidation manipulation, oracle failures, governance attacks
-- **Staking Contract Issues**: Reward calculation errors, withdrawal vulnerabilities
+**CRITICAL: MANDATORY ANALYSIS PROCESS (Follow Every Step)**
 
-**Analysis Approach:**
-1. **Pattern Recognition**: Look for DeFi-specific attack patterns and anti-patterns
-2. **Economic Analysis**: Consider incentive structures and economic attack vectors
-3. **Protocol Integration**: Analyze how this contract interacts with other DeFi protocols
-4. **Governance Risks**: Check for admin key management and upgrade mechanism security
+For EVERY potential finding, you MUST complete this reasoning chain:
 
-**Output Format:** JSON array of findings with DeFi-specific context"""
+1. **IDENTIFY** - What vulnerability pattern did you spot?
+
+2. **CHECK FOR PROTECTIONS** - Does the contract have:
+   - Bounds checks or sanity limits?
+   - Access controls (onlyOwner, roles, modifiers)?
+   - Timeout mechanisms or staleness checks?
+   - Validation logic or require statements?
+   - Circuit breakers or pause functionality?
+   
+3. **VERIFY DATA SOURCE** (Critical for oracle/price issues):
+   - **Off-chain oracle** (e.g., AggregatorV3Interface, Chainlink, Pyth) → Aggregated from multiple sources, CANNOT be manipulated by flash loans
+   - **On-chain spot price** (e.g., IUniswapV2Pair.getReserves, balanceOf ratios) → CAN be manipulated within same block
+   - **Time-weighted average** (TWAP, observe()) → Resistant to single-block manipulation
+   
+4. **PROVE EXPLOITABILITY** - Write concrete attack steps:
+   - Step 1: Attacker does X
+   - Step 2: This causes Y
+   - Step 3: Attacker profits Z
+   - Why existing protections DON'T prevent this
+   
+5. **CONFIDENCE CHECK** - Only report if confidence >= 0.85
+
+**COMMON FALSE POSITIVE PATTERNS TO AVOID:**
+- Claims of "oracle manipulation" on off-chain oracles (Chainlink, etc.) → These are NOT vulnerable to flash loans
+- Flagging inherited access controls without checking parent contracts
+- Reporting intentional design features as vulnerabilities (check code comments)
+- Theoretical issues with no practical exploit path
+- Gas optimizations (these are NOT security vulnerabilities)
+
+**OUTPUT FORMAT:** JSON array with reasoning chain"""
 
     async def analyze_contract(self, contract_content: str, contract_path: str = "", context: Dict[str, Any] = None) -> ModelResult:
         """Analyze contract from DeFi security perspective"""
@@ -187,18 +207,26 @@ class DeFiSecurityExpert(BaseAIModel):
 {json.dumps(learning_context, indent=2)}
 
 **REQUIRED OUTPUT:**
-Return a JSON array of vulnerabilities found. Each finding should include:
+Return a JSON array of vulnerabilities found. Each finding MUST include:
 - type: Specific vulnerability type (e.g., "flash_loan_arbitrage", "oracle_manipulation")
 - severity: "low" | "medium" | "high" | "critical"
-- confidence: 0.0-1.0 (how certain you are about this finding)
+- confidence: 0.85-1.0 (ONLY report if >= 0.85)
 - description: Detailed explanation of the vulnerability
 - line: Approximate line number (or -1 if unclear)
 - swc_id: Relevant SWC ID if applicable
-- exploit_scenario: How an attacker could exploit this
+- exploit_scenario: Step-by-step concrete attack path
 - defi_impact: Potential financial impact on users/protocol
 - mitigation: How to fix this issue
+- reasoning_chain: {{
+    "pattern_identified": "what pattern you spotted",
+    "protections_checked": ["list of protections you verified"],
+    "data_source_type": "off_chain|on_chain|twap|n/a",
+    "exploit_proof": "concrete attack steps proving it's exploitable",
+    "why_not_protected": "why existing protections don't prevent this"
+  }}
 
-Focus on DeFi-specific issues and real-world exploit scenarios.
+ONLY report findings with confidence >= 0.85 and complete reasoning chains.
+If you cannot prove exploitability, DO NOT report it.
 """
 
             # Get OpenAI API key - check multiple sources for robustness
@@ -241,6 +269,7 @@ Focus on DeFi-specific issues and real-world exploit scenarios.
 
             # Parse response
             response_text = response.choices[0].message.content
+            logger.debug(f"DeFi Expert raw response length: {len(response_text)}")
             findings = self._parse_defi_findings(response_text)
 
             processing_time = time.time() - start_time
@@ -267,6 +296,11 @@ Focus on DeFi-specific issues and real-world exploit scenarios.
             logger.error(f"DeFi Expert failed: {e}")
             processing_time = time.time() - start_time
 
+            error_msg = str(e)
+            if 'OPENAI_API_KEY' in error_msg or 'api_key' in error_msg.lower():
+                logger.warning(f"⚠️  API Key Issue: {error_msg}")
+                print(f"⚠️  DeFi Expert failed - API Key not configured: {error_msg}")
+            
             return ModelResult(
                 model_name=self.agent_name,
                 findings=[],
@@ -280,7 +314,13 @@ Focus on DeFi-specific issues and real-world exploit scenarios.
         try:
             # Use the robust parse_llm_json utility instead of naive regex
             data = parse_llm_json(response, fallback={"findings": []})
-            findings = data.get('findings', [])
+            logger.debug(f"DeFi Expert parsed {len(data) if isinstance(data, list) else len(data.get('findings', []))} findings")
+            
+            # Handle both formats: direct array or object with findings key
+            if isinstance(data, list):
+                return data
+            
+            findings = data.get('findings', []) if isinstance(data, dict) else []
             if isinstance(findings, list):
                 return findings
             return []
@@ -302,22 +342,40 @@ class GasOptimizationExpert(BaseAIModel):
     def _get_persona_prompt(self) -> str:
         return """You are a **Gas Optimization Expert** specializing in Ethereum gas efficiency and smart contract optimization.
 
-**Your Mission:** Identify gas inefficiencies and optimization opportunities that can reduce transaction costs and improve contract performance.
+**IMPORTANT: Gas optimizations are NOT security vulnerabilities. They are performance improvements.**
 
-**Focus Areas:**
-- **Storage Optimization**: Expensive SLOAD/SSTORE operations, struct packing
-- **Computation Efficiency**: Loop optimization, unnecessary calculations
-- **Function Optimization**: Batch operations, view vs pure functions
-- **Memory Management**: Memory vs storage usage, calldata optimization
-- **Event Optimization**: Event emission efficiency
+**Your Mission:** Identify SIGNIFICANT gas inefficiencies that can meaningfully reduce transaction costs.
 
-**Analysis Approach:**
-1. **Gas Cost Analysis**: Calculate potential gas savings for each optimization
-2. **Trade-off Evaluation**: Balance gas savings vs code complexity/readability
-3. **Upgrade Compatibility**: Ensure optimizations don't break existing functionality
-4. **Batch Processing**: Identify opportunities for batching operations
+**CRITICAL: MANDATORY ANALYSIS PROCESS**
 
-**Output Format:** JSON array of gas optimization opportunities"""
+For EVERY potential optimization:
+
+1. **IDENTIFY** - What inefficiency did you spot?
+
+2. **CALCULATE IMPACT** - Estimate realistic gas savings:
+   - High impact: 1000+ gas saved per transaction
+   - Medium impact: 200-1000 gas saved per transaction  
+   - Low impact: < 200 gas saved per transaction
+   
+3. **VERIFY NOT INTENTIONAL** - Check if the pattern is:
+   - Part of an external library/standard (OpenZeppelin, etc.)
+   - Intentional for readability/safety
+   - Required by an interface or standard
+   
+4. **ASSESS COMPLEXITY** - Implementation difficulty:
+   - Low: Simple change, no logic impact
+   - Medium: Moderate refactoring needed
+   - High: Significant restructuring required
+   
+5. **CONFIDENCE CHECK** - Only report if confidence >= 0.8 AND gas savings >= 200
+
+**AVOID REPORTING:**
+- Micro-optimizations saving < 50 gas
+- Optimizations in external libraries you can't control
+- Changes that harm readability for minimal gas savings
+- Already optimized patterns (e.g., existing use of immutable, cached storage reads)
+
+**OUTPUT FORMAT:** JSON array of gas optimization opportunities (NOT vulnerabilities)"""
 
     async def analyze_contract(self, contract_content: str, contract_path: str = "", context: Dict[str, Any] = None) -> ModelResult:
         """Analyze contract for gas optimization opportunities"""
@@ -339,18 +397,29 @@ class GasOptimizationExpert(BaseAIModel):
 {json.dumps(learning_context, indent=2)}
 
 **REQUIRED OUTPUT:**
-Return a JSON array of gas optimization opportunities. Each optimization should include:
+Return a JSON array of gas optimization opportunities. Each optimization MUST include:
 - type: "gas_optimization"
-- severity: "low" | "medium" | "high" (based on potential savings)
-- confidence: 0.0-1.0
+- severity: "low" | "medium" | "high" (based on savings: high=1000+, medium=200-1000, low=<200)
+- confidence: 0.8-1.0 (ONLY report if >= 0.8)
 - description: What can be optimized
 - line: Line number where optimization applies
-- gas_savings_estimate: Estimated gas savings per call
+- gas_savings_estimate: "~X-Y gas per call" (be specific)
 - implementation_complexity: "low" | "medium" | "high"
 - optimization_details: Technical details of the optimization
 - code_suggestion: Suggested code changes
+- reasoning_chain: {{
+    "inefficiency_identified": "what pattern is inefficient",
+    "gas_calculation": "how you calculated the savings",
+    "not_intentional_because": "why this isn't intentional design",
+    "implementation_impact": "what needs to change"
+  }}
 
-Focus on high-impact optimizations that provide significant gas savings.
+ONLY report optimizations with:
+- confidence >= 0.8
+- gas savings >= 200 per transaction
+- practical implementation path
+
+If optimization saves < 200 gas or is in external library, DO NOT report it.
 """
 
             # Get OpenAI API key - check multiple sources for robustness
@@ -390,6 +459,7 @@ Focus on high-impact optimizations that provide significant gas savings.
                     raise
 
             response_text = response.choices[0].message.content
+            logger.debug(f"Gas Expert raw response length: {len(response_text)}")
             findings = self._parse_gas_findings(response_text)
 
             processing_time = time.time() - start_time
@@ -414,6 +484,11 @@ Focus on high-impact optimizations that provide significant gas savings.
             logger.error(f"Gas Expert failed: {e}")
             processing_time = time.time() - start_time
 
+            error_msg = str(e)
+            if 'OPENAI_API_KEY' in error_msg or 'api_key' in error_msg.lower():
+                logger.warning(f"⚠️  API Key Issue: {error_msg}")
+                print(f"⚠️  Gas Expert failed - API Key not configured: {error_msg}")
+            
             return ModelResult(
                 model_name=self.agent_name,
                 findings=[],
@@ -427,6 +502,7 @@ Focus on high-impact optimizations that provide significant gas savings.
         try:
             # Use the robust parse_llm_json utility instead of naive regex
             data = parse_llm_json(response, fallback=[])
+            logger.debug(f"Gas Expert parsed {len(data) if isinstance(data, list) else len(data.get('findings', []))} findings")
             if isinstance(data, list):
                 return data
             findings = data.get('findings', []) if isinstance(data, dict) else []
@@ -449,24 +525,42 @@ class SecurityBestPracticesExpert(BaseAIModel):
         )
 
     def _get_persona_prompt(self) -> str:
-        return """You are a **Security Best Practices Expert** focused on code quality, security standards, and development best practices.
+        return """You are a **Security Best Practices Expert** focused on SECURITY-IMPACTING code quality issues.
 
-**Your Mission:** Identify code quality issues, security anti-patterns, and deviations from established best practices.
+**Your Mission:** Identify code quality issues that have REAL security implications, not just style preferences.
 
-**Focus Areas:**
-- **Access Control**: Proper authorization, role-based access, ownership patterns
-- **Input Validation**: Parameter validation, bounds checking, sanitization
-- **Error Handling**: Proper error handling, fail-safe defaults, graceful degradation
-- **Code Quality**: Readability, maintainability, documentation, testing
-- **Security Standards**: Compliance with security best practices and standards
+**CRITICAL: MANDATORY ANALYSIS PROCESS**
 
-**Analysis Approach:**
-1. **Standards Compliance**: Check against established security standards (SWC, best practices)
-2. **Code Review**: Analyze code structure, patterns, and maintainability
-3. **Security Anti-patterns**: Identify common security mistakes and bad practices
-4. **Documentation**: Check for proper documentation and comments
+For EVERY potential finding:
 
-**Output Format:** JSON array of best practice violations and recommendations"""
+1. **IDENTIFY** - What best practice deviation did you spot?
+
+2. **CHECK INHERITED PROTECTIONS** - Does the contract inherit security from:
+   - Parent contracts (OpenZeppelin Ownable, AccessControl, etc.)?
+   - Libraries that provide the protection?
+   - Framework-level guarantees?
+   
+3. **VERIFY SECURITY IMPACT** - Can this actually lead to:
+   - Unauthorized access?
+   - Fund loss?
+   - State manipulation?
+   - Denial of service?
+   
+4. **PROVE IT'S A PROBLEM** - Show concrete scenario where this causes issues:
+   - Not just "could be better"
+   - Actual security/safety impact
+   - Not covered by inherited protections
+   
+5. **CONFIDENCE CHECK** - Only report if confidence >= 0.85
+
+**AVOID GENERIC CLAIMS:**
+- "Missing access control" without checking parent contracts
+- "Needs input validation" without proving it's exploitable
+- "Poor error handling" without showing actual risk
+- "Missing documentation" (not a security issue)
+- Style/preference issues with no security impact
+
+**OUTPUT FORMAT:** JSON array of security-impacting best practice issues (NOT style preferences)"""
 
     async def analyze_contract(self, contract_content: str, contract_path: str = "", context: Dict[str, Any] = None) -> ModelResult:
         """Analyze contract for security best practices"""
@@ -488,17 +582,28 @@ class SecurityBestPracticesExpert(BaseAIModel):
 {json.dumps(learning_context, indent=2)}
 
 **REQUIRED OUTPUT:**
-Return a JSON array of best practice issues. Each finding should include:
+Return a JSON array of best practice issues. Each finding MUST include:
 - type: "best_practice_violation"
-- severity: "low" | "medium" | "high" | "info"
-- confidence: 0.0-1.0
+- severity: "low" | "medium" | "high" (NO "info" - must have security impact)
+- confidence: 0.85-1.0 (ONLY report if >= 0.85)
 - description: What best practice is being violated
 - line: Line number where issue occurs
 - standard: Relevant standard (SWC-XXX, best practice name)
-- impact: Why this matters for security/maintainability
+- impact: CONCRETE security impact (not "maintainability")
 - recommendation: How to fix or improve
+- reasoning_chain: {{
+    "deviation_identified": "what best practice is violated",
+    "inherited_protections_checked": ["what parent contracts/libraries were checked"],
+    "security_impact_proof": "concrete scenario showing security risk",
+    "why_not_protected": "why existing code doesn't prevent this"
+  }}
 
-Focus on actionable improvements that enhance security and maintainability.
+ONLY report findings with:
+- confidence >= 0.85
+- ACTUAL security impact (not style/maintainability)
+- Proof that inherited protections don't cover it
+
+If issue is style/documentation/preference with no security impact, DO NOT report it.
 """
 
             # Get OpenAI API key - check multiple sources for robustness
@@ -526,6 +631,7 @@ Focus on actionable improvements that enhance security and maintainability.
             )
 
             response_text = response.choices[0].message.content
+            logger.debug(f"Best Practices Expert raw response length: {len(response_text)}")
             findings = self._parse_best_practices_findings(response_text)
 
             processing_time = time.time() - start_time
@@ -550,6 +656,11 @@ Focus on actionable improvements that enhance security and maintainability.
             logger.error(f"Best Practices Expert failed: {e}")
             processing_time = time.time() - start_time
 
+            error_msg = str(e)
+            if 'OPENAI_API_KEY' in error_msg or 'api_key' in error_msg.lower():
+                logger.warning(f"⚠️  API Key Issue: {error_msg}")
+                print(f"⚠️  Best Practices Expert failed - API Key not configured: {error_msg}")
+            
             return ModelResult(
                 model_name=self.agent_name,
                 findings=[],
@@ -563,8 +674,12 @@ Focus on actionable improvements that enhance security and maintainability.
         try:
             # Use the robust parse_llm_json utility instead of naive regex
             data = parse_llm_json(response, fallback=[])
+            logger.debug(f"Best Practices Expert parsed {len(data) if isinstance(data, list) else len(data.get('findings', []))} findings")
+            
+            # Handle both formats: direct array or object with findings key
             if isinstance(data, list):
                 return data
+            
             findings = data.get('findings', []) if isinstance(data, dict) else []
             if isinstance(findings, list):
                 return findings

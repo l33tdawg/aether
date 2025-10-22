@@ -8,6 +8,7 @@ Uses LLM to validate vulnerabilities and filter out false positives.
 import asyncio
 import json
 import logging
+import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,7 +42,6 @@ class LLMFalsePositiveFilter:
         """Validate vulnerabilities and filter out false positives."""
         
         logger.info(f"Validating {len(vulnerabilities)} vulnerabilities with LLM")
-        print(f"DEBUG: LLM Filter - Starting validation of {len(vulnerabilities)} vulnerabilities")
         
         validated_vulnerabilities = []
         # Track full validation details for reporting
@@ -49,14 +49,13 @@ class LLMFalsePositiveFilter:
         
         for i, vuln in enumerate(vulnerabilities):
             try:
-                logger.info(f"Validating vulnerability {i+1}/{len(vulnerabilities)}: {vuln.get('vulnerability_type', 'unknown')}")
+                logger.debug(f"Validating vulnerability {i+1}/{len(vulnerabilities)}: {vuln.get('vulnerability_type', 'unknown')}")
                 
-                # Use code snippet from vulnerability if available, otherwise use contract code
-                vuln_code = vuln.get('code_snippet', contract_code)
+                # Always pass FULL contract code to validation, not snippet
                 vuln_contract_name = vuln.get('contract_name', contract_name)
 
                 validation_result = await self._validate_single_vulnerability(
-                    vuln, vuln_code, vuln_contract_name
+                    vuln, contract_code, vuln_contract_name
                 )
                 
                 if not validation_result.is_false_positive:
@@ -73,10 +72,13 @@ class LLMFalsePositiveFilter:
                     validated_vulnerabilities.append(validated_vuln)
                     # Record for reporting
                     self.last_validation_details['validated'].append(validated_vuln)
-                    print(f"DEBUG: LLM Filter - Validated vulnerability {i+1}: {vuln.get('vulnerability_type', 'unknown')}")
+                    print(f"   ✓ REAL VULNERABILITY: {vuln.get('vulnerability_type', 'unknown')}")
+                    print(f"      Confidence: {validation_result.confidence:.2f}")
+                    print(f"      Reason: {validation_result.reasoning[:120]}...")
                 else:
-                    logger.info(f"Filtered out false positive: {vuln.get('vulnerability_type', 'unknown')}")
-                    print(f"DEBUG: LLM Filter - Filtered out false positive {i+1}: {vuln.get('vulnerability_type', 'unknown')}")
+                    print(f"   ✗ FALSE POSITIVE: {vuln.get('vulnerability_type', 'unknown')}")
+                    print(f"      Confidence: {validation_result.confidence:.2f}")
+                    print(f"      Reason: {validation_result.reasoning[:120]}...")
                     filtered_entry = vuln.copy()
                     filtered_entry['validation_confidence'] = validation_result.confidence
                     filtered_entry['validation_reasoning'] = validation_result.reasoning
@@ -85,13 +87,11 @@ class LLMFalsePositiveFilter:
                     
             except Exception as e:
                 logger.error(f"Error validating vulnerability {i+1}: {e}")
-                print(f"DEBUG: LLM Filter - Error validating vulnerability {i+1}: {e}")
                 # Keep the vulnerability if validation fails
                 validated_vulnerabilities.append(vuln)
-                print(f"DEBUG: LLM Filter - Kept vulnerability {i+1} due to validation error")
+                logger.warning(f"Kept vulnerability due to validation error")
         
-        logger.info(f"Filtered {len(vulnerabilities) - len(validated_vulnerabilities)} false positives")
-        print(f"DEBUG: LLM Filter - Final result: {len(validated_vulnerabilities)}/{len(vulnerabilities)} vulnerabilities validated")
+        logger.info(f"LLM validation: {len(validated_vulnerabilities)}/{len(vulnerabilities)} confirmed")
         return validated_vulnerabilities
 
     def get_last_validation_details(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -112,7 +112,7 @@ class LLMFalsePositiveFilter:
         if cache_key in self.validation_cache:
             return self.validation_cache[cache_key]
         
-        # Prepare context for LLM
+        # Prepare context for LLM - ALWAYS use full contract code
         context = self._prepare_validation_context(vulnerability, contract_code, contract_name)
         
         # Get LLM validation
@@ -126,14 +126,15 @@ class LLMFalsePositiveFilter:
             validation_model = 'gpt-5-chat-latest'  # Fallback
         
         try:
+            logger.debug(f"Validating with context: code={len(context.get('contract_code',''))} chars, imports={len(context.get('imports', []) or [])}")
+            
             response = await self.llm_analyzer._call_llm(
                 validation_prompt,
                 model=validation_model  # Use configured validation model (OpenAI or Gemini)
             )
             
-            print(f"DEBUG: LLM Filter - Raw LLM response: {response[:200]}...")
             result = self._parse_validation_response(response)
-            print(f"DEBUG: LLM Filter - Parsed result: is_false_positive={result.is_false_positive}, confidence={result.confidence}")
+            logger.debug(f"Validation result: is_fp={result.is_false_positive}, confidence={result.confidence}")
             self.validation_cache[cache_key] = result
             return result
             
@@ -167,6 +168,29 @@ class LLMFalsePositiveFilter:
         # Extract design intent from comments
         design_intent = self._extract_design_intent(contract_code, line_number)
 
+        # Pull extended metadata from vulnerability/context if available
+        vuln_ctx = vulnerability.get('context', {}) or {}
+        file_path = (
+            vuln_ctx.get('contract_path') or
+            vuln_ctx.get('file_location') or
+            vuln_ctx.get('file_path') or
+            ''
+        )
+        pattern_match = vuln_ctx.get('pattern_match', '')
+        function_context = vuln_ctx.get('function_context', '')
+        surrounding_context = vuln_ctx.get('surrounding_context', '')
+        swc_id = vulnerability.get('swc_id', '')
+        category = vulnerability.get('category', '')
+        detector_confidence = vulnerability.get('confidence', 0.0)
+
+        # Extract imports and inheritance information from the full contract code
+        imports = self._extract_imports(contract_code)
+        inheritance = self._extract_inheritance(contract_code)
+        
+        # Attempt to resolve related imported sources if we have a base path
+        base_path = file_path if file_path and os.path.isabs(file_path) else None
+        related_sources = self._resolve_related_sources(contract_code, base_path)
+        
         return {
             'vulnerability': vulnerability,
             'contract_name': contract_name,
@@ -176,11 +200,23 @@ class LLMFalsePositiveFilter:
             'line_number': line_number,
             'code_context': context_lines,  # Full contract code
             'contract_code': contract_code,
+            'code_snippet': vulnerability.get('code_snippet', ''),  # Original flagged snippet
             'oracle_type': oracle_type,
             'design_intent': design_intent,
-            'has_code_snippet': 'code_snippet' in vulnerability
+            'has_code_snippet': 'code_snippet' in vulnerability,
+            # Extended context
+            'file_path': file_path,
+            'pattern_match': pattern_match,
+            'function_context': function_context,
+            'surrounding_context': surrounding_context,
+            'swc_id': swc_id,
+            'category': category,
+            'detector_confidence': detector_confidence,
+            'imports': imports,
+            'inheritance': inheritance,
+            'related_sources': related_sources
         }
-    
+
     def _extract_code_context(self, contract_code: str, line_number: int, context_size: int = 10) -> str:
         """Extract code context around a specific line."""
         
@@ -195,6 +231,26 @@ class LLMFalsePositiveFilter:
         
         return '\n'.join(context_lines)
     
+    def _extract_imports(self, contract_code: str) -> List[str]:
+        """Extract Solidity import statements from the contract code."""
+        import re
+        imports: List[str] = []
+        for line in contract_code.split('\n'):
+            if re.match(r'^\s*import\s+[^;]+;', line):
+                imports.append(line.strip())
+        return imports
+
+    def _extract_inheritance(self, contract_code: str) -> List[str]:
+        """Extract inheritance declarations from contract definitions."""
+        import re
+        inheritance_info: List[str] = []
+        pattern = re.compile(r'contract\s+([A-Za-z0-9_]+)\s+is\s+([^\{]+)\{')
+        for match in pattern.finditer(contract_code):
+            contract_name = match.group(1).strip()
+            bases = [b.strip() for b in match.group(2).split(',')]
+            inheritance_info.append(f"{contract_name} is {', '.join(bases)}")
+        return inheritance_info
+
     def _detect_oracle_type(self, contract_code: str) -> str:
         """Detect the type of oracle being used in the contract."""
         import re
@@ -297,11 +353,46 @@ SEVERITY: {context['severity']}
 LINE: {context['line_number']}
 DESCRIPTION: {context['description']}
 
+**FILE INFO:**
+|- Path: {context.get('file_path', 'N/A')}
+|- SWC: {context.get('swc_id', 'N/A')} | Category: {context.get('category', 'N/A')}
+|- Detector confidence: {context.get('detector_confidence', 0.0)}
+
 **ORACLE TYPE DETECTED:**
 {context.get('oracle_type', 'No oracle usage detected')}
 
 **DESIGN INTENT FROM CODE COMMENTS:**
 {context.get('design_intent', 'No explicit design intent comments found')}
+
+**FLAGGED CODE SNIPPET (the specific lines being evaluated) - LINE {context['line_number']} HIGHLIGHTED:**
+```solidity
+{context.get('code_snippet', 'N/A')}
+```
+
+**VULNERABILITY DETAILS (what the detector flagged):**
+- Type: {context.get('vulnerability_type', 'unknown')}
+- Severity: {context.get('severity', 'unknown')}
+- Description: {context.get('description', 'N/A')}
+- Pattern Match: {context.get('pattern_match', 'N/A')}
+
+**LOCAL CONTEXT (nearby lines around the finding):**
+```solidity
+{context.get('surrounding_context', 'N/A')}
+```
+
+**FUNCTION CONTEXT (if available):**
+```solidity
+{context.get('function_context', 'N/A')}
+```
+
+**IMPORTS DETECTED:**
+{chr(10).join(context.get('imports', []) or ['N/A'])}
+
+**INHERITANCE:**
+{chr(10).join(context.get('inheritance', []) or ['N/A'])}
+
+**RELATED IMPORTED SOURCES (resolved locally where possible):**
+{chr(10).join([f"--- {p} ---\n```solidity\n{src}\n```" for p, src in (context.get('related_sources', {}) or {}).items()]) or 'N/A'}
 
 **FULL CONTRACT CODE:**
 ```solidity
@@ -541,3 +632,29 @@ Respond ONLY in JSON format (no extra text):
             'severity_distribution': severity_counts,
             'average_confidence': sum(v.get('validation_confidence', 0) for v in vulnerabilities) / total if total > 0 else 0
         }
+
+    def _resolve_related_sources(self, contract_code: str, base_path: Optional[str]) -> Dict[str, str]:
+        """Attempt to resolve imported Solidity files and load their contents.
+        Returns a map of path -> content. Best-effort only.
+        """
+        import re
+        related: Dict[str, str] = {}
+        for m in re.finditer(r"import\s+['\"]([^'\"]+)['\"]\s*;", contract_code):
+            imp = m.group(1).strip()
+            # Skip package imports we can't resolve locally
+            if imp.startswith('@'):
+                continue
+            # Try relative to base_path, then cwd
+            candidates = []
+            if base_path:
+                candidates.append(os.path.join(os.path.dirname(base_path), imp))
+            candidates.append(os.path.abspath(imp))
+            for c in candidates:
+                try:
+                    if os.path.exists(c) and os.path.isfile(c) and c.endswith('.sol'):
+                        with open(c, 'r') as f:
+                            related[c] = f.read()
+                            break
+                except Exception:
+                    continue
+        return related

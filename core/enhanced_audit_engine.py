@@ -161,6 +161,8 @@ class EnhancedAetherAuditEngine:
         print("   📊 Running Slither static analysis...")
         slither_findings = self._run_slither_analysis(contract_files)
         all_vulnerabilities.extend(slither_findings)
+        if slither_findings:
+            print(f"   📊 Slither total: {len(slither_findings)} findings across all contracts")
         
         # STAGE 2: Run our enhanced pattern-based detectors
         print("   🔎 Running enhanced pattern-based detectors...")
@@ -213,7 +215,7 @@ class EnhancedAetherAuditEngine:
             slither = SlitherIntegration()
             
             if not slither.slither_available:
-                print("   ⚠️  Slither not available, skipping Slither analysis")
+                print("   ⚠️  Slither unavailable (macOS SIP restriction) - using enhanced detectors only")
                 return []
             
             all_findings = []
@@ -231,8 +233,6 @@ class EnhancedAetherAuditEngine:
                     try:
                         findings = slither.analyze_with_slither(temp_path)
                         all_findings.extend(findings)
-                        if findings:
-                            print(f"   ✅ Slither found {len(findings)} issues in {contract_file['name']}")
                     finally:
                         # Clean up temporary file
                         Path(temp_path).unlink(missing_ok=True)
@@ -752,8 +752,30 @@ class EnhancedAetherAuditEngine:
         return mapping.get((severity or '').lower(), 1)
 
     def _triage_vulnerabilities(self, vulns: List[Dict[str, Any]], for_llm: bool = False) -> List[Dict[str, Any]]:
-        """Deduplicate, filter by severity/confidence, and cap volume. If for LLM and consensus-only is set,
-        always keep AI-ensemble consensus items regardless of thresholds so they get validated."""
+        """Deduplicate, filter by severity/confidence, and cap volume. 
+        
+        IMPORTANT: Gas optimizations are EXCLUDED from LLM validation as they are NOT security vulnerabilities.
+        They will be reported separately in the final report.
+        """
+        # Separate gas optimizations from security findings
+        gas_optimizations = []
+        security_findings = []
+        
+        for v in vulns:
+            vtype = (v.get('vulnerability_type') or v.get('type') or '').strip().lower()
+            if vtype == 'gas_optimization':
+                gas_optimizations.append(v)
+            else:
+                security_findings.append(v)
+        
+        # Store gas optimizations for later reporting (don't validate with LLM)
+        if not hasattr(self, '_gas_optimizations'):
+            self._gas_optimizations = []
+        self._gas_optimizations.extend(gas_optimizations)
+        
+        # Only process security findings for validation
+        vulns = security_findings
+        
         # Configurable thresholds via env
         if for_llm:
             min_sev = os.getenv('AETHER_LLM_TRIAGE_MIN_SEVERITY', os.getenv('AETHER_TRIAGE_MIN_SEVERITY', 'medium'))
@@ -816,6 +838,10 @@ class EnhancedAetherAuditEngine:
             if len(capped) >= max_items:
                 break
 
+        # Log separation of gas optimizations
+        if gas_optimizations:
+            print(f"ℹ️  Separated {len(gas_optimizations)} gas optimizations (not security vulnerabilities)")
+        
         return capped
 
     async def _run_foundry_validation(self, contract_path: str, validated_results: Dict[str, Any]) -> None:
@@ -902,8 +928,60 @@ class EnhancedAetherAuditEngine:
 
             # Calculate metrics using the deduplicated findings
             execution_time = time.time() - start_time
+            # Raw vulnerabilities from pipeline output
             vulnerabilities = final_results.get('results', {}).get('vulnerabilities', [])
-            total_vulnerabilities = len(vulnerabilities)
+
+            # Gate database persistence to only LLM-validated items by default
+            # Opt-in to store unvalidated items by setting AETHER_DB_SAVE_UNVALIDATED=1
+            save_unvalidated = os.getenv('AETHER_DB_SAVE_UNVALIDATED', '0') == '1'
+            min_conf_str = os.getenv('AETHER_DB_MIN_VALIDATION_CONFIDENCE', '')
+            try:
+                min_validation_conf = float(min_conf_str) if min_conf_str else None
+            except Exception:
+                min_validation_conf = None
+
+            eligible_vulnerabilities = []
+            for v in vulnerabilities:
+                # Normalize access for dict/object
+                def vget(key, default=None):
+                    if hasattr(v, key):
+                        return getattr(v, key, default)
+                    return v.get(key, default) if isinstance(v, dict) else default
+
+                status_val = vget('status', 'confirmed')
+                if status_val == 'false_positive':
+                    # Never store false positives
+                    continue
+
+                vc = vget('validation_confidence', None)
+
+                # Enforce LLM validation presence (vc not None) unless explicitly allowed
+                if vc is None and not save_unvalidated:
+                    continue
+
+                # If a minimum confidence is configured, enforce it
+                if vc is not None and min_validation_conf is not None and vc < min_validation_conf:
+                    # Treat as not eligible unless storing unvalidated is allowed
+                    if not save_unvalidated:
+                        continue
+
+                # If unvalidated allowed and vc missing, mark investigating with defaults
+                if vc is None and save_unvalidated:
+                    if isinstance(v, dict):
+                        v.setdefault('status', 'investigating')
+                        v.setdefault('validation_confidence', 0.0)
+                        v.setdefault('validation_reasoning', 'Not LLM-validated; stored due to AETHER_DB_SAVE_UNVALIDATED=1')
+                    else:
+                        try:
+                            setattr(v, 'status', getattr(v, 'status', 'investigating'))
+                            setattr(v, 'validation_confidence', 0.0)
+                            setattr(v, 'validation_reasoning', 'Not LLM-validated; stored due to AETHER_DB_SAVE_UNVALIDATED=1')
+                        except Exception:
+                            pass
+
+                eligible_vulnerabilities.append(v)
+
+            total_vulnerabilities = len(eligible_vulnerabilities)
 
             # Count severities
             def get_severity(vuln):
@@ -913,8 +991,8 @@ class EnhancedAetherAuditEngine:
                     return vuln.get('severity', 'medium')
                 return 'medium'
 
-            high_severity_count = sum(1 for v in vulnerabilities if get_severity(v) in ['high', 'critical'])
-            critical_severity_count = sum(1 for v in vulnerabilities if get_severity(v) == 'critical')
+            high_severity_count = sum(1 for v in eligible_vulnerabilities if get_severity(v) in ['high', 'critical'])
+            critical_severity_count = sum(1 for v in eligible_vulnerabilities if get_severity(v) == 'critical')
 
             # Count false positives (confirmed findings)
             def get_status(vuln):
@@ -924,7 +1002,7 @@ class EnhancedAetherAuditEngine:
                     return vuln.get('status', 'confirmed')
                 return 'confirmed'
 
-            false_positives = sum(1 for v in vulnerabilities if get_status(v) == 'false_positive')
+            false_positives = sum(1 for v in eligible_vulnerabilities if get_status(v) == 'false_positive')
 
             # Determine network (default to ethereum if not specified)
             network = flow_config.get('network', 'ethereum')
@@ -966,9 +1044,9 @@ class EnhancedAetherAuditEngine:
                 else:
                     print("⚠️ Failed to save audit result to database")
 
-            # Filter out false positives and deduplicate vulnerability findings
+            # Filter out false positives and deduplicate vulnerability findings (from eligible set)
             validated_vulnerabilities = []
-            for vuln in vulnerabilities:
+            for vuln in eligible_vulnerabilities:
                 # Skip false positives
                 vuln_status = getattr(vuln, 'status', 'confirmed') if hasattr(vuln, 'vulnerability_type') else vuln.get('status', 'confirmed')
                 if vuln_status == 'false_positive':
