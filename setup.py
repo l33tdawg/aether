@@ -150,13 +150,22 @@ class AetherSetup:
                 config_manager = ConfigManager()
                 self.existing_config = config_manager.config
                 
+                # Debug output
+                print(f"DEBUG: Loaded existing config from {self.config_file}")
+                print(f"DEBUG: Config has OpenAI key: {bool(getattr(self.existing_config, 'openai_api_key', ''))}")
+                print(f"DEBUG: Config has Gemini key: {bool(getattr(self.existing_config, 'gemini_api_key', ''))}")
+                
                 # Mark what's already configured
                 if getattr(self.existing_config, 'openai_api_key', ''):
                     self.setup_status['api_keys'] = True
                 if self.config_file.exists():
                     self.setup_status['config'] = True
+            else:
+                print(f"DEBUG: Config file does not exist: {self.config_file}")
+                self.existing_config = None
         except Exception as e:
             # If config is corrupted, we'll reconfigure
+            print(f"DEBUG: Error loading config: {e}")
             self.existing_config = None
     
     def _show_existing_config(self):
@@ -209,16 +218,22 @@ class AetherSetup:
     
     def run(self):
         """Run the complete setup process."""
+        print(f"DEBUG: existing_config = {self.existing_config is not None}")
+        print(f"DEBUG: reconfigure_all = {self.reconfigure_all}")
+        
         self.print_welcome()
         
         # Show existing configuration if available
         if self.existing_config and not self.reconfigure_all:
+            print("DEBUG: Showing existing config...")
             self._show_existing_config()
             
             if self.interactive:
                 if not Confirm.ask("\nProceed with setup?", default=True):
                     self.console.print("[yellow]Setup cancelled.[/yellow]")
                     return True
+        else:
+            print(f"DEBUG: Skipping existing config display (existing={self.existing_config is not None}, reconfigure_all={self.reconfigure_all})")
         
         # Step 1: Check Python version
         if not self.check_python_version():
