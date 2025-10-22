@@ -39,10 +39,10 @@ class ConsensusResult:
     individual_results: List[ModelResult]
 
 def _get_analysis_model() -> str:
-    """Get the analysis model from config, with fallback."""
+    """Get the analysis model from config (supports mixed OpenAI/Gemini)."""
     try:
-        config = ConfigManager()
-        return getattr(config.config, 'openai_analysis_model', 'gpt-5-mini')
+        from core.config_manager import get_model_for_task
+        return get_model_for_task('analysis')
     except Exception:
         return 'gpt-5-mini'  # Fallback
 

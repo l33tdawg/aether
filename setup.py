@@ -593,83 +593,37 @@ Let's get started!
                     return True
         
         # Model Selection
-        if self.api_keys.get('OPENAI_API_KEY'):
-            self.console.print("\n[bold]Model Selection[/bold] (for OpenAI LLM analysis)")
+        has_openai = self.api_keys.get('OPENAI_API_KEY')
+        has_gemini = self.api_keys.get('GEMINI_API_KEY')
+        
+        if has_openai or has_gemini:
+            self.console.print("\n[bold]Model Selection[/bold] (Choose provider and model per task)")
+            self.console.print("\n[cyan]You can mix providers:[/cyan]")
+            self.console.print("  Example: Use Gemini for validation (2M context) + OpenAI for generation")
             
-            # Fetch available models from API
-            with self.console.status("[bold green]Fetching available models from OpenAI..."):
-                available_models = fetch_available_models(self.api_keys['OPENAI_API_KEY'])
+        # Fetch available models
+        available_openai = None
+        available_gemini = None
+        
+        if has_openai:
+            with self.console.status("[bold green]Fetching available OpenAI models..."):
+                available_openai = fetch_available_models(self.api_keys['OPENAI_API_KEY'])
             
             # Display available models
-            if available_models['gpt5_models']:
+            if available_openai['gpt5_models']:
                 self.console.print("\n[bold cyan]Available GPT-5 Models:[/bold cyan] (400K context, superior retrieval)")
-                for model in available_models['gpt5_models'][:5]:  # Show top 5
+                for model in available_openai['gpt5_models'][:5]:  # Show top 5
                     self.console.print(f"  • {model}")
             
-            if available_models['gpt4_models']:
+            if available_openai['gpt4_models']:
                 self.console.print("\n[bold cyan]Available GPT-4 Models:[/bold cyan] (128K context)")
-                for model in available_models['gpt4_models'][:5]:  # Show top 5
+                for model in available_openai['gpt4_models'][:5]:  # Show top 5
                     self.console.print(f"  • {model}")
-            
-            if self.interactive:
-                # Determine default choices (prefer GPT-5 if available)
-                default_validation = available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0]
-                default_analysis = default_validation
-                default_generation = next((m for m in available_models['gpt5_models'] if 'mini' in m), 
-                                         available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0])
-                
-                # Create choice lists (prioritize GPT-5, then GPT-4)
-                choice_list = available_models['gpt5_models'][:10] + available_models['gpt4_models'][:5]
-                if not choice_list:
-                    choice_list = available_models['all_models'][:10]
-                
-                # Validation model (most critical - needs highest accuracy)
-                self.console.print("\n[bold]Validation Model[/bold] (for false positive filtering - critical accuracy)")
-                validation_model = Prompt.ask(
-                    "  Select model",
-                    choices=choice_list,
-                    default=default_validation
-                )
-                self.api_keys['VALIDATION_MODEL'] = validation_model
-                
-                # Analysis model (vulnerability detection)
-                self.console.print("\n[bold]Analysis Model[/bold] (for vulnerability detection - balanced quality)")
-                analysis_model = Prompt.ask(
-                    "  Select model",
-                    choices=choice_list,
-                    default=default_analysis
-                )
-                self.api_keys['ANALYSIS_MODEL'] = analysis_model
-                
-                # Generation model (PoC/test generation - can be faster/cheaper)
-                self.console.print("\n[bold]Generation Model[/bold] (for PoC/test generation - can use faster model)")
-                generation_model = Prompt.ask(
-                    "  Select model",
-                    choices=choice_list,
-                    default=default_generation
-                )
-                self.api_keys['GENERATION_MODEL'] = generation_model
-                
-                self.console.print(f"\n  ✓ Model configuration:")
-                self.console.print(f"    Validation: {validation_model}")
-                self.console.print(f"    Analysis:   {analysis_model}")
-                self.console.print(f"    Generation: {generation_model}")
-            else:
-                # Non-interactive defaults (use first available from each category)
-                self.api_keys['VALIDATION_MODEL'] = available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0]
-                self.api_keys['ANALYSIS_MODEL'] = available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0]
-                self.api_keys['GENERATION_MODEL'] = next((m for m in available_models['gpt5_models'] if 'mini' in m), 
-                                                          available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0])
         
-        # Gemini Model Selection
-        if self.api_keys.get('GEMINI_API_KEY'):
-            self.console.print("\n[bold]Gemini Model Selection[/bold] (alternative LLM provider)")
-            
-            # Fetch available Gemini models from API
+        if has_gemini:
             with self.console.status("[bold green]Fetching available Gemini models..."):
                 available_gemini = fetch_available_gemini_models(self.api_keys['GEMINI_API_KEY'])
             
-            # Display available Gemini models
             if available_gemini['gemini_2_5_models']:
                 self.console.print("\n[bold cyan]Available Gemini 2.5 Models:[/bold cyan] (2M context, thinking mode)")
                 for model in available_gemini['gemini_2_5_models']:
@@ -681,54 +635,96 @@ Let's get started!
                     self.console.print(f"  • {model}")
             
             if self.interactive:
-                # Determine default choices (prefer Gemini 2.5)
-                default_validation = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
-                default_analysis = default_validation
-                default_generation = next((m for m in available_gemini['gemini_2_5_models'] if 'flash' in m), 
-                                         available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0])
+                # Configure each task type with provider + model selection
+                for task_name, task_desc in [
+                    ('validation', 'false positive filtering - critical accuracy'),
+                    ('analysis', 'vulnerability detection - balanced quality'),
+                    ('generation', 'PoC/test generation - can use faster model')
+                ]:
+                    self.console.print(f"\n[bold]{task_name.title()} Task[/bold] (for {task_desc})")
+                    
+                    # Choose provider if both are available
+                    if has_openai and has_gemini:
+                        provider_choices = []
+                        provider_display = {}
+                        
+                        if has_openai:
+                            provider_choices.append("openai")
+                            provider_display["openai"] = "OpenAI (GPT-5: 400K context, superior retrieval)"
+                        if has_gemini:
+                            provider_choices.append("gemini")
+                            provider_display["gemini"] = "Gemini (2.5: 2M context, thinking mode)"
+                        
+                        self.console.print(f"  [cyan]Available providers:[/cyan]")
+                        for prov in provider_choices:
+                            self.console.print(f"    • {prov}: {provider_display[prov]}")
+                        
+                        provider = Prompt.ask(
+                            "  Select provider",
+                            choices=provider_choices,
+                            default="openai" if task_name != "validation" else "gemini"  # Recommend Gemini for validation (2M context!)
+                        )
+                        
+                        self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
+                    elif has_openai:
+                        provider = "openai"
+                        self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
+                    elif has_gemini:
+                        provider = "gemini"
+                        self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
+                    else:
+                        continue
+                    
+                    # Select model from chosen provider
+                    if provider == "openai" and available_openai:
+                        choice_list = available_openai['gpt5_models'][:10] + available_openai['gpt4_models'][:5]
+                        default_model = available_openai['gpt5_models'][0] if available_openai['gpt5_models'] else available_openai['all_models'][0]
+                        if task_name == 'generation' and available_openai['gpt5_models']:
+                            # Prefer mini for generation
+                            default_model = next((m for m in available_openai['gpt5_models'] if 'mini' in m), default_model)
+                    else:  # gemini
+                        choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
+                        default_model = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
+                    
+                    model = Prompt.ask(
+                        f"  Select {provider} model",
+                        choices=choice_list,
+                        default=default_model
+                    )
+                    
+                    # Store both provider and model
+                    if provider == "openai":
+                        self.api_keys[f'{task_name.upper()}_MODEL'] = model
+                    else:
+                        self.api_keys[f'GEMINI_{task_name.upper()}_MODEL'] = model
                 
-                # Create choice list
-                choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
-                if not choice_list:
-                    choice_list = available_gemini['all_models']
-                
-                # Validation model
-                self.console.print("\n[bold]Gemini Validation Model[/bold] (for false positive filtering)")
-                gemini_validation_model = Prompt.ask(
-                    "  Select model",
-                    choices=choice_list,
-                    default=default_validation
-                )
-                self.api_keys['GEMINI_VALIDATION_MODEL'] = gemini_validation_model
-                
-                # Analysis model
-                self.console.print("\n[bold]Gemini Analysis Model[/bold] (for vulnerability detection)")
-                gemini_analysis_model = Prompt.ask(
-                    "  Select model",
-                    choices=choice_list,
-                    default=default_analysis
-                )
-                self.api_keys['GEMINI_ANALYSIS_MODEL'] = gemini_analysis_model
-                
-                # Generation model
-                self.console.print("\n[bold]Gemini Generation Model[/bold] (for PoC/test generation)")
-                gemini_generation_model = Prompt.ask(
-                    "  Select model",
-                    choices=choice_list,
-                    default=default_generation
-                )
-                self.api_keys['GEMINI_GENERATION_MODEL'] = gemini_generation_model
-                
-                self.console.print(f"\n  ✓ Gemini model configuration:")
-                self.console.print(f"    Validation: {gemini_validation_model}")
-                self.console.print(f"    Analysis:   {gemini_analysis_model}")
-                self.console.print(f"    Generation: {gemini_generation_model}")
+                # Show summary
+                self.console.print(f"\n  ✓ Model configuration:")
+                for task in ['validation', 'analysis', 'generation']:
+                    provider = self.api_keys.get(f'{task.upper()}_PROVIDER', 'openai')
+                    if provider == 'openai':
+                        model = self.api_keys.get(f'{task.upper()}_MODEL', 'N/A')
+                    else:
+                        model = self.api_keys.get(f'GEMINI_{task.upper()}_MODEL', 'N/A')
+                    self.console.print(f"    {task.title()}: {provider}/{model}")
             else:
                 # Non-interactive defaults
-                self.api_keys['GEMINI_VALIDATION_MODEL'] = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
-                self.api_keys['GEMINI_ANALYSIS_MODEL'] = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
-                self.api_keys['GEMINI_GENERATION_MODEL'] = next((m for m in available_gemini['gemini_2_5_models'] if 'flash' in m), 
-                                                                available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0])
+                if has_openai and available_openai:
+                    self.api_keys['VALIDATION_PROVIDER'] = 'openai'
+                    self.api_keys['ANALYSIS_PROVIDER'] = 'openai'
+                    self.api_keys['GENERATION_PROVIDER'] = 'openai'
+                    self.api_keys['VALIDATION_MODEL'] = available_openai['gpt5_models'][0] if available_openai['gpt5_models'] else available_openai['all_models'][0]
+                    self.api_keys['ANALYSIS_MODEL'] = available_openai['gpt5_models'][0] if available_openai['gpt5_models'] else available_openai['all_models'][0]
+                    self.api_keys['GENERATION_MODEL'] = next((m for m in available_openai['gpt5_models'] if 'mini' in m), 
+                                                              available_openai['gpt5_models'][0] if available_openai['gpt5_models'] else available_openai['all_models'][0])
+                elif has_gemini and available_gemini:
+                    self.api_keys['VALIDATION_PROVIDER'] = 'gemini'
+                    self.api_keys['ANALYSIS_PROVIDER'] = 'gemini'
+                    self.api_keys['GENERATION_PROVIDER'] = 'gemini'
+                    self.api_keys['GEMINI_VALIDATION_MODEL'] = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
+                    self.api_keys['GEMINI_ANALYSIS_MODEL'] = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
+                    self.api_keys['GEMINI_GENERATION_MODEL'] = next((m for m in available_gemini['gemini_2_5_models'] if 'flash' in m), 
+                                                                    available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0])
         
         # Summary
         if self.api_keys:
@@ -766,6 +762,13 @@ Let's get started!
                     config_manager.config.gemini_api_key = value
                 elif key == 'ETHERSCAN_API_KEY':
                     config_manager.config.etherscan_api_key = value
+                # Provider selections
+                elif key == 'VALIDATION_PROVIDER':
+                    config_manager.config.validation_provider = value
+                elif key == 'ANALYSIS_PROVIDER':
+                    config_manager.config.analysis_provider = value
+                elif key == 'GENERATION_PROVIDER':
+                    config_manager.config.generation_provider = value
                 # OpenAI model selections
                 elif key == 'VALIDATION_MODEL':
                     config_manager.config.openai_validation_model = value

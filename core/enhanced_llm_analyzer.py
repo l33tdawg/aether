@@ -42,15 +42,14 @@ class EnhancedLLMAnalyzer:
         
         self.has_api_key = bool(self.api_key) or bool(self.gemini_api_key)
         
-        # Get model from config if not specified
+        # Get model from config if not specified (supports mixed OpenAI/Gemini)
         if model:
             self.model = model
         else:
             try:
-                from core.config_manager import ConfigManager
-                cm = ConfigManager()
+                from core.config_manager import get_model_for_task
                 # Default to analysis model (for vulnerability detection)
-                self.model = getattr(cm.config, 'openai_analysis_model', 'gpt-5-chat-latest')
+                self.model = get_model_for_task('analysis')
             except Exception:
                 self.model = 'gpt-5-chat-latest'  # Fallback
         

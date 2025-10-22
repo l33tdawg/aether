@@ -59,6 +59,12 @@ class AetherConfig:
     openai_api_key: str = ""
     gemini_api_key: str = ""
     
+    # Model Provider Selection (per task type)
+    # Choose which provider to use for each task: "openai" or "gemini"
+    validation_provider: str = "openai"   # Provider for validation (false positive filtering)
+    analysis_provider: str = "openai"     # Provider for vulnerability analysis
+    generation_provider: str = "openai"   # Provider for PoC/test generation
+    
     # OpenAI Model selection - Different models for different purposes
     # Validation model (for false positive filtering) - needs highest accuracy
     openai_validation_model: str = "gpt-5-chat-latest"
@@ -106,6 +112,39 @@ class AetherConfig:
                 'pattern': ToolConfig('pattern', True, 60),
                 'llm': ToolConfig('llm', True, 120)
             }
+
+
+def get_model_for_task(task_type: str) -> str:
+    """Get the configured model for a specific task type.
+    
+    Args:
+        task_type: One of 'validation', 'analysis', or 'generation'
+    
+    Returns:
+        The model name to use (e.g., 'gpt-5-chat-latest' or 'gemini-2.5-flash')
+    """
+    try:
+        config_manager = ConfigManager()
+        
+        # Get the provider for this task
+        provider_attr = f"{task_type}_provider"
+        provider = getattr(config_manager.config, provider_attr, "openai")
+        
+        # Get the model from the appropriate provider
+        model_attr = f"{provider}_{task_type}_model"
+        model = getattr(config_manager.config, model_attr, None)
+        
+        # Fallback logic
+        if not model:
+            if provider == "gemini":
+                model = "gemini-2.5-flash"
+            else:
+                model = "gpt-5-chat-latest" if task_type == "validation" or task_type == "analysis" else "gpt-5-mini"
+        
+        return model
+    except Exception:
+        # Ultimate fallback
+        return "gpt-5-chat-latest" if task_type == "validation" or task_type == "analysis" else "gpt-5-mini"
 
 
 class ConfigManager:

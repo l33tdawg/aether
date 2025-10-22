@@ -136,9 +136,10 @@ class FoundryPoCGenerator:
         self.config = config or {}
         self.config_manager = ConfigManager()
         
-        # Get generation model from config (for PoC/test generation)
+        # Get generation model from config (supports mixed OpenAI/Gemini)
         try:
-            generation_model = getattr(self.config_manager.config, 'openai_generation_model', 'gpt-5-mini')
+            from core.config_manager import get_model_for_task
+            generation_model = get_model_for_task('generation')
         except Exception:
             generation_model = 'gpt-5-mini'  # Fallback
         
