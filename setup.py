@@ -211,10 +211,89 @@ class AetherSetup:
             table.add_row("Gemini Generation Model", "✓ Set", getattr(self.existing_config, 'gemini_generation_model', 'gemini-2.5-flash'))
         
         self.console.print(table)
-        self.console.print("\n[yellow]Tip:[/yellow] Use flags to reconfigure specific parts:")
-        self.console.print("  --reconfigure-all     Reconfigure everything")
-        self.console.print("  --reconfigure-keys    Reconfigure API keys only")
-        self.console.print("  --reconfigure-models  Reconfigure model selections only")
+    
+    def _show_reconfiguration_menu(self) -> bool:
+        """Show interactive menu for reconfiguration options."""
+        while True:
+            self.console.print("\n[bold]What would you like to do?[/bold]")
+            self.console.print("  [cyan]1[/cyan] - Reconfigure API Keys")
+            self.console.print("  [cyan]2[/cyan] - Reconfigure Model Selections")
+            self.console.print("  [cyan]3[/cyan] - Full Reconfiguration (everything)")
+            self.console.print("  [cyan]4[/cyan] - Verify Installation")
+            self.console.print("  [cyan]5[/cyan] - View Configuration Again")
+            self.console.print("  [cyan]0[/cyan] - Exit (configuration is already complete)")
+            
+            choice = Prompt.ask(
+                "\nSelect option",
+                choices=["0", "1", "2", "3", "4", "5"],
+                default="0"
+            )
+            
+            if choice == "0":
+                self.console.print("\n[green]✓ Setup complete. Your configuration is ready![/green]")
+                return True
+            
+            elif choice == "1":
+                # Reconfigure API keys only
+                self.console.print("\n[bold]Reconfiguring API Keys...[/bold]")
+                self.reconfigure_keys = True
+                if not self.configure_api_keys():
+                    return False
+                if not self.create_configuration():
+                    return False
+                self.console.print("[green]✓ API keys updated successfully![/green]")
+                
+                # Reload config to show updated values
+                self._load_existing_config()
+                self._show_existing_config()
+            
+            elif choice == "2":
+                # Reconfigure model selections only
+                self.console.print("\n[bold]Reconfiguring Model Selections...[/bold]")
+                self.reconfigure_models = True
+                
+                # Need to load existing keys first
+                if not self.api_keys:
+                    existing_openai = getattr(self.existing_config, 'openai_api_key', '')
+                    existing_gemini = getattr(self.existing_config, 'gemini_api_key', '')
+                    if existing_openai:
+                        self.api_keys['OPENAI_API_KEY'] = existing_openai
+                    if existing_gemini:
+                        self.api_keys['GEMINI_API_KEY'] = existing_gemini
+                
+                if not self._configure_model_selection():
+                    return False
+                if not self.create_configuration():
+                    return False
+                self.console.print("[green]✓ Model selections updated successfully![/green]")
+                
+                # Reload config to show updated values
+                self._load_existing_config()
+                self._show_existing_config()
+            
+            elif choice == "3":
+                # Full reconfiguration
+                self.console.print("\n[bold yellow]Full Reconfiguration[/bold yellow]")
+                if Confirm.ask("This will reconfigure everything. Continue?", default=False):
+                    self.reconfigure_all = True
+                    # Start fresh setup process
+                    return self.run()
+                else:
+                    self.console.print("[yellow]Cancelled full reconfiguration.[/yellow]")
+            
+            elif choice == "4":
+                # Verify installation
+                self.console.print("\n[bold]Verifying Installation...[/bold]")
+                if self.verify_installation():
+                    self.console.print("[green]✓ All checks passed![/green]")
+                else:
+                    self.console.print("[yellow]Some verification checks failed. See above.[/yellow]")
+            
+            elif choice == "5":
+                # View configuration again
+                self._show_existing_config()
+            
+            # Loop back to menu
     
     def run(self):
         """Run the complete setup process."""
@@ -228,25 +307,20 @@ class AetherSetup:
             # Fresh install - show full welcome and proceed
             self.print_welcome()
         else:
-            # Existing config - show what's configured and ask if user wants to proceed
-            self.console.print("\n[bold cyan]Aether Setup[/bold cyan]")
+            # Existing config - show menu-driven reconfiguration options
+            self.console.print("\n[bold cyan]Aether Setup - Configuration Manager[/bold cyan]")
             self.console.print("Configuration already exists. Checking current settings...\n")
             
             print("DEBUG: Showing existing config...")
             self._show_existing_config()
             
             if self.interactive:
-                self.console.print("\n[bold]Options:[/bold]")
-                self.console.print("  [green]y[/green] - Continue setup (will ask before changing each section)")
-                self.console.print("  [yellow]n[/yellow] - Exit setup")
-                
-                if not Confirm.ask("\nProceed with setup?", default=False):
-                    self.console.print("[green]✓ Configuration is already set up![/green]")
-                    self.console.print("\n[yellow]Tip:[/yellow] To reconfigure:")
-                    self.console.print("  python setup.py --reconfigure-keys    # Update API keys")
-                    self.console.print("  python setup.py --reconfigure-models  # Update model selections")
-                    self.console.print("  python setup.py --reconfigure-all     # Full reconfiguration")
-                    return True
+                # Show menu
+                return self._show_reconfiguration_menu()
+            else:
+                # Non-interactive with existing config - just exit
+                self.console.print("[green]✓ Configuration already exists[/green]")
+                return True
         
         # Step 1: Check Python version
         if not self.check_python_version():
