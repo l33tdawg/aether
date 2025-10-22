@@ -270,14 +270,11 @@ Focus on DeFi-specific issues and real-world exploit scenarios.
     def _parse_defi_findings(self, response: str) -> List[Dict[str, Any]]:
         """Parse DeFi-specific findings from LLM response"""
         try:
-            # Try to extract JSON array
-            import re
-            json_match = re.search(r'\[[\s\S]*\]', response)
-            if json_match:
-                findings = json.loads(json_match.group())
-                if isinstance(findings, list):
-                    return findings
-
+            # Use the robust parse_llm_json utility instead of naive regex
+            data = parse_llm_json(response, fallback={"findings": []})
+            findings = data.get('findings', [])
+            if isinstance(findings, list):
+                return findings
             return []
         except Exception as e:
             logger.error(f"Failed to parse DeFi findings: {e}")
@@ -420,13 +417,13 @@ Focus on high-impact optimizations that provide significant gas savings.
     def _parse_gas_findings(self, response: str) -> List[Dict[str, Any]]:
         """Parse gas optimization findings from LLM response"""
         try:
-            import re
-            json_match = re.search(r'\[[\s\S]*\]', response)
-            if json_match:
-                findings = json.loads(json_match.group())
-                if isinstance(findings, list):
-                    return findings
-
+            # Use the robust parse_llm_json utility instead of naive regex
+            data = parse_llm_json(response, fallback=[])
+            if isinstance(data, list):
+                return data
+            findings = data.get('findings', []) if isinstance(data, dict) else []
+            if isinstance(findings, list):
+                return findings
             return []
         except Exception as e:
             logger.error(f"Failed to parse gas findings: {e}")
@@ -556,13 +553,13 @@ Focus on actionable improvements that enhance security and maintainability.
     def _parse_best_practices_findings(self, response: str) -> List[Dict[str, Any]]:
         """Parse best practices findings from LLM response"""
         try:
-            import re
-            json_match = re.search(r'\[[\s\S]*\]', response)
-            if json_match:
-                findings = json.loads(json_match.group())
-                if isinstance(findings, list):
-                    return findings
-
+            # Use the robust parse_llm_json utility instead of naive regex
+            data = parse_llm_json(response, fallback=[])
+            if isinstance(data, list):
+                return data
+            findings = data.get('findings', []) if isinstance(data, dict) else []
+            if isinstance(findings, list):
+                return findings
             return []
         except Exception as e:
             logger.error(f"Failed to parse best practices findings: {e}")

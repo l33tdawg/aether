@@ -228,6 +228,65 @@ class DatabaseManager:
             self.console.print(f"[red]❌ Failed to save audit result: {e}[/red]")
             return False
 
+    def save_audit_metrics(self, metrics: AuditMetrics) -> bool:
+        """Save audit metrics to database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO audit_metrics
+                    (id, audit_result_id, total_findings, confirmed_findings,
+                     false_positives, accuracy_score, precision_score, recall_score,
+                     f1_score, execution_time, llm_calls, cache_hits, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    metrics.id,
+                    metrics.audit_result_id,
+                    metrics.total_findings,
+                    metrics.confirmed_findings,
+                    metrics.false_positives,
+                    metrics.accuracy_score,
+                    metrics.precision_score,
+                    metrics.recall_score,
+                    metrics.f1_score,
+                    metrics.execution_time,
+                    metrics.llm_calls,
+                    metrics.cache_hits,
+                    metrics.created_at
+                ))
+            return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save audit metrics: {e}[/red]")
+            return False
+
+    def store_audit_metrics(self, metrics: AuditMetrics) -> None:
+        """Store audit metrics in the database (alias for save_audit_metrics for compatibility)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO audit_metrics
+                    (id, audit_result_id, total_findings, confirmed_findings, false_positives,
+                     accuracy_score, precision_score, recall_score, f1_score, execution_time,
+                     llm_calls, cache_hits, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    metrics.id,
+                    metrics.audit_result_id,
+                    metrics.total_findings,
+                    metrics.confirmed_findings,
+                    metrics.false_positives,
+                    metrics.accuracy_score,
+                    metrics.precision_score,
+                    metrics.recall_score,
+                    metrics.f1_score,
+                    metrics.execution_time,
+                    metrics.llm_calls,
+                    metrics.cache_hits,
+                    metrics.created_at
+                ))
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to store audit metrics: {e}[/red]")
+            raise
+
 class AetherDatabase:
     """SQLite database for GitHub audit orchestration (projects/contracts/results/cache/errors/stats).
 
@@ -1267,118 +1326,6 @@ class AetherDatabase:
         except Exception as e:
             self.console.print(f"[red]❌ Failed to save audit metrics: {e}[/red]")
             return False
-
-    def vacuum_database(self) -> bool:
-        """Optimize database by rebuilding it."""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('VACUUM')
-            self.console.print("[green]✅ Database vacuumed successfully[/green]")
-            return True
-        except Exception as e:
-            self.console.print(f"[red]❌ Failed to vacuum database: {e}[/red]")
-            return False
-
-    def export_data(self, format: str = 'json') -> str:
-        """Export all data for backup or migration."""
-        try:
-            if format.lower() == 'json':
-                return self._export_to_json()
-            else:
-                raise ValueError(f"Unsupported export format: {format}")
-        except Exception as e:
-            self.console.print(f"[red]❌ Failed to export data: {e}[/red]")
-            return ""
-
-    def _export_to_json(self) -> str:
-        """Export database to JSON format."""
-        data = {
-            'audit_results': [],
-            'vulnerability_findings': [],
-            'learning_patterns': [],
-            'audit_metrics': [],
-            'exported_at': time.time()
-        }
-
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-
-                # Export audit results
-                for row in conn.execute('SELECT * FROM audit_results'):
-                    data['audit_results'].append(dict(row))
-
-                # Export vulnerability findings
-                for row in conn.execute('SELECT * FROM vulnerability_findings'):
-                    data['vulnerability_findings'].append(dict(row))
-
-                # Export learning patterns
-                for row in conn.execute('SELECT * FROM learning_patterns'):
-                    data['learning_patterns'].append(dict(row))
-
-                # Export audit metrics
-                for row in conn.execute('SELECT * FROM audit_metrics'):
-                    data['audit_metrics'].append(dict(row))
-
-            return json.dumps(data, indent=2)
-        except Exception as e:
-            self.console.print(f"[red]❌ Failed to export to JSON: {e}[/red]")
-            return ""
-
-    def get_database_info(self) -> Dict[str, Any]:
-        """Get database information and statistics."""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                # Database size
-                db_size = self.db_path.stat().st_size
-
-                # Table row counts
-                table_counts = {}
-                for table in ['audit_results', 'vulnerability_findings', 'learning_patterns', 'audit_metrics']:
-                    count = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-                    table_counts[table] = count
-
-                # Database version
-                version = conn.execute('SELECT sqlite_version()').fetchone()[0]
-
-                return {
-                    'database_path': str(self.db_path),
-                    'database_size_bytes': db_size,
-                    'table_counts': table_counts,
-                    'sqlite_version': version,
-                    'created_at': self.db_path.stat().st_mtime
-                }
-        except Exception as e:
-            self.console.print(f"[red]❌ Failed to get database info: {e}[/red]")
-            return {}
-
-    def store_learning_pattern(self, pattern: LearningPattern) -> None:
-        """Store a learning pattern in the database."""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT OR REPLACE INTO learning_patterns
-                    (id, pattern_type, contract_pattern, vulnerability_type, original_classification,
-                     corrected_classification, confidence_threshold, reasoning, source_audit_id,
-                     created_at, usage_count, success_rate)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    pattern.id,
-                    pattern.pattern_type,
-                    pattern.contract_pattern,
-                    pattern.vulnerability_type,
-                    pattern.original_classification,
-                    pattern.corrected_classification,
-                    pattern.confidence_threshold,
-                    pattern.reasoning,
-                    pattern.source_audit_id,
-                    pattern.created_at,
-                    pattern.usage_count,
-                    pattern.success_rate
-                ))
-        except Exception as e:
-            self.console.print(f"[red]❌ Failed to store learning pattern: {e}[/red]")
-            raise
 
     def store_audit_metrics(self, metrics: AuditMetrics) -> None:
         """Store audit metrics in the database."""
