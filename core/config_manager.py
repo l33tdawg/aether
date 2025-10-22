@@ -59,7 +59,7 @@ class AetherConfig:
     openai_api_key: str = ""
     gemini_api_key: str = ""
     
-    # Model selection - Different models for different purposes
+    # OpenAI Model selection - Different models for different purposes
     # Validation model (for false positive filtering) - needs highest accuracy
     openai_validation_model: str = "gpt-5-chat-latest"
     # Analysis model (for vulnerability detection) - balanced quality
@@ -68,6 +68,14 @@ class AetherConfig:
     openai_generation_model: str = "gpt-5-mini"
     # Deprecated: kept for backwards compatibility
     openai_model: str = "gpt-5-chat-latest"
+    
+    # Gemini Model selection (alternative to OpenAI)
+    # Validation model - Gemini 2.5 Flash has thinking mode and 2M context
+    gemini_validation_model: str = "gemini-2.5-flash"
+    # Analysis model - can use Pro for best quality or Flash for speed
+    gemini_analysis_model: str = "gemini-2.5-flash"
+    # Generation model - Flash is fast and cost-effective
+    gemini_generation_model: str = "gemini-2.5-flash"
     
     max_tokens: int = 4000
     

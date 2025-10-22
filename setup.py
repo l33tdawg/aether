@@ -62,6 +62,55 @@ def fetch_available_models(api_key: str) -> Dict[str, List[str]]:
             'all_models': ['gpt-5-chat-latest', 'gpt-5-pro', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo']
         }
 
+def fetch_available_gemini_models(api_key: str) -> Dict[str, List[str]]:
+    """Fetch available Gemini models.
+    
+    Note: Gemini API doesn't have a models.list() endpoint like OpenAI,
+    so we query available models via API call or use known models.
+    
+    Returns a dict with categorized models:
+    - gemini_2_5_models: List of Gemini 2.5 models
+    - gemini_1_5_models: List of Gemini 1.5 models
+    - all_models: All available Gemini models
+    """
+    try:
+        import requests
+        
+        # Try to list models via Gemini API
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            models = data.get('models', [])
+            
+            # Extract model names that support generateContent
+            model_names = []
+            for model in models:
+                name = model.get('name', '').replace('models/', '')
+                # Only include models that support generateContent
+                if 'generateContent' in model.get('supportedGenerationMethods', []):
+                    model_names.append(name)
+            
+            # Categorize models
+            gemini_2_5_models = sorted([m for m in model_names if m.startswith('gemini-2.5')], reverse=True)
+            gemini_1_5_models = sorted([m for m in model_names if m.startswith('gemini-1.5')], reverse=True)
+            
+            return {
+                'gemini_2_5_models': gemini_2_5_models,
+                'gemini_1_5_models': gemini_1_5_models,
+                'all_models': sorted(model_names, reverse=True)
+            }
+    except Exception as e:
+        print(f"⚠️  Could not fetch Gemini models from API: {e}")
+    
+    # Fallback to known models
+    return {
+        'gemini_2_5_models': ['gemini-2.5-flash', 'gemini-2.5-pro'],
+        'gemini_1_5_models': ['gemini-1.5-flash', 'gemini-1.5-pro'],
+        'all_models': ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']
+    }
+
 
 class AetherSetup:
     """Main setup class for Aether installation and configuration."""
@@ -475,6 +524,75 @@ Let's get started!
                 self.api_keys['GENERATION_MODEL'] = next((m for m in available_models['gpt5_models'] if 'mini' in m), 
                                                           available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0])
         
+        # Gemini Model Selection
+        if self.api_keys.get('GEMINI_API_KEY'):
+            self.console.print("\n[bold]Gemini Model Selection[/bold] (alternative LLM provider)")
+            
+            # Fetch available Gemini models from API
+            with self.console.status("[bold green]Fetching available Gemini models..."):
+                available_gemini = fetch_available_gemini_models(self.api_keys['GEMINI_API_KEY'])
+            
+            # Display available Gemini models
+            if available_gemini['gemini_2_5_models']:
+                self.console.print("\n[bold cyan]Available Gemini 2.5 Models:[/bold cyan] (2M context, thinking mode)")
+                for model in available_gemini['gemini_2_5_models']:
+                    self.console.print(f"  • {model}")
+            
+            if available_gemini['gemini_1_5_models']:
+                self.console.print("\n[bold cyan]Available Gemini 1.5 Models:[/bold cyan] (1M context)")
+                for model in available_gemini['gemini_1_5_models']:
+                    self.console.print(f"  • {model}")
+            
+            if self.interactive:
+                # Determine default choices (prefer Gemini 2.5)
+                default_validation = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
+                default_analysis = default_validation
+                default_generation = next((m for m in available_gemini['gemini_2_5_models'] if 'flash' in m), 
+                                         available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0])
+                
+                # Create choice list
+                choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
+                if not choice_list:
+                    choice_list = available_gemini['all_models']
+                
+                # Validation model
+                self.console.print("\n[bold]Gemini Validation Model[/bold] (for false positive filtering)")
+                gemini_validation_model = Prompt.ask(
+                    "  Select model",
+                    choices=choice_list,
+                    default=default_validation
+                )
+                self.api_keys['GEMINI_VALIDATION_MODEL'] = gemini_validation_model
+                
+                # Analysis model
+                self.console.print("\n[bold]Gemini Analysis Model[/bold] (for vulnerability detection)")
+                gemini_analysis_model = Prompt.ask(
+                    "  Select model",
+                    choices=choice_list,
+                    default=default_analysis
+                )
+                self.api_keys['GEMINI_ANALYSIS_MODEL'] = gemini_analysis_model
+                
+                # Generation model
+                self.console.print("\n[bold]Gemini Generation Model[/bold] (for PoC/test generation)")
+                gemini_generation_model = Prompt.ask(
+                    "  Select model",
+                    choices=choice_list,
+                    default=default_generation
+                )
+                self.api_keys['GEMINI_GENERATION_MODEL'] = gemini_generation_model
+                
+                self.console.print(f"\n  ✓ Gemini model configuration:")
+                self.console.print(f"    Validation: {gemini_validation_model}")
+                self.console.print(f"    Analysis:   {gemini_analysis_model}")
+                self.console.print(f"    Generation: {gemini_generation_model}")
+            else:
+                # Non-interactive defaults
+                self.api_keys['GEMINI_VALIDATION_MODEL'] = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
+                self.api_keys['GEMINI_ANALYSIS_MODEL'] = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
+                self.api_keys['GEMINI_GENERATION_MODEL'] = next((m for m in available_gemini['gemini_2_5_models'] if 'flash' in m), 
+                                                                available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0])
+        
         # Summary
         if self.api_keys:
             self.console.print(f"\n  ✓ Configured {len([k for k in self.api_keys if 'KEY' in k])} API key(s)")
@@ -511,12 +629,20 @@ Let's get started!
                     config_manager.config.gemini_api_key = value
                 elif key == 'ETHERSCAN_API_KEY':
                     config_manager.config.etherscan_api_key = value
+                # OpenAI model selections
                 elif key == 'VALIDATION_MODEL':
                     config_manager.config.openai_validation_model = value
                 elif key == 'ANALYSIS_MODEL':
                     config_manager.config.openai_analysis_model = value
                 elif key == 'GENERATION_MODEL':
                     config_manager.config.openai_generation_model = value
+                # Gemini model selections
+                elif key == 'GEMINI_VALIDATION_MODEL':
+                    config_manager.config.gemini_validation_model = value
+                elif key == 'GEMINI_ANALYSIS_MODEL':
+                    config_manager.config.gemini_analysis_model = value
+                elif key == 'GEMINI_GENERATION_MODEL':
+                    config_manager.config.gemini_generation_model = value
             
             # Save configuration
             config_manager.save_config()
