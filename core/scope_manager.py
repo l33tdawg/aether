@@ -355,9 +355,12 @@ class ScopeManager:
         # Create a list of indices for contracts that are already selected (in all_contracts)
         already_selected_indices = [all_contracts.index(c) for c in all_contracts if c['file_path'] in current]
         
-        self.console.print(f"\n[bold]Currently selected: {len(current)} contracts[/bold]")
-        self.console.print(f"[bold]Available to add: {len(available_contracts)} contracts[/bold]\n")
-        self.console.print("[bold cyan]Launching interactive selector for additional contracts...[/bold cyan]\n")
+        # Display current scope status before showing selector
+        self._display_add_contracts_status(scope, all_contracts, already_selected_indices)
+        
+        self.console.print(f"\n[bold cyan]Available to add: {len(available_contracts)} contracts[/bold cyan]\n")
+        self.console.print("[bold cyan]Launching interactive selector for additional contracts...[/bold cyan]")
+        self.console.print("[italic yellow]Already selected contracts are shown in dim text (cannot toggle)[/italic yellow]\n")
         
         # Use interactive selector for ALL contracts, passing already selected indices as disabled
         selected_indices = self.interactive_select(all_contracts, already_selected_indices)
@@ -379,6 +382,55 @@ class ScopeManager:
         self.console.print(f"\n[green]✓ Added {len(new_paths)} contracts. Total: {len(updated_paths)}[/green]")
         return scope
     
+    def _display_add_contracts_status(self, scope: Dict[str, Any], all_contracts: List[Dict[str, Any]], already_selected_indices: List[int]) -> None:
+        """Display current scope status when adding contracts."""
+        current = scope['selected_contracts']
+        audited = scope['total_audited']
+        pending = scope['total_pending']
+        
+        self.console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
+        self.console.print("[bold cyan]📋 CURRENT SCOPE STATUS[/bold cyan]")
+        self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n")
+        
+        self.console.print(f"[bold]Total in scope: {len(current)} contracts[/bold]")
+        self.console.print(f"  ├─ ✓ Audited: {audited} contracts")
+        self.console.print(f"  └─ ⏳ Pending: {pending} contracts\n")
+        
+        # Show which contracts are already in scope with their status
+        self.console.print("[bold]Contracts already in scope:[/bold]")
+        
+        audited_in_scope = []
+        pending_in_scope = []
+        
+        # Build list of audited vs pending contracts
+        for idx in already_selected_indices:
+            contract = all_contracts[idx]
+            file_path = contract.get('file_path', '')
+            contract_name = contract.get('contract_name', 'Unknown')
+            
+            # Check if this contract has been audited (approximate based on order)
+            # The first 'audited' contracts are marked as audited
+            if len(audited_in_scope) < audited:
+                audited_in_scope.append((file_path, contract_name))
+            else:
+                pending_in_scope.append((file_path, contract_name))
+        
+        # Display audited contracts
+        if audited_in_scope:
+            for path, name in audited_in_scope[:10]:
+                self.console.print(f"  ✓ {path} ({name})")
+            if len(audited_in_scope) > 10:
+                self.console.print(f"  ✓ ... and {len(audited_in_scope) - 10} more audited contracts")
+        
+        # Display pending contracts
+        if pending_in_scope:
+            for path, name in pending_in_scope[:10]:
+                self.console.print(f"  ⏳ {path} ({name})")
+            if len(pending_in_scope) > 10:
+                self.console.print(f"  ⏳ ... and {len(pending_in_scope) - 10} more pending contracts")
+        
+        self.console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
+    
     def handle_remove_contracts(self, scope: Dict[str, Any], all_contracts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Allow user to remove contracts from scope using interactive selector."""
         current = scope['selected_contracts']
@@ -394,10 +446,13 @@ class ScopeManager:
         # These will be disabled in the selector
         not_selected_indices = [all_contracts.index(c) for c in all_contracts if c['file_path'] not in current]
         
-        self.console.print(f"\n[bold]Currently selected: {len(current)} contracts[/bold]")
-        self.console.print(f"[bold]Available to remove: {len(selected_contracts)} contracts[/bold]\n")
+        # Display current scope status before showing selector
+        already_selected_indices = [all_contracts.index(c) for c in all_contracts if c['file_path'] in current]
+        self._display_remove_contracts_status(scope, all_contracts, already_selected_indices)
+        
+        self.console.print(f"\n[bold cyan]Available to remove: {len(selected_contracts)} contracts[/bold cyan]\n")
         self.console.print("[bold cyan]Launching interactive selector to remove contracts...[/bold cyan]")
-        self.console.print("[bold cyan](Check contracts = will be REMOVED | Uncheck to keep)[/bold cyan]\n")
+        self.console.print("[italic yellow]Check contracts = will be REMOVED | Uncheck to keep | Dimmed contracts are not in scope[/italic yellow]\n")
         
         # Use interactive selector for ALL contracts, with unselected indices disabled
         # Note: We do NOT pre-select the currently selected contracts - user must explicitly check to remove
@@ -419,6 +474,55 @@ class ScopeManager:
         
         self.console.print(f"\n[green]✓ Removed {len(remove_paths)} contracts. Total: {len(updated_paths)}[/green]")
         return scope
+    
+    def _display_remove_contracts_status(self, scope: Dict[str, Any], all_contracts: List[Dict[str, Any]], already_selected_indices: List[int]) -> None:
+        """Display current scope status when removing contracts."""
+        current = scope['selected_contracts']
+        audited = scope['total_audited']
+        pending = scope['total_pending']
+        
+        self.console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
+        self.console.print("[bold cyan]📋 CURRENT SCOPE STATUS[/bold cyan]")
+        self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n")
+        
+        self.console.print(f"[bold]Total in scope: {len(current)} contracts[/bold]")
+        self.console.print(f"  ├─ ✓ Audited: {audited} contracts")
+        self.console.print(f"  └─ ⏳ Pending: {pending} contracts\n")
+        
+        # Show which contracts are in scope with their status
+        self.console.print("[bold]Contracts in scope (available to remove):[/bold]")
+        
+        audited_in_scope = []
+        pending_in_scope = []
+        
+        # Build list of audited vs pending contracts
+        for idx in already_selected_indices:
+            contract = all_contracts[idx]
+            file_path = contract.get('file_path', '')
+            contract_name = contract.get('contract_name', 'Unknown')
+            
+            # Check if this contract has been audited (approximate based on order)
+            # The first 'audited' contracts are marked as audited
+            if len(audited_in_scope) < audited:
+                audited_in_scope.append((file_path, contract_name))
+            else:
+                pending_in_scope.append((file_path, contract_name))
+        
+        # Display audited contracts
+        if audited_in_scope:
+            for path, name in audited_in_scope[:10]:
+                self.console.print(f"  ✓ {path} ({name})")
+            if len(audited_in_scope) > 10:
+                self.console.print(f"  ✓ ... and {len(audited_in_scope) - 10} more audited contracts")
+        
+        # Display pending contracts
+        if pending_in_scope:
+            for path, name in pending_in_scope[:10]:
+                self.console.print(f"  ⏳ {path} ({name})")
+            if len(pending_in_scope) > 10:
+                self.console.print(f"  ⏳ ... and {len(pending_in_scope) - 10} more pending contracts")
+        
+        self.console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
     
     def handle_reaudit(self, scope: Dict[str, Any]) -> Dict[str, Any]:
         """Reset scope for fresh re-analysis."""
