@@ -121,7 +121,7 @@ class LLMFalsePositiveFilter:
         try:
             response = await self.llm_analyzer._call_llm(
                 validation_prompt,
-                model="gpt-5-latest"  # Use best model for accurate validation
+                model="gpt-5-chat-latest"  # Use best model for accurate validation
             )
             
             print(f"DEBUG: LLM Filter - Raw LLM response: {response[:200]}...")
