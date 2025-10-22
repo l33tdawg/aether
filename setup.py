@@ -16,7 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Prompt, Confirm, IntPrompt
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from utils.setup_helpers import (
@@ -27,6 +27,41 @@ from utils.setup_helpers import (
     check_directory_writable,
     test_import
 )
+
+def select_from_numbered_list(console: Console, items: List[str], prompt_text: str, default_index: int = 0) -> str:
+    """Display a numbered list and let user select by number.
+    
+    Args:
+        console: Rich console for output
+        items: List of items to choose from
+        prompt_text: Prompt text to display
+        default_index: Index of default selection
+    
+    Returns:
+        The selected item
+    """
+    # Display numbered list
+    for i, item in enumerate(items):
+        prefix = "→" if i == default_index else " "
+        console.print(f"  {prefix} [{i+1}] {item}")
+    
+    # Get selection
+    while True:
+        try:
+            selection = IntPrompt.ask(
+                f"\n{prompt_text}",
+                default=default_index + 1,
+                show_default=True
+            )
+            
+            if 1 <= selection <= len(items):
+                return items[selection - 1]
+            else:
+                console.print(f"[red]Please enter a number between 1 and {len(items)}[/red]")
+        except (ValueError, KeyboardInterrupt):
+            console.print(f"[yellow]Using default: {items[default_index]}[/yellow]")
+            return items[default_index]
+
 
 def fetch_available_models(api_key: str) -> Dict[str, List[str]]:
     """Fetch available models from OpenAI API.
@@ -748,23 +783,23 @@ Let's get started!
                     # Choose provider if both are available
                     if has_openai and has_gemini:
                         provider_choices = []
-                        provider_display = {}
+                        provider_display = []
                         
                         if has_openai:
                             provider_choices.append("openai")
-                            provider_display["openai"] = "OpenAI (GPT-5: 400K context, superior retrieval)"
+                            provider_display.append("OpenAI (GPT-5: 400K context, superior retrieval)")
                         if has_gemini:
                             provider_choices.append("gemini")
-                            provider_display["gemini"] = "Gemini (2.5: 2M context, thinking mode)"
+                            provider_display.append("Gemini (2.5: 2M context, thinking mode)")
                         
-                        self.console.print(f"  [cyan]Available providers:[/cyan]")
-                        for prov in provider_choices:
-                            self.console.print(f"    • {prov}: {provider_display[prov]}")
+                        self.console.print(f"\n  [cyan]Available providers for {task_name}:[/cyan]")
+                        default_idx = 1 if task_name == "validation" and "gemini" in provider_choices else 0
                         
-                        provider = Prompt.ask(
-                            "  Select provider",
-                            choices=provider_choices,
-                            default="openai" if task_name != "validation" else "gemini"  # Recommend Gemini for validation (2M context!)
+                        provider = select_from_numbered_list(
+                            self.console,
+                            provider_choices,
+                            "Select provider",
+                            default_index=default_idx
                         )
                         
                         self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
@@ -784,14 +819,18 @@ Let's get started!
                         if task_name == 'generation' and available_openai['gpt5_models']:
                             # Prefer mini for generation
                             default_model = next((m for m in available_openai['gpt5_models'] if 'mini' in m), default_model)
+                        default_idx = choice_list.index(default_model) if default_model in choice_list else 0
                     else:  # gemini
                         choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
                         default_model = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
+                        default_idx = choice_list.index(default_model) if default_model in choice_list else 0
                     
-                    model = Prompt.ask(
-                        f"  Select {provider} model",
-                        choices=choice_list,
-                        default=default_model
+                    self.console.print(f"\n  [cyan]Available {provider} models:[/cyan]")
+                    model = select_from_numbered_list(
+                        self.console,
+                        choice_list,
+                        f"Select {provider} model",
+                        default_index=default_idx
                     )
                     
                     # Store both provider and model
