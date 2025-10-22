@@ -57,8 +57,18 @@ class AetherConfig:
 
     # API settings (for LLM features)
     openai_api_key: str = ""
-    openai_model: str = "gpt-4"
     gemini_api_key: str = ""
+    
+    # Model selection - Different models for different purposes
+    # Validation model (for false positive filtering) - needs highest accuracy
+    openai_validation_model: str = "gpt-5-chat-latest"
+    # Analysis model (for vulnerability detection) - balanced quality
+    openai_analysis_model: str = "gpt-5-chat-latest"
+    # Generation model (for PoC/test generation) - can be faster/cheaper
+    openai_generation_model: str = "gpt-5-mini"
+    # Deprecated: kept for backwards compatibility
+    openai_model: str = "gpt-5-chat-latest"
+    
     max_tokens: int = 4000
     
     # Triage/LLM settings

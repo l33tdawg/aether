@@ -48,6 +48,16 @@ class EnhancedLLMAnalyzer:
         
         # Context limits for different models (Gemini has 2M token context)
         self.model_context_limits = {
+            # GPT-5 models (400K context)
+            "gpt-5-chat-latest": 400000,  # 400k tokens
+            "gpt-5-pro": 400000,          # 400k tokens
+            "gpt-5-pro-2025-10-06": 400000,  # 400k tokens
+            "gpt-5-mini": 400000,         # 400k tokens
+            "gpt-5-mini-2025-08-07": 400000,  # 400k tokens
+            "gpt-5-codex": 400000,        # 400k tokens
+            "gpt-5-nano": 400000,         # 400k tokens
+            "gpt-5-nano-2025-08-07": 400000,  # 400k tokens
+            # GPT-4 models
             "gpt-4.1-mini-2025-04-14": 1000000,  # 1M tokens
             "gpt-4.1-mini": 1000000,  # 1M tokens
             "gpt-4o-mini": 128000,    # 128k tokens
@@ -55,6 +65,7 @@ class EnhancedLLMAnalyzer:
             "gpt-4-turbo": 128000,    # 128k tokens
             "gpt-4": 8192,            # 8k tokens
             "gpt-3.5-turbo": 16384,   # 16k tokens
+            # Gemini models
             "gemini-2.5-flash": 2000000,  # 2M tokens
             "gemini-1.5-pro": 2000000,    # 2M tokens
             "gemini-1.5-flash": 1000000,  # 1M tokens
@@ -274,13 +285,17 @@ Before reporting any vulnerability, verify:
                     continue
                 
                 # Get context limit for current model
-                context_limit = self.model_context_limits.get(current_model, 8192)
-                # More conservative token estimation: ~3 chars per token
-                max_prompt_tokens = context_limit - 20000  # Reserve for completion (Gemini thinking + output)
-                max_prompt_chars = max_prompt_tokens * 3  # ~3 chars per token
+                context_limit = self.model_context_limits.get(current_model, 128000)  # Default to 128k for unknown models
+                
+                # Reserve space for completion output
                 # Gemini 2.5 Flash uses thinking mode - balance between thinking and output
                 # 8K tokens is reasonable: ~4K for thinking + 4K for actual output
                 max_completion_tokens = 8000 if is_gemini else 4000
+                
+                # Calculate max prompt size with safety check
+                reserved_tokens = max(max_completion_tokens, 20000)  # Reserve at least 20k for output
+                max_prompt_tokens = max(context_limit - reserved_tokens, 1000)  # Ensure at least 1k tokens for prompt
+                max_prompt_chars = max_prompt_tokens * 3  # ~3 chars per token
                 
                 # Truncate prompt if needed for current model
                 truncated_prompt = prompt
