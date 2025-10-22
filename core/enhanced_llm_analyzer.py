@@ -17,7 +17,7 @@ from openai import OpenAI
 class EnhancedLLMAnalyzer:
     """Enhanced LLM-powered smart contract analysis with validation."""
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4.1-mini-2025-04-14"):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         # Try to get OpenAI API key from multiple sources
         self.api_key = api_key
         if not self.api_key:
@@ -41,7 +41,18 @@ class EnhancedLLMAnalyzer:
                 pass
         
         self.has_api_key = bool(self.api_key) or bool(self.gemini_api_key)
-        self.model = model
+        
+        # Get model from config if not specified
+        if model:
+            self.model = model
+        else:
+            try:
+                from core.config_manager import ConfigManager
+                cm = ConfigManager()
+                # Default to analysis model (for vulnerability detection)
+                self.model = getattr(cm.config, 'openai_analysis_model', 'gpt-5-chat-latest')
+            except Exception:
+                self.model = 'gpt-5-chat-latest'  # Fallback
         
         # Updated fallback models to include Gemini
         self.fallback_models = ["gemini-2.5-flash", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4-turbo", "gpt-3.5-turbo"]

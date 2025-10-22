@@ -134,14 +134,21 @@ class FoundryPoCGenerator:
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
+        self.config_manager = ConfigManager()
+        
+        # Get generation model from config (for PoC/test generation)
+        try:
+            generation_model = getattr(self.config_manager.config, 'openai_generation_model', 'gpt-5-mini')
+        except Exception:
+            generation_model = 'gpt-5-mini'  # Fallback
+        
         # Initialize LLM analyzer (be compatible with implementations that take no args)
         try:
             # Preferred: specify model when supported
-            self.llm_analyzer = EnhancedLLMAnalyzer(model="gpt-4o-mini")
+            self.llm_analyzer = EnhancedLLMAnalyzer(model=generation_model)
         except TypeError:
             # Fallback: older/newer versions without parameters
             self.llm_analyzer = EnhancedLLMAnalyzer()
-        self.config_manager = ConfigManager()
 
         # Configuration defaults
         self.max_compile_attempts = self.config.get('max_compile_attempts', 3)

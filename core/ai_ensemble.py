@@ -38,6 +38,14 @@ class ConsensusResult:
     processing_time: float
     individual_results: List[ModelResult]
 
+def _get_analysis_model() -> str:
+    """Get the analysis model from config, with fallback."""
+    try:
+        config = ConfigManager()
+        return getattr(config.config, 'openai_analysis_model', 'gpt-5-mini')
+    except Exception:
+        return 'gpt-5-mini'  # Fallback
+
 class BaseAIModel:
     """Base class for specialized AI agents"""
 
@@ -210,7 +218,7 @@ Focus on DeFi-specific issues and real-world exploit scenarios.
 
             try:
                 response = client.chat.completions.create(
-                    model="gpt-5-mini",
+                    model=_get_analysis_model(),
                     messages=[
                         {"role": "system", "content": self._get_persona_prompt()},
                         {"role": "user", "content": prompt}
@@ -361,7 +369,7 @@ Focus on high-impact optimizations that provide significant gas savings.
 
             try:
                 response = client.chat.completions.create(
-                    model="gpt-5-mini",
+                    model=_get_analysis_model(),
                     messages=[
                         {"role": "system", "content": self._get_persona_prompt()},
                         {"role": "user", "content": prompt}
@@ -579,8 +587,8 @@ class GPT5SecurityAuditor(BaseAIModel):
             from core.config_manager import ConfigManager
             config = ConfigManager()
             api_key = getattr(config.config, 'openai_api_key', None)
-            # Use latest GPT-5 Pro model for best analysis capability
-            model = 'gpt-5-mini'
+            # Get analysis model from config
+            model = _get_analysis_model()
 
             if not api_key:
                 return ModelResult(
@@ -689,8 +697,8 @@ class GPT5DeFiSpecialist(BaseAIModel):
             from core.config_manager import ConfigManager
             config = ConfigManager()
             api_key = getattr(config.config, 'openai_api_key', None)
-            # Use latest GPT-5 Pro model for best analysis capability
-            model = 'gpt-5-mini'
+            # Get analysis model from config
+            model = _get_analysis_model()
 
             if not api_key:
                 return ModelResult(

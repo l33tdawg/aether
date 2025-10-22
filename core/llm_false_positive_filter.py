@@ -118,10 +118,18 @@ class LLMFalsePositiveFilter:
         # Get LLM validation
         validation_prompt = self._create_validation_prompt(context)
         
+        # Get validation model from config
+        try:
+            from core.config_manager import ConfigManager
+            config_manager = ConfigManager()
+            validation_model = getattr(config_manager.config, 'openai_validation_model', 'gpt-5-chat-latest')
+        except Exception:
+            validation_model = 'gpt-5-chat-latest'  # Fallback
+        
         try:
             response = await self.llm_analyzer._call_llm(
                 validation_prompt,
-                model="gpt-5-chat-latest"  # Use best model for accurate validation
+                model=validation_model  # Use configured validation model
             )
             
             print(f"DEBUG: LLM Filter - Raw LLM response: {response[:200]}...")

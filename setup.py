@@ -372,9 +372,56 @@ Let's get started!
         else:
             self.console.print("  [yellow]Skipped Etherscan key configuration[/yellow]")
         
+        # Model Selection
+        if self.api_keys.get('OPENAI_API_KEY'):
+            self.console.print("\n[bold]Model Selection[/bold] (for OpenAI LLM analysis)")
+            self.console.print("\nChoose models for different purposes:")
+            self.console.print("  [cyan]gpt-5-chat-latest[/cyan] - Best quality, 400K context, superior retrieval")
+            self.console.print("  [cyan]gpt-5-mini[/cyan]        - Fast & cost-effective, 400K context")
+            self.console.print("  [cyan]gpt-4o[/cyan]            - Balanced option, 128K context")
+            self.console.print("  [cyan]gpt-4o-mini[/cyan]       - Budget option, 128K context\n")
+            
+            if self.interactive:
+                # Validation model (most critical - needs highest accuracy)
+                self.console.print("[bold]Validation Model[/bold] (for false positive filtering - critical accuracy)")
+                validation_model = Prompt.ask(
+                    "  Select model",
+                    choices=["gpt-5-chat-latest", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
+                    default="gpt-5-chat-latest"
+                )
+                self.api_keys['VALIDATION_MODEL'] = validation_model
+                
+                # Analysis model (vulnerability detection)
+                self.console.print("\n[bold]Analysis Model[/bold] (for vulnerability detection - balanced quality)")
+                analysis_model = Prompt.ask(
+                    "  Select model",
+                    choices=["gpt-5-chat-latest", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
+                    default="gpt-5-chat-latest"
+                )
+                self.api_keys['ANALYSIS_MODEL'] = analysis_model
+                
+                # Generation model (PoC/test generation - can be faster/cheaper)
+                self.console.print("\n[bold]Generation Model[/bold] (for PoC/test generation - can use faster model)")
+                generation_model = Prompt.ask(
+                    "  Select model",
+                    choices=["gpt-5-mini", "gpt-5-chat-latest", "gpt-4o-mini", "gpt-4o"],
+                    default="gpt-5-mini"
+                )
+                self.api_keys['GENERATION_MODEL'] = generation_model
+                
+                self.console.print(f"\n  ✓ Model configuration:")
+                self.console.print(f"    Validation: {validation_model}")
+                self.console.print(f"    Analysis:   {analysis_model}")
+                self.console.print(f"    Generation: {generation_model}")
+            else:
+                # Non-interactive defaults
+                self.api_keys['VALIDATION_MODEL'] = "gpt-5-chat-latest"
+                self.api_keys['ANALYSIS_MODEL'] = "gpt-5-chat-latest"
+                self.api_keys['GENERATION_MODEL'] = "gpt-5-mini"
+        
         # Summary
         if self.api_keys:
-            self.console.print(f"\n  ✓ Configured {len(self.api_keys)} API key(s)")
+            self.console.print(f"\n  ✓ Configured {len([k for k in self.api_keys if 'KEY' in k])} API key(s)")
             self.setup_status['api_keys'] = True
         else:
             self.console.print("\n  [yellow]No API keys configured. LLM features will be unavailable.[/yellow]")
@@ -400,7 +447,7 @@ Let's get started!
             
             config_manager = ConfigManager()
             
-            # Set API keys
+            # Set API keys and model selections
             for key, value in self.api_keys.items():
                 if key == 'OPENAI_API_KEY':
                     config_manager.config.openai_api_key = value
@@ -408,6 +455,12 @@ Let's get started!
                     config_manager.config.gemini_api_key = value
                 elif key == 'ETHERSCAN_API_KEY':
                     config_manager.config.etherscan_api_key = value
+                elif key == 'VALIDATION_MODEL':
+                    config_manager.config.openai_validation_model = value
+                elif key == 'ANALYSIS_MODEL':
+                    config_manager.config.openai_analysis_model = value
+                elif key == 'GENERATION_MODEL':
+                    config_manager.config.openai_generation_model = value
             
             # Save configuration
             config_manager.save_config()
