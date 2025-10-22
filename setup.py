@@ -18,6 +18,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt, Confirm, IntPrompt
 from rich.progress import Progress, SpinnerColumn, TextColumn
+import questionary
+from questionary import Style
 
 from utils.setup_helpers import (
     DependencyDetector,
@@ -28,39 +30,45 @@ from utils.setup_helpers import (
     test_import
 )
 
-def select_from_numbered_list(console: Console, items: List[str], prompt_text: str, default_index: int = 0) -> str:
-    """Display a numbered list and let user select by number.
+# Custom style for questionary (matches rich theme)
+custom_style = Style([
+    ('qmark', 'fg:#00d7ff bold'),       # Cyan question mark
+    ('question', 'bold'),                # Bold question
+    ('answer', 'fg:#00d7ff bold'),      # Cyan answer
+    ('pointer', 'fg:#00d7ff bold'),     # Cyan pointer
+    ('highlighted', 'fg:#00d7ff bold'), # Cyan highlight
+    ('selected', 'fg:#00d7ff'),         # Cyan selected
+    ('separator', 'fg:#666666'),        # Gray separator
+    ('instruction', ''),                # Default instruction
+    ('text', ''),                       # Default text
+])
+
+def select_with_arrows(prompt_text: str, choices: List[str], default: Optional[str] = None) -> str:
+    """Interactive selector with arrow keys, space to select, enter to confirm.
     
     Args:
-        console: Rich console for output
-        items: List of items to choose from
         prompt_text: Prompt text to display
-        default_index: Index of default selection
+        choices: List of items to choose from
+        default: Default selection (item from choices list)
     
     Returns:
         The selected item
     """
-    # Display numbered list
-    for i, item in enumerate(items):
-        prefix = "→" if i == default_index else " "
-        console.print(f"  {prefix} [{i+1}] {item}")
-    
-    # Get selection
-    while True:
-        try:
-            selection = IntPrompt.ask(
-                f"\n{prompt_text}",
-                default=default_index + 1,
-                show_default=True
-            )
-            
-            if 1 <= selection <= len(items):
-                return items[selection - 1]
-            else:
-                console.print(f"[red]Please enter a number between 1 and {len(items)}[/red]")
-        except (ValueError, KeyboardInterrupt):
-            console.print(f"[yellow]Using default: {items[default_index]}[/yellow]")
-            return items[default_index]
+    try:
+        result = questionary.select(
+            prompt_text,
+            choices=choices,
+            default=default if default in choices else (choices[0] if choices else None),
+            style=custom_style,
+            use_shortcuts=True,
+            use_arrow_keys=True,
+            use_jk_keys=False
+        ).ask()
+        
+        return result if result else (default if default else choices[0])
+    except (KeyboardInterrupt, EOFError):
+        # User cancelled - return default
+        return default if default else choices[0]
 
 
 def fetch_available_models(api_key: str) -> Dict[str, List[str]]:
@@ -283,24 +291,9 @@ class AetherSetup:
                 self._show_existing_config()
             
             elif choice == "2":
-                # Reconfigure model selections only
-                self.console.print("\n[bold]Reconfiguring Model Selections...[/bold]")
-                self.reconfigure_models = True
-                
-                # Need to load existing keys first
-                if not self.api_keys:
-                    existing_openai = getattr(self.existing_config, 'openai_api_key', '')
-                    existing_gemini = getattr(self.existing_config, 'gemini_api_key', '')
-                    if existing_openai:
-                        self.api_keys['OPENAI_API_KEY'] = existing_openai
-                    if existing_gemini:
-                        self.api_keys['GEMINI_API_KEY'] = existing_gemini
-                
-                if not self._configure_model_selection():
+                # Show model selection submenu
+                if not self._show_model_selection_menu():
                     return False
-                if not self.create_configuration():
-                    return False
-                self.console.print("[green]✓ Model selections updated successfully![/green]")
                 
                 # Reload config to show updated values
                 self._load_existing_config()
@@ -329,6 +322,148 @@ class AetherSetup:
                 self._show_existing_config()
             
             # Loop back to menu
+    
+    def _show_model_selection_menu(self) -> bool:
+        """Show submenu for model selection with current assignments."""
+        # Load existing keys
+        if not self.api_keys:
+            existing_openai = getattr(self.existing_config, 'openai_api_key', '')
+            existing_gemini = getattr(self.existing_config, 'gemini_api_key', '')
+            if existing_openai:
+                self.api_keys['OPENAI_API_KEY'] = existing_openai
+            if existing_gemini:
+                self.api_keys['GEMINI_API_KEY'] = existing_gemini
+        
+        while True:
+            self.console.print("\n[bold]Model Selection Manager[/bold]")
+            self.console.print("\n[bold cyan]Current Model Assignments:[/bold cyan]")
+            
+            # Show current assignments
+            tasks = ['validation', 'analysis', 'generation']
+            for task in tasks:
+                provider = getattr(self.existing_config, f'{task}_provider', 'openai')
+                if provider == 'openai':
+                    model = getattr(self.existing_config, f'openai_{task}_model', 'N/A')
+                else:
+                    model = getattr(self.existing_config, f'gemini_{task}_model', 'N/A')
+                
+                self.console.print(f"  {task.title()}: [cyan]{provider}[/cyan] / [yellow]{model}[/yellow]")
+            
+            self.console.print("\n[bold]Select task to reconfigure:[/bold]")
+            self.console.print("  [cyan]1[/cyan] - Validation Model")
+            self.console.print("  [cyan]2[/cyan] - Analysis Model")
+            self.console.print("  [cyan]3[/cyan] - Generation Model")
+            self.console.print("  [cyan]4[/cyan] - Reconfigure All Models")
+            self.console.print("  [cyan]0[/cyan] - Back to Main Menu")
+            
+            choice = Prompt.ask(
+                "\nSelect option",
+                choices=["0", "1", "2", "3", "4"],
+                default="0"
+            )
+            
+            if choice == "0":
+                return True
+            elif choice == "4":
+                # Reconfigure all models
+                self.reconfigure_models = True
+                if not self._configure_model_selection():
+                    return False
+                if not self.create_configuration():
+                    return False
+                self.console.print("[green]✓ All models updated![/green]")
+                self._load_existing_config()
+            else:
+                # Reconfigure specific task
+                task_map = {"1": "validation", "2": "analysis", "3": "generation"}
+                task_name = task_map[choice]
+                
+                if not self._configure_single_task_model(task_name):
+                    return False
+                if not self.create_configuration():
+                    return False
+                self.console.print(f"[green]✓ {task_name.title()} model updated![/green]")
+                self._load_existing_config()
+    
+    def _configure_single_task_model(self, task_name: str) -> bool:
+        """Configure model for a single task type.
+        
+        Args:
+            task_name: One of 'validation', 'analysis', or 'generation'
+        """
+        has_openai = self.api_keys.get('OPENAI_API_KEY')
+        has_gemini = self.api_keys.get('GEMINI_API_KEY')
+        
+        if not has_openai and not has_gemini:
+            self.console.print("[red]No API keys configured![/red]")
+            return False
+        
+        # Fetch available models
+        available_openai = None
+        available_gemini = None
+        
+        if has_openai:
+            with self.console.status("[bold green]Fetching OpenAI models..."):
+                available_openai = fetch_available_models(self.api_keys['OPENAI_API_KEY'])
+        
+        if has_gemini:
+            with self.console.status("[bold green]Fetching Gemini models..."):
+                available_gemini = fetch_available_gemini_models(self.api_keys['GEMINI_API_KEY'])
+        
+        task_desc = {
+            'validation': 'false positive filtering - needs critical accuracy',
+            'analysis': 'vulnerability detection - balanced quality',
+            'generation': 'PoC/test generation - can use faster model'
+        }
+        
+        self.console.print(f"\n[bold]Configure {task_name.title()} Model[/bold] (for {task_desc[task_name]})")
+        
+        # Choose provider
+        provider = None
+        if has_openai and has_gemini:
+            provider_choices = ["openai", "gemini"]
+            current_provider = getattr(self.existing_config, f'{task_name}_provider', 'openai')
+            
+            self.console.print(f"\n  Current: [cyan]{current_provider}[/cyan]")
+            provider = select_with_arrows(
+                "Select provider (↑↓ arrows, Enter to confirm)",
+                provider_choices,
+                default=current_provider
+            )
+            self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
+        elif has_openai:
+            provider = "openai"
+            self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
+        elif has_gemini:
+            provider = "gemini"
+            self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
+        
+        # Select model from chosen provider
+        if provider == "openai" and available_openai:
+            choice_list = available_openai['gpt5_models'][:10] + available_openai['gpt4_models'][:5]
+            current_model = getattr(self.existing_config, f'openai_{task_name}_model', choice_list[0])
+            
+            self.console.print(f"\n  Current: [yellow]{current_model}[/yellow]")
+            model = select_with_arrows(
+                "Select OpenAI model (↑↓ arrows, Enter to confirm)",
+                choice_list,
+                default=current_model if current_model in choice_list else choice_list[0]
+            )
+            self.api_keys[f'{task_name.upper()}_MODEL'] = model
+            
+        elif provider == "gemini" and available_gemini:
+            choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
+            current_model = getattr(self.existing_config, f'gemini_{task_name}_model', choice_list[0])
+            
+            self.console.print(f"\n  Current: [yellow]{current_model}[/yellow]")
+            model = select_with_arrows(
+                "Select Gemini model (↑↓ arrows, Enter to confirm)",
+                choice_list,
+                default=current_model if current_model in choice_list else choice_list[0]
+            )
+            self.api_keys[f'GEMINI_{task_name.upper()}_MODEL'] = model
+        
+        return True
     
     def run(self):
         """Run the complete setup process."""
@@ -792,14 +927,12 @@ Let's get started!
                             provider_choices.append("gemini")
                             provider_display.append("Gemini (2.5: 2M context, thinking mode)")
                         
-                        self.console.print(f"\n  [cyan]Available providers for {task_name}:[/cyan]")
-                        default_idx = 1 if task_name == "validation" and "gemini" in provider_choices else 0
+                        default_provider = "gemini" if task_name == "validation" and "gemini" in provider_choices else "openai"
                         
-                        provider = select_from_numbered_list(
-                            self.console,
+                        provider = select_with_arrows(
+                            f"Select provider for {task_name} (↑↓ arrows, Enter to confirm)",
                             provider_choices,
-                            "Select provider",
-                            default_index=default_idx
+                            default=default_provider
                         )
                         
                         self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
@@ -825,12 +958,10 @@ Let's get started!
                         default_model = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
                         default_idx = choice_list.index(default_model) if default_model in choice_list else 0
                     
-                    self.console.print(f"\n  [cyan]Available {provider} models:[/cyan]")
-                    model = select_from_numbered_list(
-                        self.console,
+                    model = select_with_arrows(
+                        f"Select {provider} model for {task_name} (↑↓ arrows, Enter to confirm)",
                         choice_list,
-                        f"Select {provider} model",
-                        default_index=default_idx
+                        default=default_model if default_model in choice_list else choice_list[0]
                     )
                     
                     # Store both provider and model
