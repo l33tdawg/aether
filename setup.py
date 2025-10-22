@@ -28,6 +28,40 @@ from utils.setup_helpers import (
     test_import
 )
 
+def fetch_available_models(api_key: str) -> Dict[str, List[str]]:
+    """Fetch available models from OpenAI API.
+    
+    Returns a dict with categorized models:
+    - gpt5_models: List of GPT-5 models
+    - gpt4_models: List of GPT-4 models
+    - all_models: All available GPT models
+    """
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        
+        # Fetch all models
+        models = client.models.list()
+        model_ids = [m.id for m in models.data if 'gpt' in m.id.lower()]
+        
+        # Categorize models
+        gpt5_models = sorted([m for m in model_ids if m.startswith('gpt-5')], reverse=True)
+        gpt4_models = sorted([m for m in model_ids if m.startswith('gpt-4')], reverse=True)
+        
+        return {
+            'gpt5_models': gpt5_models,
+            'gpt4_models': gpt4_models,
+            'all_models': sorted(model_ids, reverse=True)
+        }
+    except Exception as e:
+        print(f"⚠️  Could not fetch models from API: {e}")
+        # Fallback to known models
+        return {
+            'gpt5_models': ['gpt-5-chat-latest', 'gpt-5-pro', 'gpt-5-mini', 'gpt-5-nano'],
+            'gpt4_models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+            'all_models': ['gpt-5-chat-latest', 'gpt-5-pro', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo']
+        }
+
 
 class AetherSetup:
     """Main setup class for Aether installation and configuration."""
@@ -375,19 +409,40 @@ Let's get started!
         # Model Selection
         if self.api_keys.get('OPENAI_API_KEY'):
             self.console.print("\n[bold]Model Selection[/bold] (for OpenAI LLM analysis)")
-            self.console.print("\nChoose models for different purposes:")
-            self.console.print("  [cyan]gpt-5-chat-latest[/cyan] - Best quality, 400K context, superior retrieval")
-            self.console.print("  [cyan]gpt-5-mini[/cyan]        - Fast & cost-effective, 400K context")
-            self.console.print("  [cyan]gpt-4o[/cyan]            - Balanced option, 128K context")
-            self.console.print("  [cyan]gpt-4o-mini[/cyan]       - Budget option, 128K context\n")
+            
+            # Fetch available models from API
+            with self.console.status("[bold green]Fetching available models from OpenAI..."):
+                available_models = fetch_available_models(self.api_keys['OPENAI_API_KEY'])
+            
+            # Display available models
+            if available_models['gpt5_models']:
+                self.console.print("\n[bold cyan]Available GPT-5 Models:[/bold cyan] (400K context, superior retrieval)")
+                for model in available_models['gpt5_models'][:5]:  # Show top 5
+                    self.console.print(f"  • {model}")
+            
+            if available_models['gpt4_models']:
+                self.console.print("\n[bold cyan]Available GPT-4 Models:[/bold cyan] (128K context)")
+                for model in available_models['gpt4_models'][:5]:  # Show top 5
+                    self.console.print(f"  • {model}")
             
             if self.interactive:
+                # Determine default choices (prefer GPT-5 if available)
+                default_validation = available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0]
+                default_analysis = default_validation
+                default_generation = next((m for m in available_models['gpt5_models'] if 'mini' in m), 
+                                         available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0])
+                
+                # Create choice lists (prioritize GPT-5, then GPT-4)
+                choice_list = available_models['gpt5_models'][:10] + available_models['gpt4_models'][:5]
+                if not choice_list:
+                    choice_list = available_models['all_models'][:10]
+                
                 # Validation model (most critical - needs highest accuracy)
-                self.console.print("[bold]Validation Model[/bold] (for false positive filtering - critical accuracy)")
+                self.console.print("\n[bold]Validation Model[/bold] (for false positive filtering - critical accuracy)")
                 validation_model = Prompt.ask(
                     "  Select model",
-                    choices=["gpt-5-chat-latest", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
-                    default="gpt-5-chat-latest"
+                    choices=choice_list,
+                    default=default_validation
                 )
                 self.api_keys['VALIDATION_MODEL'] = validation_model
                 
@@ -395,8 +450,8 @@ Let's get started!
                 self.console.print("\n[bold]Analysis Model[/bold] (for vulnerability detection - balanced quality)")
                 analysis_model = Prompt.ask(
                     "  Select model",
-                    choices=["gpt-5-chat-latest", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
-                    default="gpt-5-chat-latest"
+                    choices=choice_list,
+                    default=default_analysis
                 )
                 self.api_keys['ANALYSIS_MODEL'] = analysis_model
                 
@@ -404,8 +459,8 @@ Let's get started!
                 self.console.print("\n[bold]Generation Model[/bold] (for PoC/test generation - can use faster model)")
                 generation_model = Prompt.ask(
                     "  Select model",
-                    choices=["gpt-5-mini", "gpt-5-chat-latest", "gpt-4o-mini", "gpt-4o"],
-                    default="gpt-5-mini"
+                    choices=choice_list,
+                    default=default_generation
                 )
                 self.api_keys['GENERATION_MODEL'] = generation_model
                 
@@ -414,10 +469,11 @@ Let's get started!
                 self.console.print(f"    Analysis:   {analysis_model}")
                 self.console.print(f"    Generation: {generation_model}")
             else:
-                # Non-interactive defaults
-                self.api_keys['VALIDATION_MODEL'] = "gpt-5-chat-latest"
-                self.api_keys['ANALYSIS_MODEL'] = "gpt-5-chat-latest"
-                self.api_keys['GENERATION_MODEL'] = "gpt-5-mini"
+                # Non-interactive defaults (use first available from each category)
+                self.api_keys['VALIDATION_MODEL'] = available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0]
+                self.api_keys['ANALYSIS_MODEL'] = available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0]
+                self.api_keys['GENERATION_MODEL'] = next((m for m in available_models['gpt5_models'] if 'mini' in m), 
+                                                          available_models['gpt5_models'][0] if available_models['gpt5_models'] else available_models['all_models'][0])
         
         # Summary
         if self.api_keys:
