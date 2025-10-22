@@ -71,7 +71,9 @@ class RepositoryManager:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def clone_or_get(self, github_url: str, force_fresh: bool = False) -> CloneResult:
-        owner, repo = _parse_github_url(github_url)
+        # Normalize common GitHub web URLs like .../tree/<branch> or .../blob/<branch>/path
+        normalized_url = self._normalize_github_url(github_url)
+        owner, repo = _parse_github_url(normalized_url)
         repo_name = repo or 'unknown'
         repo_dir = self.cache_dir / (f"{owner}_{repo_name}" if owner else repo_name)
 
@@ -82,15 +84,15 @@ class RepositoryManager:
             return CloneResult(repo_path=repo_dir, is_new_clone=False)
 
         # Build authenticated URL if token provided and URL is https
-        clone_url = github_url
-        if self.github_token and github_url.startswith('https://'):
-            clone_url = github_url.replace('https://', f"https://{self.github_token}@", 1)
+        clone_url = normalized_url
+        if self.github_token and normalized_url.startswith('https://'):
+            clone_url = normalized_url.replace('https://', f"https://{self.github_token}@", 1)
 
         code, out, err = _run(['git', 'clone', '--depth', '1', clone_url, str(repo_dir)])
         if code != 0:
             # Attempt without token if first attempt failed with token
             if self.github_token and '@' in clone_url:
-                code2, out2, err2 = _run(['git', 'clone', '--depth', '1', github_url, str(repo_dir)])
+                code2, out2, err2 = _run(['git', 'clone', '--depth', '1', normalized_url, str(repo_dir)])
                 if code2 != 0:
                     raise RuntimeError(f"git clone failed: {err or err2}")
             else:
@@ -101,7 +103,7 @@ class RepositoryManager:
             repo_dir.mkdir(parents=True, exist_ok=True)
 
         if self.db and owner and repo:
-            self.db.create_project(url=github_url, repo_name=repo, framework=None, owner=owner, cache_path=str(repo_dir))
+            self.db.create_project(url=normalized_url, repo_name=repo, framework=None, owner=owner, cache_path=str(repo_dir))
         return CloneResult(repo_path=repo_dir, is_new_clone=True)
 
     def pull_updates(self, repo_path: Union[str, Path]) -> bool:
@@ -119,7 +121,7 @@ class RepositoryManager:
         if code != 0:
             return False
         origin = _strip_credentials(out.strip())
-        target = _strip_credentials(github_url)
+        target = _strip_credentials(self._normalize_github_url(github_url))
         return origin.endswith(target) or target.endswith(origin)
 
     def get_cache_size(self, repo_path: Union[str, Path]) -> int:
@@ -143,4 +145,39 @@ class RepositoryManager:
         # Basic sanity: must contain common solidity directories
         return (repo_path / 'src').exists() or (repo_path / 'contracts').exists()
 
+
+    def _normalize_github_url(self, url: str) -> str:
+        """Convert common GitHub web URLs to a cloneable repository URL.
+        Examples:
+          - https://github.com/owner/repo -> same
+          - https://github.com/owner/repo.git -> same
+          - https://github.com/owner/repo/ -> https://github.com/owner/repo
+          - https://github.com/owner/repo/tree/branch -> https://github.com/owner/repo
+          - https://github.com/owner/repo/blob/branch/path -> https://github.com/owner/repo
+        """
+        try:
+            if not url:
+                return url
+            # Trim whitespace
+            cleaned = url.strip()
+            # Remove trailing .git for parsing, we'll accept both
+            suffix_git = cleaned.endswith('.git')
+            if suffix_git:
+                cleaned = cleaned[:-4]
+            # Only handle https GitHub URLs here; SSH and others pass through
+            if 'github.com/' not in cleaned:
+                return url
+            base = cleaned.split('github.com/', 1)[0] + 'github.com/'
+            rest = cleaned.split('github.com/', 1)[1]
+            parts = [p for p in rest.split('/') if p]
+            if len(parts) < 2:
+                return url
+            owner, repo = parts[0], parts[1]
+            normalized = f"{base}{owner}/{repo}"
+            # Re-append .git if original had it
+            if suffix_git:
+                normalized += '.git'
+            return normalized
+        except Exception:
+            return url
 

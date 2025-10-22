@@ -129,8 +129,13 @@ class GitHubAuditor:
         framework = self.framework_detector.detect(clone.repo_path) or 'unknown'
 
         # 4) Ensure project exists in DB
-        owner, repo = self._parse_owner_repo(github_url)
-        project = self.db.get_project(github_url) or self.db.create_project(url=github_url, repo_name=repo or 'unknown', framework=framework, owner=owner, cache_path=str(clone.repo_path))
+        # Normalize URL to match RepositoryManager behavior for DB keying
+        try:
+            normalized_url = self.repo_manager._normalize_github_url(github_url)  # type: ignore
+        except Exception:
+            normalized_url = github_url
+        owner, repo = self._parse_owner_repo(normalized_url)
+        project = self.db.get_project(normalized_url) or self.db.create_project(url=normalized_url, repo_name=repo or 'unknown', framework=framework, owner=owner, cache_path=str(clone.repo_path))
         if project and project.get('framework') != framework:
             self.db.update_project(project['id'], framework=framework)
 
@@ -140,7 +145,7 @@ class GitHubAuditor:
         current_scope_id: Optional[int] = None
 
         try:
-            project = self.db.get_project(github_url)
+            project = self.db.get_project(normalized_url)
             project_id = int(project['id']) if project else None
         except Exception:
             project_id = None

@@ -758,10 +758,15 @@ class AetherCLI:
             interactive_scope=interactive_scope and not skip_scope_selector
         )
 
-        result = auditor.audit(github_url, options)
+        # Normalize URL consistently with RepositoryManager for DB/report flows
+        try:
+            normalized_url = auditor.repo_manager._normalize_github_url(github_url)  # type: ignore
+        except Exception:
+            normalized_url = github_url
+        result = auditor.audit(normalized_url, options)
         formatter = AuditResultFormatter()
         project_info = {
-            'url': github_url,
+            'url': normalized_url,
             'framework': result.framework,
             'repo_name': result.project_path.name,
         }
@@ -778,7 +783,7 @@ class AetherCLI:
                 output_dir = './output/reports'
             
             # Get project_id from auditor's database
-            project = auditor.db.get_project(github_url)
+            project = auditor.db.get_project(normalized_url)
             project_id = int(project['id']) if project else None
             
             if project_id:

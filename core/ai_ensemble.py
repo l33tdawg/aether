@@ -72,7 +72,14 @@ class BaseAIModel:
             }
 
             for focus_area in self.focus_areas:
-                patterns = self.db_manager.get_learning_patterns(pattern_type=focus_area)
+                # Compatibility: prefer get_learning_patterns(pattern_type=..)
+                # Fallback: if missing, skip gracefully
+                patterns = []
+                try:
+                    if hasattr(self.db_manager, 'get_learning_patterns'):
+                        patterns = self.db_manager.get_learning_patterns(pattern_type=focus_area) or []
+                except Exception:
+                    patterns = []
                 for pattern in patterns:
                     if pattern.get('success_rate', 0) > 0.7:  # Only use high-confidence patterns
                         context_enhancements['learned_patterns'].append({
@@ -107,8 +114,13 @@ class BaseAIModel:
                 cache_hits=0,
                 created_at=time.time()
             )
-
-            self.db_manager.store_audit_metrics(metrics)
+            # Compatibility: prefer store_audit_metrics; fallback to save_audit_metrics
+            if hasattr(self.db_manager, 'store_audit_metrics'):
+                self.db_manager.store_audit_metrics(metrics)
+            elif hasattr(self.db_manager, 'save_audit_metrics'):
+                self.db_manager.save_audit_metrics(metrics)
+            else:
+                raise AttributeError("DatabaseManager missing audit metrics methods")
         except Exception as e:
             logger.warning(f"Failed to store analysis result: {e}")
 
@@ -1558,12 +1570,19 @@ class AIEnsemble:
             # Get patterns for all agent focus areas
             all_patterns = []
             for agent in self.models.values():
-                patterns = self.db_manager.get_learning_patterns_by_type(agent.focus_areas)
-                all_patterns.extend(patterns)
+                agent_patterns = []
+                try:
+                    # agent.focus_areas is a list; fetch per area
+                    for area in getattr(agent, 'focus_areas', []) or []:
+                        if hasattr(self.db_manager, 'get_learning_patterns'):
+                            agent_patterns.extend(self.db_manager.get_learning_patterns(pattern_type=area) or [])
+                except Exception:
+                    agent_patterns = []
+                all_patterns.extend(agent_patterns)
 
             return {
                 'total_patterns': len(all_patterns),
-                'high_confidence_patterns': len([p for p in all_patterns if p.success_rate > 0.7]),
+                'high_confidence_patterns': len([p for p in all_patterns if (p.get('success_rate') if isinstance(p, dict) else getattr(p, 'success_rate', 0)) > 0.7]),
                 'patterns_by_type': {}
             }
         except Exception as e:
