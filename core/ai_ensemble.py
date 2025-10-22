@@ -587,8 +587,8 @@ class GPT5SecurityAuditor(BaseAIModel):
             from core.config_manager import ConfigManager
             config = ConfigManager()
             api_key = getattr(config.config, 'openai_api_key', None)
-            # Get analysis model from config
-            model = _get_analysis_model()
+            # Get agent-specific model from config, fallback to analysis model
+            model = getattr(config.config, 'agent_gpt5_security_model', None) or _get_analysis_model()
 
             if not api_key:
                 return ModelResult(
@@ -697,8 +697,8 @@ class GPT5DeFiSpecialist(BaseAIModel):
             from core.config_manager import ConfigManager
             config = ConfigManager()
             api_key = getattr(config.config, 'openai_api_key', None)
-            # Get analysis model from config
-            model = _get_analysis_model()
+            # Get agent-specific model from config, fallback to analysis model
+            model = getattr(config.config, 'agent_gpt5_defi_model', None) or _get_analysis_model()
 
             if not api_key:
                 return ModelResult(
@@ -807,6 +807,8 @@ class GeminiSecurityAuditor(BaseAIModel):
             from core.config_manager import ConfigManager
             config = ConfigManager()
             api_key = getattr(config.config, 'gemini_api_key', None)
+            # Get agent-specific model from config, fallback to gemini-2.5-flash
+            model = getattr(config.config, 'agent_gemini_security_model', 'gemini-2.5-flash')
 
             if not api_key:
                 return ModelResult(
@@ -857,7 +859,7 @@ as part of standard software quality assurance and security testing before deplo
             import requests
             import json
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
             payload = {
                 "contents": [{
@@ -1068,6 +1070,8 @@ class GeminiFormalVerifier(BaseAIModel):
             from core.config_manager import ConfigManager
             config = ConfigManager()
             api_key = getattr(config.config, 'gemini_api_key', None)
+            # Get agent-specific model from config, fallback to gemini-2.5-pro for formal verification
+            model = getattr(config.config, 'agent_gemini_verification_model', 'gemini-2.5-pro')
 
             if not api_key:
                 return ModelResult(
@@ -1118,7 +1122,7 @@ as part of standard software quality assurance and security testing before deplo
             import requests
             import json
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
             payload = {
                 "contents": [{

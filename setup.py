@@ -353,27 +353,19 @@ class AetherSetup:
             self.console.print("  [cyan]1[/cyan] - Validation Model")
             self.console.print("  [cyan]2[/cyan] - Analysis Model")
             self.console.print("  [cyan]3[/cyan] - Generation Model")
-            self.console.print("  [cyan]4[/cyan] - Reconfigure All Models")
+            self.console.print("  [cyan]4[/cyan] - AI Ensemble Agents (4 specialist agents)")
+            self.console.print("  [cyan]5[/cyan] - Reconfigure All Models")
             self.console.print("  [cyan]0[/cyan] - Back to Main Menu")
             
             choice = Prompt.ask(
                 "\nSelect option",
-                choices=["0", "1", "2", "3", "4"],
+                choices=["0", "1", "2", "3", "4", "5"],
                 default="0"
             )
             
             if choice == "0":
                 return True
-            elif choice == "4":
-                # Reconfigure all models
-                self.reconfigure_models = True
-                if not self._configure_model_selection():
-                    return False
-                if not self.create_configuration():
-                    return False
-                self.console.print("[green]✓ All models updated![/green]")
-                self._load_existing_config()
-            else:
+            elif choice == "1" or choice == "2" or choice == "3":
                 # Reconfigure specific task
                 task_map = {"1": "validation", "2": "analysis", "3": "generation"}
                 task_name = task_map[choice]
@@ -383,6 +375,23 @@ class AetherSetup:
                 if not self.create_configuration():
                     return False
                 self.console.print(f"[green]✓ {task_name.title()} model updated![/green]")
+                self._load_existing_config()
+            elif choice == "4":
+                # Configure AI Ensemble agents
+                if not self._configure_ensemble_agents():
+                    return False
+                if not self.create_configuration():
+                    return False
+                self.console.print("[green]✓ Ensemble agent models updated![/green]")
+                self._load_existing_config()
+            elif choice == "5":
+                # Reconfigure all models
+                self.reconfigure_models = True
+                if not self._configure_model_selection():
+                    return False
+                if not self.create_configuration():
+                    return False
+                self.console.print("[green]✓ All models updated![/green]")
                 self._load_existing_config()
     
     def _configure_single_task_model(self, task_name: str) -> bool:
@@ -462,6 +471,76 @@ class AetherSetup:
                 default=current_model if current_model in choice_list else choice_list[0]
             )
             self.api_keys[f'GEMINI_{task_name.upper()}_MODEL'] = model
+        
+        return True
+    
+    def _configure_ensemble_agents(self) -> bool:
+        """Configure models for each AI ensemble agent."""
+        self.console.print("\n[bold]AI Ensemble Agent Configuration[/bold]")
+        self.console.print("Configure models for each specialist agent\n")
+        
+        # Show current agent assignments
+        agents = [
+            ('gpt5_security', 'GPT-5 Security Auditor', 'Security vulnerabilities (access control, reentrancy, etc.)'),
+            ('gpt5_defi', 'GPT-5 DeFi Specialist', 'DeFi protocols (AMM, lending, oracle manipulation)'),
+            ('gemini_security', 'Gemini Security Hunter', 'Security patterns (external calls, delegatecall, etc.)'),
+            ('gemini_verification', 'Gemini Formal Verifier', 'Formal verification (arithmetic, overflow, precision)')
+        ]
+        
+        self.console.print("[bold cyan]Current Agent Models:[/bold cyan]")
+        for agent_key, agent_name, agent_focus in agents:
+            current_model = getattr(self.existing_config, f'agent_{agent_key}_model', 'N/A')
+            self.console.print(f"  {agent_name}: [yellow]{current_model}[/yellow]")
+            self.console.print(f"    Focus: [dim]{agent_focus}[/dim]")
+        
+        # Fetch available models
+        has_openai = self.api_keys.get('OPENAI_API_KEY')
+        has_gemini = self.api_keys.get('GEMINI_API_KEY')
+        
+        available_openai = None
+        available_gemini = None
+        
+        if has_openai:
+            with self.console.status("[bold green]Fetching OpenAI models..."):
+                available_openai = fetch_available_models(self.api_keys['OPENAI_API_KEY'])
+        
+        if has_gemini:
+            with self.console.status("[bold green]Fetching Gemini models..."):
+                available_gemini = fetch_available_gemini_models(self.api_keys['GEMINI_API_KEY'])
+        
+        # Configure each agent
+        for agent_key, agent_name, agent_focus in agents:
+            self.console.print(f"\n[bold]{agent_name}[/bold]")
+            self.console.print(f"[dim]Focus: {agent_focus}[/dim]")
+            
+            current_model = getattr(self.existing_config, f'agent_{agent_key}_model', 'N/A')
+            self.console.print(f"Current: [yellow]{current_model}[/yellow]")
+            
+            # Determine which provider this agent uses
+            is_gemini_agent = 'gemini' in agent_key
+            
+            if is_gemini_agent and available_gemini:
+                # Gemini agent - select from Gemini models
+                choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
+                model = select_with_arrows(
+                    f"Select Gemini model for {agent_name} (↑↓ arrows, Enter to confirm)",
+                    choice_list,
+                    default=current_model if current_model in choice_list else choice_list[0]
+                )
+            elif not is_gemini_agent and available_openai:
+                # GPT-5 agent - select from OpenAI models
+                choice_list = available_openai['gpt5_models'][:10] + available_openai['gpt4_models'][:5]
+                model = select_with_arrows(
+                    f"Select OpenAI model for {agent_name} (↑↓ arrows, Enter to confirm)",
+                    choice_list,
+                    default=current_model if current_model in choice_list else choice_list[0]
+                )
+            else:
+                self.console.print(f"[yellow]Skipping - no API key for this agent[/yellow]")
+                continue
+            
+            # Store the agent model selection
+            self.api_keys[f'AGENT_{agent_key.upper()}_MODEL'] = model
         
         return True
     
@@ -1055,6 +1134,15 @@ Let's get started!
                     config_manager.config.gemini_analysis_model = value
                 elif key == 'GEMINI_GENERATION_MODEL':
                     config_manager.config.gemini_generation_model = value
+                # AI Ensemble agent model selections
+                elif key == 'AGENT_GPT5_SECURITY_MODEL':
+                    config_manager.config.agent_gpt5_security_model = value
+                elif key == 'AGENT_GPT5_DEFI_MODEL':
+                    config_manager.config.agent_gpt5_defi_model = value
+                elif key == 'AGENT_GEMINI_SECURITY_MODEL':
+                    config_manager.config.agent_gemini_security_model = value
+                elif key == 'AGENT_GEMINI_VERIFICATION_MODEL':
+                    config_manager.config.agent_gemini_verification_model = value
             
             # Save configuration
             config_manager.save_config()

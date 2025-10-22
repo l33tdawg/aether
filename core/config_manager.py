@@ -83,6 +83,13 @@ class AetherConfig:
     # Generation model - Flash is fast and cost-effective
     gemini_generation_model: str = "gemini-2.5-flash"
     
+    # AI Ensemble Agent Models (individual specialist agents)
+    # Each agent can use a different model for specialized analysis
+    agent_gpt5_security_model: str = "gpt-5-chat-latest"      # Security vulnerability auditor
+    agent_gpt5_defi_model: str = "gpt-5-chat-latest"          # DeFi protocol specialist
+    agent_gemini_security_model: str = "gemini-2.5-flash"     # Gemini security hunter (2M context)
+    agent_gemini_verification_model: str = "gemini-2.5-pro"   # Formal verification (use Pro for best quality)
+    
     max_tokens: int = 4000
     
     # Triage/LLM settings
