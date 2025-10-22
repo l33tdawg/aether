@@ -121,7 +121,7 @@ class LLMFalsePositiveFilter:
         try:
             response = await self.llm_analyzer._call_llm(
                 validation_prompt,
-                model="gpt-4.1-mini-2025-04-14"  # Use faster model for validation
+                model="gpt-5-latest"  # Use best model for accurate validation
             )
             
             print(f"DEBUG: LLM Filter - Raw LLM response: {response[:200]}...")
@@ -150,11 +150,15 @@ class LLMFalsePositiveFilter:
         # Extract relevant code around the vulnerability
         line_number = vulnerability.get('line_number', 0)
 
-        # Use the provided code snippet if available, otherwise extract context
-        if vulnerability.get('code_snippet'):
-            context_lines = vulnerability['code_snippet']
-        else:
-            context_lines = self._extract_code_context(contract_code, line_number, 10)
+        # ALWAYS use full contract code for validation - no more 10-line limitation!
+        # This allows the LLM to see imports, parent classes, and design comments
+        context_lines = contract_code
+        
+        # Detect oracle type if contract uses oracles
+        oracle_type = self._detect_oracle_type(contract_code)
+        
+        # Extract design intent from comments
+        design_intent = self._extract_design_intent(contract_code, line_number)
 
         return {
             'vulnerability': vulnerability,
@@ -163,8 +167,10 @@ class LLMFalsePositiveFilter:
             'severity': vulnerability.get('severity', 'medium'),
             'description': vulnerability.get('description', ''),
             'line_number': line_number,
-            'code_context': context_lines,
+            'code_context': context_lines,  # Full contract code
             'contract_code': contract_code,
+            'oracle_type': oracle_type,
+            'design_intent': design_intent,
             'has_code_snippet': 'code_snippet' in vulnerability
         }
     
@@ -182,6 +188,96 @@ class LLMFalsePositiveFilter:
         
         return '\n'.join(context_lines)
     
+    def _detect_oracle_type(self, contract_code: str) -> str:
+        """Detect the type of oracle being used in the contract."""
+        import re
+        
+        oracle_info = []
+        
+        # Check for Chainlink oracles (off-chain, flash-loan resistant)
+        if re.search(r'AggregatorV3Interface|ChainlinkClient|@chainlink', contract_code, re.IGNORECASE):
+            oracle_info.append("Chainlink (off-chain aggregated, resistant to flash loan manipulation)")
+        
+        # Check for AMM-based oracles (on-chain, vulnerable to manipulation)
+        if re.search(r'IUniswapV2Pair|getReserves|UniswapV3Pool|slot0', contract_code, re.IGNORECASE):
+            oracle_info.append("AMM-based (on-chain, potentially vulnerable to flash loan manipulation)")
+        
+        # Check for TWAP oracles
+        if re.search(r'TWAP|timeWeightedAverage|observe\(', contract_code, re.IGNORECASE):
+            oracle_info.append("TWAP (time-weighted average, more resistant to manipulation)")
+        
+        # Check for Pyth oracles
+        if re.search(r'IPyth|PythStructs|updatePriceFeeds', contract_code, re.IGNORECASE):
+            oracle_info.append("Pyth (off-chain, Solana-based oracle network)")
+        
+        # Check for custom oracles
+        if re.search(r'function\s+getPrice|function\s+latestPrice', contract_code, re.IGNORECASE) and not oracle_info:
+            oracle_info.append("Custom oracle implementation")
+        
+        if oracle_info:
+            return "; ".join(oracle_info)
+        else:
+            return "No oracle usage detected"
+    
+    def _extract_design_intent(self, contract_code: str, line_number: int) -> str:
+        """Extract design intent from comments near the vulnerability."""
+        import re
+        
+        lines = contract_code.split('\n')
+        design_hints = []
+        
+        # Search area: 30 lines before and 10 lines after the vulnerability
+        search_start = max(0, line_number - 30)
+        search_end = min(len(lines), line_number + 10)
+        
+        # Keywords that indicate intentional design
+        intent_keywords = [
+            r'intentional(?:ly)?',
+            r'by design',
+            r'disable(?:d|s)?',
+            r'allow(?:s|ed)? setting .* to (?:zero|0)',
+            r'can be set to (?:zero|0)',
+            r'optional(?:ly)?',
+            r'feature',
+            r'when .*=.*0',
+            r'to create',
+            r'can intentionally'
+        ]
+        
+        # Extract comments in the search area
+        for i in range(search_start, search_end):
+            line = lines[i]
+            
+            # Single-line comments
+            single_comment = re.search(r'//(.*)', line)
+            if single_comment:
+                comment_text = single_comment.group(1).strip()
+                for keyword in intent_keywords:
+                    if re.search(keyword, comment_text, re.IGNORECASE):
+                        design_hints.append(f"Line {i+1}: {comment_text}")
+                        break
+            
+            # Multi-line comments and NatSpec
+            multi_comment = re.search(r'/\*\*(.*?)\*/', line, re.DOTALL)
+            if multi_comment:
+                comment_text = multi_comment.group(1).strip()
+                for keyword in intent_keywords:
+                    if re.search(keyword, comment_text, re.IGNORECASE):
+                        design_hints.append(f"Line {i+1}: {comment_text[:200]}...")
+                        break
+        
+        # Also check for common patterns in the contract
+        if re.search(r'set.*to (?:zero|0) to (?:disable|create)', contract_code, re.IGNORECASE):
+            design_hints.append("Contract allows zero values to disable certain features")
+        
+        if re.search(r'SelfReferential|self-referential', contract_code, re.IGNORECASE):
+            design_hints.append("Contract uses self-referential pattern (intentional design)")
+        
+        if design_hints:
+            return "\n".join(design_hints)
+        else:
+            return "No explicit design intent comments found"
+    
     def _create_validation_prompt(self, context: Dict[str, Any]) -> str:
         """Create validation prompt for LLM."""
         
@@ -194,8 +290,16 @@ SEVERITY: {context['severity']}
 LINE: {context['line_number']}
 DESCRIPTION: {context['description']}
 
-CODE CONTEXT:
+**ORACLE TYPE DETECTED:**
+{context.get('oracle_type', 'No oracle usage detected')}
+
+**DESIGN INTENT FROM CODE COMMENTS:**
+{context.get('design_intent', 'No explicit design intent comments found')}
+
+**FULL CONTRACT CODE:**
+```solidity
 {context['code_context']}
+```
 
 **CRITICAL: FALSE POSITIVE PATTERNS TO CHECK FIRST**
 
@@ -229,6 +333,23 @@ Before marking any vulnerability as real, check these common false positive patt
    - Why it's safe: These are widely audited, maintained, and used by thousands of projects
    - VERDICT: Unless concrete evidence of misconfiguration → LIKELY FALSE POSITIVE
 
+5. **Chainlink Oracle Flash Loan "Vulnerability" (FALSE POSITIVE)**
+   - Pattern: Finding claims "oracle can be manipulated by flash loans"
+   - Why it's safe: Chainlink oracles are OFF-CHAIN aggregators, not on-chain AMM prices
+   - Flash loans only affect on-chain state within the same block
+   - Chainlink prices come from multiple off-chain data providers
+   - Check: Does the contract use AggregatorV3Interface or Chainlink imports?
+   - VERDICT: If oracle is Chainlink → Flash loan manipulation is IMPOSSIBLE → FALSE POSITIVE
+   - Real vulnerability would require: AMM-based oracle (Uniswap TWAP, etc.) OR actual oracle compromise
+
+6. **Intentional Configuration Options (FALSE POSITIVE)**
+   - Pattern: Finding claims "allows setting X to 0" as a vulnerability
+   - Why it's safe: Many contracts intentionally allow zero values to disable features
+   - Check: Look for comments like "intentionally", "by design", "set to zero to disable"
+   - Examples: defaultThreshold=0 to create SelfReferentialCollateral
+   - VERDICT: If code comments explain the intent → LIKELY FALSE POSITIVE
+   - Real vulnerability would require: No documented intent + actual exploit path
+
 Please analyze this vulnerability and determine:
 1. Is this a real security vulnerability or a false positive?
 2. What is your confidence level (0.0 to 1.0)?
@@ -242,6 +363,10 @@ Consider these factors:
 - Are there any access controls or validations that prevent exploitation?
 - Is this a common false positive pattern (SafeCast, inherited access control)?
 - If accessing inherited functions, was parent contract's protection verified?
+- **USE THE ORACLE TYPE INFO**: If Chainlink is detected, flash loan manipulation is impossible
+- **USE THE DESIGN INTENT INFO**: If comments explain the behavior, it's likely intentional
+- Does the full contract code show imports/inheritance that provide protections?
+- Are there protective patterns (staleness checks, timeouts, price decay) in the full code?
 
 Respond ONLY in JSON format (no extra text):
 {{
