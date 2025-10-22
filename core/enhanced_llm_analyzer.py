@@ -46,29 +46,30 @@ class EnhancedLLMAnalyzer:
         # Updated fallback models to include Gemini
         self.fallback_models = ["gemini-2.5-flash", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
         
-        # Context limits for different models (Gemini has 2M token context)
+        # Context limits for different models
+        # NOTE: These are COMBINED input + output limits
         self.model_context_limits = {
-            # GPT-5 models (400K context)
-            "gpt-5-chat-latest": 400000,  # 400k tokens
-            "gpt-5-pro": 400000,          # 400k tokens
-            "gpt-5-pro-2025-10-06": 400000,  # 400k tokens
-            "gpt-5-mini": 400000,         # 400k tokens
-            "gpt-5-mini-2025-08-07": 400000,  # 400k tokens
-            "gpt-5-codex": 400000,        # 400k tokens
-            "gpt-5-nano": 400000,         # 400k tokens
-            "gpt-5-nano-2025-08-07": 400000,  # 400k tokens
+            # GPT-5 models (400K combined input+output, better retrieval from large inputs)
+            "gpt-5-chat-latest": 400000,  # 400k tokens combined
+            "gpt-5-pro": 400000,          # 400k tokens combined
+            "gpt-5-pro-2025-10-06": 400000,  # 400k tokens combined
+            "gpt-5-mini": 400000,         # 400k tokens combined
+            "gpt-5-mini-2025-08-07": 400000,  # 400k tokens combined
+            "gpt-5-codex": 400000,        # 400k tokens combined
+            "gpt-5-nano": 400000,         # 400k tokens combined
+            "gpt-5-nano-2025-08-07": 400000,  # 400k tokens combined
             # GPT-4 models
-            "gpt-4.1-mini-2025-04-14": 1000000,  # 1M tokens
-            "gpt-4.1-mini": 1000000,  # 1M tokens
-            "gpt-4o-mini": 128000,    # 128k tokens
-            "gpt-4o": 128000,         # 128k tokens
-            "gpt-4-turbo": 128000,    # 128k tokens
-            "gpt-4": 8192,            # 8k tokens
-            "gpt-3.5-turbo": 16384,   # 16k tokens
-            # Gemini models
-            "gemini-2.5-flash": 2000000,  # 2M tokens
-            "gemini-1.5-pro": 2000000,    # 2M tokens
-            "gemini-1.5-flash": 1000000,  # 1M tokens
+            "gpt-4.1-mini-2025-04-14": 1000000,  # 1M tokens combined
+            "gpt-4.1-mini": 1000000,  # 1M tokens combined
+            "gpt-4o-mini": 128000,    # 128k tokens combined
+            "gpt-4o": 128000,         # 128k tokens combined
+            "gpt-4-turbo": 128000,    # 128k tokens combined
+            "gpt-4": 8192,            # 8k tokens combined
+            "gpt-3.5-turbo": 16384,   # 16k tokens combined
+            # Gemini models (2M combined)
+            "gemini-2.5-flash": 2000000,  # 2M tokens combined
+            "gemini-1.5-pro": 2000000,    # 2M tokens combined
+            "gemini-1.5-flash": 1000000,  # 1M tokens combined
         }
 
         if self.api_key:
@@ -123,15 +124,30 @@ class EnhancedLLMAnalyzer:
     def _create_enhanced_analysis_prompt(self, contract_content: str, static_results: Dict[str, Any]) -> str:
         """Create enhanced analysis prompt with validation requirements."""
         
-        # Use model-specific context limits - GPT-4.1-mini can handle much larger contracts
-        context_limit = self.model_context_limits.get(self.model, 8192)
-        # Conservative token estimation: reserve space for prompt overhead and completion
-        max_contract_tokens = context_limit - 2000  # Reserve 2000 tokens for prompt overhead and completion
+        # Use model-specific context limits (COMBINED input + output)
+        context_limit = self.model_context_limits.get(self.model, 128000)  # Default to 128k for unknown models
+        
+        # Reserve space for output based on model capabilities
+        is_gpt5 = self.model.startswith('gpt-5')
+        is_gemini = self.model.startswith('gemini-')
+        
+        if is_gemini:
+            reserved_tokens = 12000  # 12K for thinking + output
+        elif is_gpt5:
+            reserved_tokens = 8000   # 8K for output (GPT-5's superior retrieval)
+        else:
+            reserved_tokens = 4000   # 4K for older models
+        
+        # Calculate max contract size
+        # GPT-5: Can handle up to 392K tokens of input (1.176M chars!)
+        max_contract_tokens = max(context_limit - reserved_tokens - 2000, 1000)  # Reserve 2K for prompt structure
         max_contract_chars = max_contract_tokens * 3  # ~3 chars per token
         
         if len(contract_content) > max_contract_chars:
             print(f"⚠️  Contract large ({len(contract_content)} chars), truncating to {max_contract_chars} for {self.model}")
             contract_content = contract_content[:max_contract_chars] + "\n\n[Note: Contract truncated for model compatibility]"
+        else:
+            print(f"✅ Contract size ({len(contract_content)} chars) fits within {self.model} context window")
         
         prompt = f"""
 You are an elite smart contract security auditor. Your task is to identify ONLY real, exploitable vulnerabilities.
@@ -284,17 +300,24 @@ Before reporting any vulnerability, verify:
                     print(f"⚠️  Skipping {current_model} - no OpenAI API key")
                     continue
                 
-                # Get context limit for current model
+                # Get context limit for current model (COMBINED input + output)
                 context_limit = self.model_context_limits.get(current_model, 128000)  # Default to 128k for unknown models
                 
                 # Reserve space for completion output
-                # Gemini 2.5 Flash uses thinking mode - balance between thinking and output
-                # 8K tokens is reasonable: ~4K for thinking + 4K for actual output
-                max_completion_tokens = 8000 if is_gemini else 4000
+                # GPT-5: Superior retrieval from large inputs means we can be aggressive
+                # Reserve only what we need for output (~8K tokens for comprehensive responses)
+                # Gemini 2.5 Flash uses thinking mode - needs more (4K thinking + 8K output = 12K)
+                is_gpt5 = current_model.startswith('gpt-5')
+                if is_gemini:
+                    max_completion_tokens = 12000  # 12K for thinking + output
+                elif is_gpt5:
+                    max_completion_tokens = 8000   # 8K for output (GPT-5's better retrieval allows aggressive input)
+                else:
+                    max_completion_tokens = 4000   # 4K for older models
                 
-                # Calculate max prompt size with safety check
-                reserved_tokens = max(max_completion_tokens, 20000)  # Reserve at least 20k for output
-                max_prompt_tokens = max(context_limit - reserved_tokens, 1000)  # Ensure at least 1k tokens for prompt
+                # Calculate max prompt size
+                # GPT-5: 400K total - 8K output = 392K input (1.176M chars!)
+                max_prompt_tokens = max(context_limit - max_completion_tokens, 1000)  # Ensure at least 1k tokens for prompt
                 max_prompt_chars = max_prompt_tokens * 3  # ~3 chars per token
                 
                 # Truncate prompt if needed for current model
