@@ -8,7 +8,7 @@ build/discovery/analysis which will be implemented in subsequent phases.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Tuple
 
 from rich.console import Console
 
@@ -55,13 +55,14 @@ class ScopeSelector:
         from core.scope_manager import ScopeManager
         self.scope_manager = scope_manager or ScopeManager()
     
-    def select_scope(self, discovered_contracts: List[Dict[str, Any]]) -> List[str]:
+    def select_scope(self, discovered_contracts: List[Dict[str, Any]], audited_contracts: Optional[List[Dict[str, Any]]] = None) -> List[str]:
         """
         Present list of discovered contracts and allow user to select which ones to audit.
         Uses interactive curses-based selection with arrow keys and spacebar.
         
         Args:
             discovered_contracts: List of contract info dicts with 'file_path' and optional 'contract_name'
+            audited_contracts: Optional list of already audited contract dicts to show as disabled
         
         Returns:
             List of file paths to audit (relative paths)
@@ -74,10 +75,41 @@ class ScopeSelector:
         self.console.print("[bold cyan]      AETHER  CONTRACT SELECTOR[/bold cyan]")
         self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n")
         self.console.print(f"[bold]Total contracts discovered: {len(discovered_contracts)}[/bold]")
+        
+        # Calculate audited contract indices
+        audited_indices = []
+        if audited_contracts:
+            audited_paths = {c.get('file_path', '') for c in audited_contracts}
+            for i, contract in enumerate(discovered_contracts):
+                if contract.get('file_path', '') in audited_paths:
+                    audited_indices.append(i)
+            
+            if audited_indices:
+                self.console.print(f"[green]✅ {len(audited_indices)} contracts already audited (cached)[/green]")
+                self.console.print("[italic yellow]These are shown as [ALREADY SELECTED] (cannot toggle)[/italic yellow]\n")
+        
+        # Check if there's a cached selection
+        import hashlib
+        paths = '|'.join(c.get('file_path', '') for c in discovered_contracts)
+        items_hash = hashlib.md5(paths.encode()).hexdigest()[:8]
+        cache_file = self.scope_manager.cache_dir / f"selection_{items_hash}.json"
+        
+        if cache_file.exists():
+            import json
+            try:
+                with open(cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                    cached_count = len(cache_data.get('selected_indices', []))
+                    if cached_count > 0:
+                        self.console.print(f"[green]💾 Found previously saved selection: {cached_count} contracts[/green]")
+                        self.console.print("[italic yellow]These will be pre-loaded (you can modify them)[/italic yellow]\n")
+            except:
+                pass
+        
         self.console.print("[bold cyan]Launching interactive selector... Press arrow keys to navigate[/bold cyan]\n")
         
-        # Use the interactive curses-based selector
-        selected_indices = self.scope_manager.interactive_select(discovered_contracts)
+        # Use the interactive curses-based selector, passing audited indices as disabled
+        selected_indices = self.scope_manager.interactive_select(discovered_contracts, disabled_indices=audited_indices)
         
         if not selected_indices:
             self.console.print("[yellow]No contracts selected. Audit cancelled.[/yellow]")
@@ -136,20 +168,88 @@ class GitHubAuditor:
                 repo_name = repo or 'unknown'
                 repo_dir = self.repo_manager.cache_dir / (f"{owner}_{repo_name}" if owner else repo_name)
                 
-                # Jump straight to scope selection if interactive
-                if options.interactive_scope:
+                # Convert contracts to info dicts for resume menu and selector
+                contract_dicts = [{'contract_name': c.get('contract_name', c.get('file_path', '')), 
+                                 'file_path': c.get('file_path', '')} for c in contracts]
+                
+                # SMART RESUME WORKFLOW (check for saved scope before showing selector)
+                resume_scope_processed = False
+                current_scope_id: Optional[int] = None
+                rel_paths = []
+                
+                if project_id is not None and not options.scope:
+                    resume_info = self.scope_manager.detect_and_handle_saved_scope(project_id, contract_dicts)
+                    
+                    if resume_info:
+                        action = resume_info.get('action')
+                        scope = resume_info.get('scope')
+                        resume_scope_processed = True
+                        
+                        if scope and scope.get('id'):
+                            try:
+                                current_scope_id = int(scope['id'])
+                            except Exception:
+                                current_scope_id = None
+                        
+                        # Recalculate actual progress from database
+                        if scope and scope.get('id'):
+                            progress = self.db.recalculate_scope_progress(scope['id'])
+                            scope['total_audited'] = progress['total_audited']
+                            scope['total_pending'] = progress['total_pending']
+                            scope['total_selected'] = progress['total_selected']
+                        
+                        if action == 'continue':
+                            # Resume with existing scope
+                            rel_paths = scope['selected_contracts']
+                            print(f"\n[green]Resuming with saved scope: {scope['total_audited']}/{scope['total_selected']} audited[/green]\n", flush=True)
+                        
+                        elif action == 'reaudit':
+                            # Fresh re-analysis of all selected contracts
+                            updated_scope = self.scope_manager.handle_reaudit(scope)
+                            rel_paths = updated_scope['selected_contracts']
+                            current_scope_id = int(updated_scope['id']) if updated_scope.get('id') else current_scope_id
+                        
+                        elif action == 'new_scope':
+                            # Let user create new scope
+                            options.interactive_scope = True
+                            resume_scope_processed = False  # Reset flag to allow interactive selection
+                        
+                        elif action == 'view_report':
+                            # Show partial report and exit
+                            self.console.print("[bold]📊 Partial Audit Report[/bold]")
+                            self.console.print(f"  Audited: {scope['total_audited']}/{scope['total_selected']}")
+                            self.console.print(f"  Pending: {scope['total_pending']}/{scope['total_selected']}")
+                            return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
+                                             contracts_analyzed=scope['total_audited'], findings=[])
+                        
+                        elif action == 'cancel':
+                            return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
+                                             contracts_analyzed=0, findings=[])
+                
+                # INTERACTIVE SCOPE SELECTION (for first-time users or new scope)
+                # Only show selector if resume menu wasn't processed or user chose 'new_scope'
+                if options.interactive_scope and not resume_scope_processed and contract_dicts:
                     print(f"\n📋 Interactive Scope Selection", flush=True)
-                    contract_dicts = [{'contract_name': c.get('contract_name', c.get('file_path', '')), 
-                                     'file_path': c.get('file_path', '')} for c in contracts]
-                    selected_paths = self.scope_selector.select_scope(contract_dicts)
+                    # Get audited contracts to show as already analyzed
+                    audited_contracts = self._get_audited_contracts(project_id)
+                    selected_paths = self.scope_selector.select_scope(contract_dicts, audited_contracts=audited_contracts)
                     
                     if not selected_paths:
                         print("⚠️  No contracts selected. Exiting.", flush=True)
                         return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
                                          contracts_analyzed=0, findings=[])
                     
+                    # Save scope to database
+                    if project_id is not None:
+                        scope_rec = self.db.save_audit_scope(project_id, selected_paths)
+                        try:
+                            current_scope_id = int(scope_rec.get('id')) if scope_rec else None
+                        except Exception:
+                            current_scope_id = None
+                    
                     rel_paths = selected_paths
-                else:
+                elif not rel_paths:
+                    # If no scope was set by resume menu and not interactive, use all contracts
                     rel_paths = [c.get('file_path', '') for c in contracts]
                 
                 # Run analysis on selected contracts
@@ -158,6 +258,32 @@ class GitHubAuditor:
                     outcomes = analyzer.analyze_contracts(project_id, repo_dir, rel_paths, force=options.reanalyze)
                     findings = [{'contract': oc.contract_path, 'analysis_type': oc.analysis_type, 
                                'summary': oc.findings} for oc in outcomes]
+                    
+                    # Finalize scope progress after analysis
+                    try:
+                        if current_scope_id:
+                            progress = self.db.recalculate_scope_progress(current_scope_id)
+                            if isinstance(progress, dict):
+                                # Update the scope with calculated progress
+                                total_audited = progress.get('total_audited', 0)
+                                total_pending = progress.get('total_pending', 0)
+                                # Get the last analyzed contract ID (just use first outcome's contract ID if available)
+                                last_contract_id = 0
+                                for oc in outcomes:
+                                    if oc.status == 'success':
+                                        # Try to get the contract ID for this path
+                                        for c in contracts:
+                                            if c.get('file_path') == oc.contract_path:
+                                                last_contract_id = int(c.get('id', 0))
+                                                break
+                                self.db.update_scope_progress(current_scope_id, last_contract_id, total_audited, total_pending)
+                                
+                                if total_pending == 0:
+                                    # Mark scope as completed when no pending items remain
+                                    self.db.complete_scope(current_scope_id)
+                    except Exception:
+                        pass
+                    
                     return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
                                      contracts_analyzed=len(outcomes), findings=findings)
                 except Exception as e:
@@ -321,7 +447,8 @@ class GitHubAuditor:
                 # Only show selector if resume menu wasn't processed or user chose 'new_scope'
                 if options.interactive_scope and not resume_scope_processed and rel_paths:
                     # Let user select which contracts to audit
-                    selected_paths = self.scope_selector.select_scope(contract_info_list)
+                    audited_contracts = self._get_audited_contracts(project_id)
+                    selected_paths = self.scope_selector.select_scope(contract_info_list, audited_contracts=audited_contracts)
                     if not selected_paths:
                         self.console.print("[red]No contracts selected. Audit cancelled.[/red]")
                         return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[])
@@ -369,9 +496,25 @@ class GitHubAuditor:
         try:
             if current_scope_id:
                 progress = self.db.recalculate_scope_progress(current_scope_id)
-                if isinstance(progress, dict) and int(progress.get('total_pending', 0)) == 0:
-                    # Mark scope as completed when no pending items remain
-                    self.db.complete_scope(current_scope_id)
+                if isinstance(progress, dict):
+                    # Update the scope with calculated progress
+                    total_audited = progress.get('total_audited', 0)
+                    total_pending = progress.get('total_pending', 0)
+                    # Try to get the last analyzed contract ID
+                    last_contract_id = 0
+                    if 'discovered' in locals():
+                        for oc in outcomes:
+                            if oc.status == 'success':
+                                # Try to match with discovered contracts
+                                for disc in discovered:
+                                    if disc.file_path == oc.contract_path or str(Path(disc.file_path).relative_to(clone.repo_path)) == oc.contract_path:
+                                        last_contract_id = int(oc.contract_id) if hasattr(oc, 'contract_id') else 0
+                                        break
+                    self.db.update_scope_progress(current_scope_id, last_contract_id, total_audited, total_pending)
+                    
+                    if total_pending == 0:
+                        # Mark scope as completed when no pending items remain
+                        self.db.complete_scope(current_scope_id)
         except Exception:
             # Non-fatal; reporting will still work
             pass
@@ -411,12 +554,37 @@ class GitHubAuditor:
 
         return ', '.join(files[:3]) if files else 'various project files'
 
-    def _parse_owner_repo(self, url: str) -> tuple[Optional[str], Optional[str]]:
+    def _get_audited_contracts(self, project_id: Optional[int]) -> List[Dict[str, Any]]:
+        """Get list of already audited contracts from the database."""
+        if not project_id:
+            return []
+        
         try:
-            if url.endswith('.git'):
-                url = url[:-4]
-            if 'github.com/' in url:
-                parts = url.split('github.com/', 1)[1].split('/')
+            contracts = self.db.get_contracts(project_id)
+            audited = []
+            
+            for contract in contracts:
+                contract_id = int(contract.get('id', 0))
+                if contract_id > 0:
+                    # Check if this contract has been analyzed
+                    results = self.db.get_analysis_results(contract_id)
+                    # If there's any successful analysis, consider it audited
+                    if any(r.get('status') == 'success' for r in results):
+                        audited.append({
+                            'file_path': contract.get('file_path', ''),
+                            'contract_name': contract.get('contract_name', 'Unknown')
+                        })
+            
+            return audited
+        except Exception:
+            return []
+
+    def _parse_owner_repo(self, github_url: str) -> Tuple[str, str]:
+        try:
+            if github_url.endswith('.git'):
+                github_url = github_url[:-4]
+            if 'github.com/' in github_url:
+                parts = github_url.split('github.com/', 1)[1].split('/')
                 if len(parts) >= 2:
                     return parts[0], parts[1]
         except Exception:

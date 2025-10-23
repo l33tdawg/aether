@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Any
 from rich.console import Console
 from pathlib import Path
 import curses
+import json
+import time
 
 from core.database_manager import AetherDatabase
 
@@ -19,8 +21,59 @@ class ScopeManager:
     def __init__(self, db: Optional[AetherDatabase] = None):
         self.console = Console()
         self.db = db or AetherDatabase()
+        # Temporary selection cache directory
+        self.cache_dir = Path.home() / '.aether' / 'selection_cache'
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
     
-    def interactive_select(self, items: List[Dict[str, Any]], disabled_indices: Optional[List[int]] = None, pre_selected: Optional[List[int]] = None) -> List[int]:
+    def _get_selection_cache_file(self, items_hash: str) -> Path:
+        """Get cache file path for a specific set of items."""
+        return self.cache_dir / f"selection_{items_hash}.json"
+    
+    def _compute_items_hash(self, items: List[Dict[str, Any]]) -> str:
+        """Compute a hash of the item list to identify the selection context."""
+        import hashlib
+        # Use file paths to create a unique hash for this set of contracts
+        paths = '|'.join(item.get('file_path', '') for item in items)
+        return hashlib.md5(paths.encode()).hexdigest()[:8]
+    
+    def _save_selection_cache(self, items_hash: str, selected_indices: List[int]) -> None:
+        """Save the current selection to a cache file."""
+        try:
+            cache_file = self._get_selection_cache_file(items_hash)
+            cache_data = {
+                'timestamp': time.time(),
+                'selected_indices': selected_indices,
+            }
+            with open(cache_file, 'w') as f:
+                json.dump(cache_data, f)
+        except Exception as e:
+            # Silently fail - don't break the workflow for cache issues
+            pass
+    
+    def _load_selection_cache(self, items_hash: str) -> Optional[List[int]]:
+        """Load previously saved selection from cache."""
+        try:
+            cache_file = self._get_selection_cache_file(items_hash)
+            if cache_file.exists():
+                with open(cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                    # Cache is valid if less than 24 hours old
+                    if time.time() - cache_data.get('timestamp', 0) < 86400:
+                        return cache_data.get('selected_indices', [])
+        except Exception:
+            pass
+        return None
+    
+    def _clear_selection_cache(self, items_hash: str) -> None:
+        """Clear cache for a specific item set."""
+        try:
+            cache_file = self._get_selection_cache_file(items_hash)
+            if cache_file.exists():
+                cache_file.unlink()
+        except Exception:
+            pass
+    
+    def interactive_select(self, items: List[Dict[str, Any]], disabled_indices: Optional[List[int]] = None, pre_selected: Optional[List[int]] = None, project_context: Optional[str] = None) -> List[int]:
         """
         Interactive multi-select using curses with arrow keys and spacebar.
         
@@ -28,12 +81,13 @@ class ScopeManager:
             items: List of dicts with 'file_path' and 'contract_name' keys
             disabled_indices: List of indices that are disabled/already selected
             pre_selected: List of indices that should start as checked
+            project_context: Optional context string for better cache management
             
         Returns:
             List of selected indices
         """
         try:
-            return curses.wrapper(self._curses_select, items, disabled_indices or [], pre_selected or [])
+            return curses.wrapper(self._curses_select, items, disabled_indices or [], pre_selected or [], project_context)
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Selection cancelled[/yellow]")
             return []
@@ -41,10 +95,15 @@ class ScopeManager:
             self.console.print(f"[red]Selection error: {e}[/red]")
             return []
     
-    def _curses_select(self, stdscr, items: List[Dict[str, Any]], disabled_indices: List[int], pre_selected: List[int]) -> List[int]:
+    def _curses_select(self, stdscr, items: List[Dict[str, Any]], disabled_indices: List[int], pre_selected: List[int], project_context: Optional[str] = None) -> List[int]:
         """Curses-based interactive selector."""
+        items_hash = self._compute_items_hash(items)
+        
+        # Try to load cached selection
+        cached_selection = self._load_selection_cache(items_hash) if not pre_selected else None
+        
         curses.curs_set(0)  # Hide cursor
-        selected = [i in pre_selected for i in range(len(items))]
+        selected = [i in (cached_selection or pre_selected) for i in range(len(items))]
         position = 0
         filter_text = ""  # For filtering items
         
@@ -150,6 +209,23 @@ class ScopeManager:
                 key = stdscr.getch()
                 
                 if key == ord('q') or key == ord('Q'):
+                    # Auto-save current selection before exiting
+                    current_selection = [i for i, s in enumerate(selected) if s and i not in disabled_indices]
+                    if current_selection:
+                        self._save_selection_cache(items_hash, current_selection)
+                        # Show confirmation that selection was saved
+                        try:
+                            curses.curs_set(1)  # Show cursor temporarily
+                            stdscr.clear()
+                            stdscr.addstr(0, 0, "Your selection has been saved!")
+                            stdscr.addstr(1, 0, f"Selected: {len(current_selection)} contracts")
+                            stdscr.addstr(2, 0, "Next time you run the selector, your choices will be pre-loaded.")
+                            stdscr.addstr(4, 0, "Press any key to exit...")
+                            stdscr.refresh()
+                            stdscr.getch()
+                            curses.curs_set(0)
+                        except:
+                            pass
                     return []
                 
                 elif key == ord('\x1b'):  # ESC key - clear filter
@@ -189,6 +265,10 @@ class ScopeManager:
                         actual_index = filtered_indices[position]
                         if actual_index not in disabled_indices:
                             selected[actual_index] = not selected[actual_index]
+                            # Auto-save selection on every change
+                            current_selection = [i for i, s in enumerate(selected) if s and i not in disabled_indices]
+                            if current_selection:
+                                self._save_selection_cache(items_hash, current_selection)
                 
                 elif key == curses.KEY_UP:
                     if filtered_indices:
@@ -211,18 +291,30 @@ class ScopeManager:
                         self.console.print("[red]Please select at least one new contract[/red]")
                         stdscr.getch()  # Wait for user
                         continue
+                    # Clear cache on successful completion
+                    self._clear_selection_cache(items_hash)
                     return new_selections
                 
                 elif key == ord('a') or key == ord('A'):  # Select all (in filtered view)
                     for idx in filtered_indices:
                         if idx not in disabled_indices:
                             selected[idx] = True
+                    # Auto-save
+                    current_selection = [i for i, s in enumerate(selected) if s and i not in disabled_indices]
+                    if current_selection:
+                        self._save_selection_cache(items_hash, current_selection)
                 
                 elif key == ord('n') or key == ord('N'):  # Select none (in filtered view)
                     for idx in filtered_indices:
                         selected[idx] = False
+                    # Auto-save (even if empty)
+                    self._save_selection_cache(items_hash, [])
                 
             except KeyboardInterrupt:
+                # Auto-save on Ctrl+C
+                current_selection = [i for i, s in enumerate(selected) if s and i not in disabled_indices]
+                if current_selection:
+                    self._save_selection_cache(items_hash, current_selection)
                 return []
     
     def detect_and_handle_saved_scope(self, project_id: int, all_discovered_contracts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
