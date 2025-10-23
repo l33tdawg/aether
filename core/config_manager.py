@@ -61,7 +61,7 @@ class AetherConfig:
     
     # Model Provider Selection (per task type)
     # Choose which provider to use for each task: "openai" or "gemini"
-    validation_provider: str = "openai"   # Provider for validation (false positive filtering)
+    validation_provider: str = "gemini"   # Provider for validation (false positive filtering) - Gemini has 2M TPM vs OpenAI's 30K
     analysis_provider: str = "openai"     # Provider for vulnerability analysis
     generation_provider: str = "openai"   # Provider for PoC/test generation
     
