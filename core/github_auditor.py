@@ -173,6 +173,7 @@ class GitHubAuditor:
                                  'file_path': c.get('file_path', '')} for c in contracts]
                 
                 # SMART RESUME WORKFLOW (check for saved scope before showing selector)
+                # Resume menu should ALWAYS show when there's a saved scope, regardless of --interactive-scope flag
                 resume_scope_processed = False
                 current_scope_id: Optional[int] = None
                 rel_paths = []

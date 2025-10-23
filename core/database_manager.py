@@ -1512,6 +1512,75 @@ class AetherDatabase:
         except Exception as e:
             self.console.print(f"[red]❌ Failed to retrieve active scope: {e}[/red]")
             return None
+    
+    def get_last_scope(self, project_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve the most recent audit scope for a project (any status)."""
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute('''
+                    SELECT id, project_id, scope_name, selected_contracts, status,
+                           total_selected, total_audited, total_pending, last_audited_contract_id,
+                           created_at, modified_at
+                    FROM audit_scopes
+                    WHERE project_id = ?
+                    ORDER BY modified_at DESC
+                    LIMIT 1
+                ''', (project_id,))
+                
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                
+                return {
+                    'id': row[0],
+                    'project_id': row[1],
+                    'scope_name': row[2],
+                    'selected_contracts': json.loads(row[3]),
+                    'status': row[4],
+                    'total_selected': row[5],
+                    'total_audited': row[6],
+                    'total_pending': row[7],
+                    'last_audited_contract_id': row[8],
+                    'created_at': row[9],
+                    'modified_at': row[10]
+                }
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to retrieve last scope: {e}[/red]")
+            return None
+    
+    def get_all_scopes(self, project_id: int) -> List[Dict[str, Any]]:
+        """Retrieve all audit scopes for a project (any status)."""
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute('''
+                    SELECT id, project_id, scope_name, selected_contracts, status,
+                           total_selected, total_audited, total_pending, last_audited_contract_id,
+                           created_at, modified_at
+                    FROM audit_scopes
+                    WHERE project_id = ?
+                    ORDER BY modified_at DESC
+                ''', (project_id,))
+                
+                rows = cursor.fetchall()
+                scopes = []
+                for row in rows:
+                    scopes.append({
+                        'id': row[0],
+                        'project_id': row[1],
+                        'scope_name': row[2],
+                        'selected_contracts': json.loads(row[3]),
+                        'status': row[4],
+                        'total_selected': row[5],
+                        'total_audited': row[6],
+                        'total_pending': row[7],
+                        'last_audited_contract_id': row[8],
+                        'created_at': row[9],
+                        'modified_at': row[10]
+                    })
+                return scopes
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to retrieve scopes: {e}[/red]")
+            return []
 
     def update_scope_progress(self, scope_id: int, contract_id: int, audited_count: int, pending_count: int) -> bool:
         """Update scope progress after analyzing a contract."""
@@ -1561,6 +1630,21 @@ class AetherDatabase:
                 return True
         except Exception as e:
             self.console.print(f"[red]❌ Failed to complete scope: {e}[/red]")
+            return False
+    
+    def reactivate_scope(self, scope_id: int) -> bool:
+        """Reactivate a completed scope for adding more contracts."""
+        try:
+            with self._connect() as conn:
+                conn.execute('''
+                    UPDATE audit_scopes
+                    SET status = 'active', modified_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (scope_id,))
+                conn.commit()
+                return True
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to reactivate scope: {e}[/red]")
             return False
 
     def reset_scope_for_reaudit(self, scope_id: int) -> bool:

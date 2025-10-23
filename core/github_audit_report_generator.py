@@ -40,6 +40,13 @@ class GitHubAuditReportGenerator:
         
         if not Path(db_path).exists():
             raise FileNotFoundError(f"Database not found at {db_path}")
+        
+        # Initialize protocol pattern library for retroactive filtering
+        try:
+            from core.protocol_patterns import ProtocolPatternLibrary
+            self.protocol_patterns = ProtocolPatternLibrary()
+        except ImportError:
+            self.protocol_patterns = None
     
     def generate_report(
         self,
@@ -191,6 +198,10 @@ class GitHubAuditReportGenerator:
                 
                 # Try both possible keys: 'vulnerabilities' (from enhanced analyzer) and 'findings' (legacy)
                 findings_list = findings_data.get('vulnerabilities', findings_data.get('findings', []))
+                
+                # Apply retroactive false positive filtering to clean up old database results
+                findings_list = self._filter_legacy_false_positives(findings_list, contract)
+                
                 findings_count = len(findings_list)
                 total_findings += findings_count
                 
@@ -530,6 +541,78 @@ The following {len(clean_contracts)} contracts had no findings:
         
         output_path.write_text(html)
         return str(output_path)
+    
+    def _filter_legacy_false_positives(
+        self, 
+        findings: List[Dict[str, Any]], 
+        contract: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Apply retroactive false positive filtering to legacy database findings.
+        
+        This filters out known false positives from old audits that were run
+        before the protocol pattern library was implemented.
+        """
+        if not self.protocol_patterns or not findings:
+            return findings
+        
+        # Try to load contract code for pattern matching
+        contract_path = contract.get('file_path', '')
+        contract_code = ""
+        
+        if contract_path and Path(contract_path).exists():
+            try:
+                with open(contract_path, 'r', encoding='utf-8') as f:
+                    contract_code = f.read()
+            except Exception:
+                pass  # Continue without contract code
+        
+        if not contract_code:
+            # Can't filter without contract code
+            return findings
+        
+        # Filter findings using protocol patterns
+        filtered_findings = []
+        filtered_count = 0
+        
+        for finding in findings:
+            vuln_type = finding.get('vulnerability_type', finding.get('type', ''))
+            
+            # Build context for pattern matching
+            context = {
+                'file_path': contract_path,
+                'code_snippet': finding.get('code_snippet', ''),
+                'surrounding_context': contract_code,
+                'function_context': finding.get('context', {}).get('function_context', ''),
+                'line_number': finding.get('line_number', finding.get('line', 0)),
+            }
+            
+            # Check if it matches a known false positive pattern
+            pattern = self.protocol_patterns.check_pattern_match(
+                vuln_type, contract_code, context
+            )
+            
+            if pattern and pattern.acceptable_behavior:
+                # Check Solidity version compatibility if specified
+                if pattern.solidity_version_specific:
+                    version = self.protocol_patterns.extract_solidity_version(contract_code)
+                    if version and not self.protocol_patterns.check_solidity_version_compatibility(pattern, version):
+                        # Version mismatch - keep the finding
+                        filtered_findings.append(finding)
+                        continue
+                
+                # This is a known false positive - filter it out
+                filtered_count += 1
+                print(f"   🔍 Filtered legacy false positive: {vuln_type} at line {context['line_number']} ({pattern.reason[:60]}...)")
+                continue
+            
+            # Keep the finding
+            filtered_findings.append(finding)
+        
+        if filtered_count > 0:
+            print(f"   ✅ Filtered {filtered_count} legacy false positive(s) from {contract.get('file_path', 'unknown')}")
+        
+        return filtered_findings
 
 
 if __name__ == "__main__":

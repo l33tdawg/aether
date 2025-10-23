@@ -322,10 +322,23 @@ class ScopeManager:
         Detect if a project has a saved scope and offer resume options.
         Returns the selected scope and action to take, or None if starting fresh.
         """
+        # Check for active scope first (incomplete)
         active_scope = self.db.get_active_scope(project_id)
         
         if not active_scope:
-            return None  # No saved scope, start fresh
+            # No active scope - check for ALL scopes (including completed)
+            all_scopes = self.db.get_all_scopes(project_id)
+            if all_scopes and len(all_scopes) > 0:
+                # Show scope selection menu if multiple scopes exist
+                if len(all_scopes) > 1:
+                    selected_scope = self._select_scope_from_multiple(all_scopes, all_discovered_contracts)
+                    if selected_scope:
+                        return self._handle_completed_scope(selected_scope, all_discovered_contracts, project_id)
+                    return None
+                else:
+                    # Single completed scope
+                    return self._handle_completed_scope(all_scopes[0], all_discovered_contracts, project_id)
+            return None  # No saved scope at all, start fresh
         
         # Loop to handle menu options (allowing user to cancel operations and return to menu)
         while True:
@@ -375,6 +388,138 @@ class ScopeManager:
                     self.console.print("\n[yellow]Audit cancelled[/yellow]")
                     return {"action": "cancel", "scope": None}
             # If we get here, loop back to show menu again
+    
+    def _select_scope_from_multiple(
+        self,
+        scopes: List[Dict[str, Any]],
+        all_discovered_contracts: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Allow user to select from multiple available scopes."""
+        self.console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
+        self.console.print("[bold cyan]📋 MULTIPLE AUDIT SCOPES FOUND[/bold cyan]")
+        self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n")
+        
+        self.console.print("[bold]Select a scope to work with:[/bold]\n")
+        
+        for idx, scope in enumerate(scopes, 1):
+            status_emoji = "✅" if scope['status'] == 'completed' else "⏳"
+            status_text = scope['status'].upper()
+            
+            self.console.print(f"[bold]  [{idx}] {status_emoji} {scope.get('scope_name', 'Unnamed')}[/bold]")
+            self.console.print(f"       Created: {scope.get('created_at', 'Unknown')}")
+            self.console.print(f"       Status: {status_text}")
+            self.console.print(f"       Contracts: {scope['total_audited']}/{scope['total_selected']} audited\n")
+        
+        self.console.print(f"  [0] Create new scope\n")
+        self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]")
+        
+        while True:
+            try:
+                choice = self.console.input("\n[bold green]Select scope (0 to create new): [/bold green]").strip()
+                
+                if choice == "0":
+                    return None  # Create new scope
+                
+                try:
+                    idx = int(choice)
+                    if 1 <= idx <= len(scopes):
+                        return scopes[idx - 1]
+                    else:
+                        self.console.print(f"[red]Invalid option. Please select 0-{len(scopes)}[/red]")
+                except ValueError:
+                    self.console.print(f"[red]Invalid input. Please enter a number 0-{len(scopes)}[/red]")
+            except KeyboardInterrupt:
+                self.console.print("\n[yellow]Cancelled[/yellow]")
+                return None
+    
+    def _handle_completed_scope(
+        self, 
+        completed_scope: Dict[str, Any], 
+        all_discovered_contracts: List[Dict[str, Any]],
+        project_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Handle completed scope - offer options to view report, add more contracts, or create new scope.
+        """
+        while True:
+            self._display_completed_scope_menu(completed_scope, all_discovered_contracts)
+            
+            # Get user choice
+            while True:
+                try:
+                    choice = self.console.input("\n[bold green]Select option: [/bold green]").strip()
+                    
+                    if choice == "1":
+                        # View report for completed scope
+                        return {"action": "view_report", "scope": completed_scope}
+                    elif choice == "2":
+                        # Add more contracts and reactivate scope
+                        self.db.reactivate_scope(completed_scope['id'])  # Change status back to 'active'
+                        added = self.handle_add_contracts(completed_scope, all_discovered_contracts)
+                        if added:
+                            self.console.print("[green]✅ Scope reactivated with new contracts[/green]")
+                            return {"action": "continue", "scope": added}
+                        else:
+                            # User cancelled
+                            self.console.print("[yellow]Returning to menu...[/yellow]\n")
+                            break
+                    elif choice == "3":
+                        # Re-audit the completed scope
+                        return {"action": "reaudit", "scope": completed_scope}
+                    elif choice == "4":
+                        # Create new scope
+                        return {"action": "new_scope", "scope": None}
+                    elif choice == "5":
+                        # Cancel
+                        self.console.print("[yellow]Audit cancelled[/yellow]")
+                        return {"action": "cancel", "scope": None}
+                    else:
+                        self.console.print("[red]Invalid option. Please select 1-5[/red]")
+                except KeyboardInterrupt:
+                    self.console.print("\n[yellow]Audit cancelled[/yellow]")
+                    return {"action": "cancel", "scope": None}
+            # Loop back to show menu again
+    
+    def _display_completed_scope_menu(self, scope: Dict[str, Any], all_contracts: List[Dict[str, Any]]) -> None:
+        """Display completed scope info and options menu."""
+        selected_paths = scope['selected_contracts']
+        audited = scope['total_audited']
+        
+        # Get contract names
+        audited_names = []
+        
+        for contract in all_contracts:
+            path = contract.get('file_path', '')
+            name = contract.get('contract_name', 'Unknown')
+            
+            if path in selected_paths:
+                audited_names.append(f"{path} ({name})")
+        
+        self.console.print("\n[bold green]═══════════════════════════════════════════════════════[/bold green]")
+        self.console.print("[bold green]✅ PREVIOUS AUDIT SCOPE COMPLETED[/bold green]")
+        self.console.print("[bold green]═══════════════════════════════════════════════════════[/bold green]\n")
+        
+        self.console.print(f"[bold]Scope:[/bold] {scope.get('scope_name', 'Unnamed')}")
+        self.console.print(f"[bold]Created:[/bold] {scope.get('created_at', 'Unknown')}")
+        self.console.print(f"[bold]Completed:[/bold] {scope.get('modified_at', 'Unknown')}\n")
+        
+        self.console.print(f"[bold green]✓ All {audited} contracts audited successfully![/bold green]\n")
+        
+        if audited_names:
+            self.console.print("[bold]Audited Contracts:[/bold]")
+            for name in audited_names[:10]:  # Show first 10
+                self.console.print(f"  ✓ {name}")
+            if len(audited_names) > 10:
+                self.console.print(f"  ... and {len(audited_names) - 10} more")
+        
+        self.console.print("\n[bold green]═══════════════════════════════════════════════════════[/bold green]")
+        self.console.print("[bold]What would you like to do?[/bold]\n")
+        self.console.print(f"  [1] View audit report for this scope")
+        self.console.print(f"  [2] Add more contracts to this scope (reactivates scope)")
+        self.console.print(f"  [3] Re-audit all {audited} contracts (fresh analysis)")
+        self.console.print(f"  [4] Create new scope with different contracts")
+        self.console.print(f"  [5] Cancel (exit)")
+        self.console.print("[bold green]═══════════════════════════════════════════════════════[/bold green]")
     
     def _display_saved_scope_menu(self, scope: Dict[str, Any], all_contracts: List[Dict[str, Any]]) -> None:
         """Display saved scope info and resume menu."""

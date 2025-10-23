@@ -33,6 +33,13 @@ class LLMFalsePositiveFilter:
         self.llm_analyzer = llm_analyzer or EnhancedLLMAnalyzer()
         self.validation_cache = {}
         
+        # Initialize protocol pattern library for enhanced validation
+        try:
+            from core.protocol_patterns import ProtocolPatternLibrary
+            self.protocol_patterns = ProtocolPatternLibrary()
+        except ImportError:
+            self.protocol_patterns = None
+        
     async def validate_vulnerabilities(
         self, 
         vulnerabilities: List[Dict[str, Any]], 
@@ -104,13 +111,21 @@ class LLMFalsePositiveFilter:
         contract_code: str, 
         contract_name: str
     ) -> ValidationResult:
-        """Validate a single vulnerability using LLM."""
+        """Validate a single vulnerability using protocol patterns first, then LLM if needed."""
         
         # Create cache key
         cache_key = f"{vulnerability.get('vulnerability_type', '')}_{vulnerability.get('line_number', 0)}_{hash(contract_code) % 10000}"
         
         if cache_key in self.validation_cache:
             return self.validation_cache[cache_key]
+        
+        # Pre-validation: Check protocol patterns first (fast, deterministic)
+        if self.protocol_patterns:
+            pattern_result = self._check_protocol_patterns(vulnerability, contract_code)
+            if pattern_result:
+                # Protocol pattern found a match - mark as false positive
+                self.validation_cache[cache_key] = pattern_result
+                return pattern_result
         
         # Prepare context for LLM - ALWAYS use full contract code
         context = self._prepare_validation_context(vulnerability, contract_code, contract_name)
@@ -747,21 +762,52 @@ Respond ONLY in JSON format (no extra text):
         }
 
     def _resolve_related_sources(self, contract_code: str, base_path: Optional[str]) -> Dict[str, str]:
-        """Attempt to resolve imported Solidity files and load their contents.
+        """
+        Attempt to resolve imported Solidity files, protocol documentation, and related contracts.
         Returns a map of path -> content. Best-effort only.
+        
+        Enhancements:
+        1. Resolves imported Solidity files
+        2. Discovers protocol documentation (README.md, bug-bounty.md, SECURITY.md)
+        3. Finds related library files mentioned in comments
+        4. Discovers interface files
         """
         import re
+        from pathlib import Path as PathLib
+        
         related: Dict[str, str] = {}
+        
+        # Strategy 1: Resolve imported Solidity files
         for m in re.finditer(r"import\s+['\"]([^'\"]+)['\"]\s*;", contract_code):
             imp = m.group(1).strip()
-            # Skip package imports we can't resolve locally
+            
+            # Try to resolve package imports from common locations
             if imp.startswith('@'):
+                # Try common package locations
+                package_locations = [
+                    'node_modules',
+                    'lib',
+                    '../node_modules',
+                    '../../node_modules',
+                ]
+                if base_path:
+                    for pkg_loc in package_locations:
+                        pkg_path = os.path.join(os.path.dirname(base_path), pkg_loc, imp[1:])  # Remove '@'
+                        if os.path.exists(pkg_path) and os.path.isfile(pkg_path):
+                            try:
+                                with open(pkg_path, 'r') as f:
+                                    related[pkg_path] = f.read()
+                                    break
+                            except Exception:
+                                continue
                 continue
+            
             # Try relative to base_path, then cwd
             candidates = []
             if base_path:
                 candidates.append(os.path.join(os.path.dirname(base_path), imp))
             candidates.append(os.path.abspath(imp))
+            
             for c in candidates:
                 try:
                     if os.path.exists(c) and os.path.isfile(c) and c.endswith('.sol'):
@@ -770,4 +816,166 @@ Respond ONLY in JSON format (no extra text):
                             break
                 except Exception:
                     continue
+        
+        # Strategy 2: Discover protocol documentation files
+        if base_path:
+            project_root = self._find_project_root(base_path)
+            if project_root:
+                doc_files = [
+                    'README.md',
+                    'SECURITY.md',
+                    'bug-bounty.md',
+                    'BUG_BOUNTY.md',
+                    'AUDIT.md',
+                    'docs/README.md',
+                    'docs/SECURITY.md',
+                ]
+                
+                for doc_file in doc_files:
+                    doc_path = os.path.join(project_root, doc_file)
+                    if os.path.exists(doc_path) and os.path.isfile(doc_path):
+                        try:
+                            with open(doc_path, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                                # Only include if it mentions relevant security/design info
+                                if any(keyword in content.lower() for keyword in [
+                                    'overflow', 'underflow', 'security', 'assumption',
+                                    'design', 'intentional', 'acceptable', 'known issue'
+                                ]):
+                                    related[doc_path] = content[:5000]  # Limit to 5K chars
+                        except Exception:
+                            continue
+        
+        # Strategy 3: Discover related library files mentioned in comments
+        # Look for patterns like "See Position.sol", "documented in Tick.sol", etc.
+        referenced_files = re.findall(
+            r'(?:see|documented in|refer to|defined in)\s+([A-Z][a-zA-Z0-9_]+\.sol)',
+            contract_code,
+            re.IGNORECASE
+        )
+        
+        if base_path and referenced_files:
+            contract_dir = os.path.dirname(base_path)
+            for ref_file in set(referenced_files):
+                # Search in common locations
+                search_locations = [
+                    os.path.join(contract_dir, ref_file),
+                    os.path.join(contract_dir, 'libraries', ref_file),
+                    os.path.join(contract_dir, '..', 'libraries', ref_file),
+                    os.path.join(contract_dir, 'interfaces', ref_file),
+                ]
+                
+                for loc in search_locations:
+                    if os.path.exists(loc) and os.path.isfile(loc):
+                        try:
+                            with open(loc, 'r') as f:
+                                related[loc] = f.read()
+                                break
+                        except Exception:
+                            continue
+        
+        # Strategy 4: Discover interface files
+        # Look for interface names in the code and try to find their definitions
+        interface_patterns = re.findall(r'interface\s+([A-Z][a-zA-Z0-9_]+)', contract_code)
+        if base_path and interface_patterns:
+            contract_dir = os.path.dirname(base_path)
+            for interface_name in set(interface_patterns):
+                interface_file = f"{interface_name}.sol"
+                search_locations = [
+                    os.path.join(contract_dir, 'interfaces', interface_file),
+                    os.path.join(contract_dir, '..', 'interfaces', interface_file),
+                    os.path.join(contract_dir, interface_file),
+                ]
+                
+                for loc in search_locations:
+                    if os.path.exists(loc) and os.path.isfile(loc):
+                        try:
+                            with open(loc, 'r') as f:
+                                related[loc] = f.read()
+                                break
+                        except Exception:
+                            continue
+        
         return related
+    
+    def _find_project_root(self, file_path: str) -> Optional[str]:
+        """
+        Find the project root directory by looking for common markers.
+        Returns the root directory path or None.
+        """
+        current_dir = os.path.dirname(os.path.abspath(file_path))
+        
+        # Markers that indicate project root
+        root_markers = [
+            'package.json',
+            'hardhat.config.js',
+            'hardhat.config.ts',
+            'foundry.toml',
+            'truffle-config.js',
+            '.git',
+            'contracts',  # Directory
+        ]
+        
+        # Walk up the directory tree
+        max_levels = 5
+        for _ in range(max_levels):
+            # Check if any marker exists in current directory
+            for marker in root_markers:
+                marker_path = os.path.join(current_dir, marker)
+                if os.path.exists(marker_path):
+                    return current_dir
+            
+            # Move up one level
+            parent_dir = os.path.dirname(current_dir)
+            if parent_dir == current_dir:  # Reached filesystem root
+                break
+            current_dir = parent_dir
+        
+        return None
+    
+    def _check_protocol_patterns(
+        self, 
+        vulnerability: Dict[str, Any], 
+        contract_code: str
+    ) -> Optional[ValidationResult]:
+        """
+        Check if vulnerability matches known protocol-specific false positive patterns.
+        Returns ValidationResult if it's a false positive, None otherwise.
+        """
+        if not self.protocol_patterns:
+            return None
+        
+        vuln_type = vulnerability.get('vulnerability_type', vulnerability.get('type', ''))
+        
+        # Build context for pattern matching
+        context = {
+            'file_path': vulnerability.get('context', {}).get('file_path', ''),
+            'code_snippet': vulnerability.get('code_snippet', ''),
+            'surrounding_context': contract_code,
+            'function_context': vulnerability.get('context', {}).get('function_context', ''),
+            'line_number': vulnerability.get('line_number', 0),
+        }
+        
+        # Check if it matches a protocol pattern
+        pattern = self.protocol_patterns.check_pattern_match(
+            vuln_type, contract_code, context
+        )
+        
+        if pattern and pattern.acceptable_behavior:
+            # Check Solidity version compatibility if specified
+            if pattern.solidity_version_specific:
+                version = self.protocol_patterns.extract_solidity_version(contract_code)
+                if version and not self.protocol_patterns.check_solidity_version_compatibility(pattern, version):
+                    # Version mismatch - not a false positive
+                    return None
+            
+            # This is a known false positive pattern
+            return ValidationResult(
+                is_false_positive=True,
+                confidence=0.95,  # High confidence for protocol patterns
+                reasoning=f"Matched protocol pattern: {pattern.reason}",
+                corrected_severity=None,
+                corrected_description=None
+            )
+        
+        return None

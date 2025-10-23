@@ -132,7 +132,11 @@ class EnhancedLLMAnalyzer:
             return self._create_fallback_response()
 
     def _create_enhanced_analysis_prompt(self, contract_content: str, static_results: Dict[str, Any]) -> str:
-        """Create enhanced analysis prompt with validation requirements."""
+        """Create enhanced analysis prompt with validation requirements and Solidity version awareness."""
+        
+        # Extract Solidity version for version-aware prompting
+        solidity_version = self._extract_solidity_version(contract_content)
+        version_guidance = self._generate_version_specific_guidance(solidity_version)
         
         # Use model-specific context limits (COMBINED input + output)
         context_limit = self.model_context_limits.get(self.model, 128000)  # Default to 128k for unknown models
@@ -161,6 +165,8 @@ class EnhancedLLMAnalyzer:
         
         prompt = f"""
 You are an elite smart contract security auditor. Your task is to identify ONLY real, exploitable vulnerabilities.
+
+{version_guidance}
 
 **CRITICAL REQUIREMENTS:**
 1. **NO HALLUCINATIONS**: Only report vulnerabilities that actually exist in the code
@@ -755,3 +761,91 @@ Before reporting any vulnerability, verify:
             'raw_response': '',
             'model': 'failed'
         }
+    
+    def _extract_solidity_version(self, contract_content: str) -> Optional[str]:
+        """Extract Solidity version from pragma statement."""
+        import re
+        pragma_match = re.search(r'pragma\s+solidity\s+([^;]+);', contract_content)
+        if pragma_match:
+            version_spec = pragma_match.group(1).strip()
+            # Extract actual version number (e.g., "^0.8.0" -> "0.8.0")
+            version_match = re.search(r'(\d+\.\d+\.\d+)', version_spec)
+            if version_match:
+                return version_match.group(1)
+            # Handle range specs like ">=0.7.6 <0.9.0"
+            version_match = re.search(r'(\d+\.\d+)', version_spec)
+            if version_match:
+                return version_match.group(1) + ".0"
+        return None
+    
+    def _generate_version_specific_guidance(self, solidity_version: Optional[str]) -> str:
+        """
+        Generate version-specific guidance for the LLM based on Solidity version.
+        
+        This helps the LLM understand critical differences between Solidity versions:
+        - <0.8.0: No automatic overflow/underflow checks
+        - >=0.8.0: Automatic overflow/underflow checks (unless in unchecked blocks)
+        """
+        if not solidity_version:
+            return """
+**SOLIDITY VERSION: UNKNOWN**
+- Proceed with caution - unable to determine Solidity version
+- Check for SafeMath usage for overflow protection
+- Look for explicit bounds checking
+"""
+        
+        # Parse version
+        try:
+            major, minor = map(int, solidity_version.split('.')[:2])
+        except (ValueError, AttributeError):
+            return ""
+        
+        if major == 0 and minor < 8:
+            # Solidity <0.8.0
+            return f"""
+**SOLIDITY VERSION: {solidity_version} (<0.8.0)**
+
+**CRITICAL OVERFLOW/UNDERFLOW CONTEXT:**
+- ⚠️  **NO automatic overflow/underflow protection**
+- Arithmetic operations can silently overflow/underflow
+- **Required protections:**
+  1. SafeMath library (OpenZeppelin)
+  2. Manual bounds checking with require()
+  3. Documented intentional overflow (see comments for "overflow is acceptable")
+
+**FALSE POSITIVE PREVENTION:**
+- ✅ SafeMath.add/sub/mul/div → SAFE (reverts on overflow)
+- ✅ require(a + b <= max) → SAFE (explicit bounds check)
+- ✅ Comments like "overflow is acceptable" + documentation → MAY BE SAFE (check context)
+- ❌ Unchecked arithmetic → VULNERABLE (unless explicitly documented as safe)
+
+**IMPORTANT:** Check for comments like "overflow is acceptable" - in protocols like Uniswap V3, 
+uint128 overflow is intentionally allowed with documentation. This is NOT a vulnerability if:
+1. There's explicit documentation explaining the behavior
+2. The protocol has safety mechanisms (e.g., "must withdraw before type(uint128).max")
+3. Related library files (Position.sol, Tick.sol) document the design decision
+"""
+        else:
+            # Solidity >=0.8.0
+            return f"""
+**SOLIDITY VERSION: {solidity_version} (≥0.8.0)**
+
+**CRITICAL OVERFLOW/UNDERFLOW CONTEXT:**
+- ✅ **Automatic overflow/underflow protection ENABLED**
+- All arithmetic operations revert on overflow/underflow by default
+- unchecked blocks opt out of protection
+
+**FALSE POSITIVE PREVENTION:**
+- ✅ Normal arithmetic (a + b, a - b, etc.) → SAFE (auto-protected)
+- ✅ SafeCast.toUint96/toUint128 → SAFE (intentional type narrowing with revert)
+- ⚠️  unchecked {{ a + b }} → POTENTIALLY UNSAFE (intentionally bypassing protection)
+- ✅ External library calls → Check library's Solidity version
+
+**IMPORTANT:** Do NOT flag normal arithmetic as overflow vulnerabilities in Solidity ≥0.8.0 
+unless it's inside an `unchecked` block. The compiler automatically adds overflow checks.
+
+**SafeCast Pattern:** 
+- SafeCast.toUintXX() is intentional type narrowing that REVERTS on overflow
+- This is a SAFE pattern, NOT a vulnerability
+- Example: `SafeCast.toUint96(votes)` will revert if votes > type(uint96).max
+"""
