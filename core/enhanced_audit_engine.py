@@ -221,21 +221,23 @@ class EnhancedAetherAuditEngine:
             all_findings = []
             for contract_file in contract_files:
                 try:
-                    # For now, we'll create temporary files for Slither analysis
-                    # In a real scenario, we'd pass the file path directly
-                    import tempfile
-                    from pathlib import Path
-                    
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
-                        f.write(contract_file['content'])
-                        temp_path = f.name
-                    
-                    try:
-                        findings = slither.analyze_with_slither(temp_path)
+                    # Prefer the actual on-disk file path for correct imports and layout
+                    real_path = contract_file.get('path')
+                    if real_path and os.path.exists(real_path):
+                        findings = slither.analyze_with_slither(real_path)
                         all_findings.extend(findings)
-                    finally:
-                        # Clean up temporary file
-                        Path(temp_path).unlink(missing_ok=True)
+                    else:
+                        # Fallback: still support temp-path analysis if file isn't on disk
+                        import tempfile
+                        from pathlib import Path
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
+                            f.write(contract_file['content'])
+                            temp_path = f.name
+                        try:
+                            findings = slither.analyze_with_slither(temp_path)
+                            all_findings.extend(findings)
+                        finally:
+                            Path(temp_path).unlink(missing_ok=True)
                 
                 except Exception as e:
                     print(f"   ⚠️  Slither analysis failed for {contract_file['name']}: {e}")

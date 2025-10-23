@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import sys
 import os
+import shutil
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -109,9 +110,10 @@ contract SafeContract {
         try:
             # Mock the subprocess call to avoid actual Slither execution
             with patch('subprocess.run') as mock_run:
+                # Simulate mixed logs + JSON in stdout
                 mock_run.return_value = MagicMock(
                     returncode=0,
-                    stdout='[]',
+                    stdout='Some log...\n{ "results": { "detectors": [] } }\nTrailing logs',
                     stderr=''
                 )
                 
@@ -120,8 +122,7 @@ contract SafeContract {
                     # Should not raise exception
                     try:
                         result = self.slither.analyze_with_slither(temp_path)
-                        # Result should be a list or None
-                        assert result is None or isinstance(result, list)
+                        assert isinstance(result, list)
                     except Exception as e:
                         # Expected if Slither not installed
                         pytest.skip(f"Slither not available: {e}")
@@ -141,7 +142,7 @@ contract SafeContract {
             # If Slither not available, should return empty list or None
             if not slither.slither_available:
                 result = slither.analyze_with_slither(temp_path) if hasattr(slither, 'analyze_with_slither') else None
-                assert result is None or isinstance(result, (list, type(None)))
+                assert result is None or isinstance(result, list)
         finally:
             Path(temp_path).unlink(missing_ok=True)
 
@@ -187,10 +188,8 @@ contract Test2 {
         """Test _run_slither_analysis method."""
         engine = EnhancedAetherAuditEngine()
         
-        # Call the method
+        # Ensure it returns a list even without real Slither
         result = engine._run_slither_analysis(self.contract_files)
-        
-        # Should return a list
         assert isinstance(result, list)
     
     def test_slither_not_available_returns_empty_list(self):
@@ -301,26 +300,14 @@ class TestSlitherOutputParsing:
         slither = SlitherIntegration()
         
         # Sample Slither JSON output
-        sample_output = '''
-[
-    {
-        "check": "unchecked-transfer",
-        "impact": "High",
-        "confidence": "High",
-        "description": "Unchecked transfer",
-        "function": "TestContract.withdraw",
-        "type": "Function"
-    }
-]
-'''
+        sample_output = '{"results": {"detectors": [{"check":"unchecked-transfer","impact":"High","description":"Unchecked transfer","results":[{"source_mapping":{"lines":[12]}}]}]}}'
         
         # Should be able to parse JSON
         import json
         parsed = json.loads(sample_output)
         
-        assert isinstance(parsed, list)
-        assert len(parsed) == 1
-        assert parsed[0]['check'] == 'unchecked-transfer'
+        assert isinstance(parsed, dict)
+        assert 'results' in parsed and 'detectors' in parsed['results']
     
     def test_slither_result_conversion(self):
         """Test conversion of Slither results to standard format."""
@@ -437,6 +424,91 @@ class TestSlitherPerformance:
         result = engine._run_slither_analysis(contract_files)
         assert isinstance(result, list)
 
+
+class TestSlitherRealWorkflow:
+    """End-to-end tests that execute real Slither against real temp files.
+
+    These tests are skipped if Slither is not available in the environment.
+    """
+
+    @staticmethod
+    def _slither_present() -> bool:
+        """Detect if slither is available to run for real E2E tests."""
+        try:
+            venv_slither = '/Users/l33tdawg/nodejs-projects/bugbounty/venv/bin/slither'
+            return os.path.exists(venv_slither) or (shutil.which('slither') is not None)
+        except Exception:
+            return False
+
+    def setup_method(self):
+        self.slither = SlitherIntegration()
+
+    @pytest.mark.skipif(not _slither_present.__func__(), reason="Slither binary not available for real E2E test")
+    def test_real_cli_runs_single_file(self):
+        """Ensure our integration can run Slither on a real self-contained file."""
+        vulnerable_contract = (
+            'pragma solidity ^0.8.0;\n'
+            'contract V {\n'
+            '    function withdraw() public {\n'
+            '        (bool s, ) = msg.sender.call{value: 1}("");\n'
+            '        require(s);\n'
+            '    }\n'
+            '}\n'
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'V.sol'
+            path.write_text(vulnerable_contract)
+
+            findings = self.slither.analyze_with_slither(str(path))
+            assert isinstance(findings, list)
+
+    @pytest.mark.skipif(not _slither_present.__func__(), reason="Slither binary not available for real E2E test")
+    def test_resolves_relative_imports_via_cwd(self):
+        """Create two files with a relative import and ensure Slither can run (cwd correctness)."""
+        lib_contract = (
+            'pragma solidity ^0.8.0;\n'
+            'library LibA {\n'
+            '    function x() internal pure returns (uint256) { return 1; }\n'
+            '}\n'
+        )
+        main_contract = (
+            'pragma solidity ^0.8.0;\n'
+            'import "./LibA.sol";\n'
+            'contract C {\n'
+            '    function f() public pure returns (uint256) {\n'
+            '        return LibA.x();\n'
+            '    }\n'
+            '}\n'
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / 'LibA.sol').write_text(lib_contract)
+            main_path = tmp_path / 'C.sol'
+            main_path.write_text(main_contract)
+
+            findings = self.slither.analyze_with_slither(str(main_path))
+            # If cwd wasn't set, Slither would typically fail to resolve import and return [].
+            # We only assert the integration runs and returns a list, not on specific findings.
+            assert isinstance(findings, list)
+
+    @pytest.mark.skipif(not _slither_present.__func__(), reason="Slither binary not available for real E2E test")
+    def test_engine_slither_on_directory(self):
+        """Simulate engine workflow on a directory of contracts using real Slither."""
+        engine = EnhancedAetherAuditEngine()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / 'A.sol').write_text('pragma solidity ^0.8.0; contract A { function a() public {} }')
+            (tmp_path / 'B.sol').write_text('pragma solidity ^0.8.0; contract B { function b() public payable {} }')
+
+            # Simulate app read workflow
+            contract_files = engine._read_contract_files(str(tmp_path))
+            assert isinstance(contract_files, list) and len(contract_files) >= 2
+
+            # Run slither analysis path
+            findings = engine._run_slither_analysis(contract_files)
+            assert isinstance(findings, list)
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

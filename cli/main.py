@@ -763,6 +763,7 @@ class AetherCLI:
             normalized_url = auditor.repo_manager._normalize_github_url(github_url)  # type: ignore
         except Exception:
             normalized_url = github_url
+        
         result = auditor.audit(normalized_url, options)
         formatter = AuditResultFormatter()
         project_info = {

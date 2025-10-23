@@ -114,15 +114,70 @@ class GitHubAuditor:
 
     def audit(self, github_url: str, options: Optional[AuditOptions] = None) -> AuditResult:
         options = options or AuditOptions()
+        
+        # Normalize URL early
+        try:
+            normalized_url = self.repo_manager._normalize_github_url(github_url)  # type: ignore
+        except Exception:
+            normalized_url = github_url
 
+        # FAST PATH: Check if project exists in DB with contracts already discovered
+        project = self.db.get_project(normalized_url)
+        if project and not options.fresh and not options.clear_cache:
+            project_id = int(project['id'])
+            contracts = self.db.get_contracts(project_id)
+            
+            if contracts:
+                print(f"✅ Found cached project with {len(contracts)} contracts", flush=True)
+                print(f"📂 Skipping clone/build/discovery (using cached data)", flush=True)
+                
+                # Get repo path from cache
+                owner, repo = self._parse_owner_repo(normalized_url)
+                repo_name = repo or 'unknown'
+                repo_dir = self.repo_manager.cache_dir / (f"{owner}_{repo_name}" if owner else repo_name)
+                
+                # Jump straight to scope selection if interactive
+                if options.interactive_scope:
+                    print(f"\n📋 Interactive Scope Selection", flush=True)
+                    contract_dicts = [{'contract_name': c.get('contract_name', c.get('file_path', '')), 
+                                     'file_path': c.get('file_path', '')} for c in contracts]
+                    selected_paths = self.scope_selector.select_scope(contract_dicts)
+                    
+                    if not selected_paths:
+                        print("⚠️  No contracts selected. Exiting.", flush=True)
+                        return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
+                                         contracts_analyzed=0, findings=[])
+                    
+                    rel_paths = selected_paths
+                else:
+                    rel_paths = [c.get('file_path', '') for c in contracts]
+                
+                # Run analysis on selected contracts
+                try:
+                    analyzer = SequentialAnalyzer(db=self.db, use_enhanced_analysis=True)
+                    outcomes = analyzer.analyze_contracts(project_id, repo_dir, rel_paths, force=options.reanalyze)
+                    findings = [{'contract': oc.contract_path, 'analysis_type': oc.analysis_type, 
+                               'summary': oc.findings} for oc in outcomes]
+                    return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
+                                     contracts_analyzed=len(outcomes), findings=findings)
+                except Exception as e:
+                    print(f"❌ Analysis failed: {e}", flush=True)
+                    return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
+                                     contracts_analyzed=0, findings=[])
+
+        # SLOW PATH: Clone/build/discover (for new projects or fresh runs)
+        print(f"⏳ Cloning repository (first time or fresh run)...", flush=True)
+        
         # 1) Clone or get repo
         # Set token if provided at call time
         if options.github_token:
             self.repo_manager.github_token = options.github_token
         clone = self.repo_manager.clone_or_get(github_url, force_fresh=options.fresh or options.clear_cache)
+        print(f"✅ Repository ready at: {clone.repo_path}", flush=True)
 
         # 2) If cache exists and not fresh, try pulling updates
         if not clone.is_new_clone and not options.fresh and not options.clear_cache:
+            print(f"⏳ Pulling latest updates...", flush=True)
             self.repo_manager.pull_updates(clone.repo_path)
 
         # 3) Detect framework
