@@ -160,7 +160,29 @@ class EnhancedAetherAuditEngine:
         # STAGE 1: Run Slither static analysis
         print("   📊 Running Slither static analysis...", flush=True)
         slither_findings = self._run_slither_analysis(contract_files)
-        all_vulnerabilities.extend(slither_findings)
+        
+        # Convert Slither findings (dicts) to VulnerabilityMatch objects
+        from core.enhanced_vulnerability_detector import VulnerabilityMatch
+        for finding in slither_findings:
+            if isinstance(finding, dict):
+                # Convert dict to VulnerabilityMatch object
+                vuln_match = VulnerabilityMatch(
+                    vulnerability_type=finding.get('vulnerability_type', finding.get('type', 'Unknown')),
+                    severity=finding.get('severity', 'medium'),
+                    confidence=finding.get('confidence', 0.7),
+                    line_number=finding.get('line_number', finding.get('line', 0)),
+                    description=finding.get('description', ''),
+                    code_snippet=finding.get('code_snippet', ''),
+                    swc_id=finding.get('swc_id', ''),
+                    category=finding.get('category', 'slither_finding'),
+                    context=finding.get('context', {}),
+                    validation_status='validated'  # Slither findings are pre-validated
+                )
+                all_vulnerabilities.append(vuln_match)
+            else:
+                # Already a VulnerabilityMatch object
+                all_vulnerabilities.append(finding)
+        
         if slither_findings:
             print(f"   📊 Slither total: {len(slither_findings)} findings across all contracts", flush=True)
         
@@ -190,10 +212,20 @@ class EnhancedAetherAuditEngine:
         # Filter out false positives
         validated_vulnerabilities = []
         for vuln in all_vulnerabilities:
-            if vuln.validation_status == "validated":
+            # Handle both VulnerabilityMatch objects and dicts
+            if isinstance(vuln, dict):
+                validation_status = vuln.get('validation_status', 'pending')
+                vuln_type = vuln.get('vulnerability_type', 'Unknown')
+                line_num = vuln.get('line_number', 0)
+            else:
+                validation_status = getattr(vuln, 'validation_status', 'pending')
+                vuln_type = getattr(vuln, 'vulnerability_type', 'Unknown')
+                line_num = getattr(vuln, 'line_number', 0)
+            
+            if validation_status == "validated":
                 validated_vulnerabilities.append(vuln)
             else:
-                print(f"⚠️  Filtered false positive: {vuln.vulnerability_type} at line {vuln.line_number}")
+                print(f"⚠️  Filtered false positive: {vuln_type} at line {line_num}")
         
         # Calculate statistics
         self.stats['total_findings'] = len(all_vulnerabilities)
@@ -512,7 +544,9 @@ class EnhancedAetherAuditEngine:
         
         # Optional post-filter for Foundry workload control
         try:
-            only_consensus = os.getenv('AETHER_FOUNDRY_ONLY_CONSENSUS', '1') == '1'
+            # DISABLED BY DEFAULT: Send all findings to Foundry for validation
+            # The consensus-only filter was too restrictive and discarded valid findings
+            only_consensus = os.getenv('AETHER_FOUNDRY_ONLY_CONSENSUS', '0') == '1'  # Changed default from '1' to '0'
             foundry_max_items = int(os.getenv('AETHER_FOUNDRY_MAX_ITEMS', '80'))
             if only_consensus:
                 validated_vulnerabilities = [
