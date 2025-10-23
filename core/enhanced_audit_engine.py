@@ -96,14 +96,14 @@ class EnhancedAetherAuditEngine:
             
             # Step 7: Learning System Integration (removed - was simulated)
             
-            # Step 8: Foundry validation (if requested)
+            # Step 8: Foundry validation (if requested) - MOVED BEFORE report generation
             if foundry_validation:
                 await self._run_foundry_validation(contract_path, validated_results)
             
-            # Step 9: Generate comprehensive report
+            # Step 9: Generate comprehensive report (MOVED AFTER Foundry validation)
             final_results = self._generate_final_report(validated_results, start_time, ai_ensemble_results, formal_verification_results)
 
-            # Step 10: Save to database
+            # Step 10: Save to database (MOVED AFTER report generation)
             self._save_audit_to_database(contract_path, final_results, start_time, flow_config)
 
             return final_results
@@ -574,16 +574,25 @@ class EnhancedAetherAuditEngine:
         execution_time = time.time() - start_time
         
         # Calculate final statistics using the deduplicated validated findings
-        total_findings = validated_results['total_findings']
-        validated_count = len(validated_results['validated_vulnerabilities'])  # Use actual stored count
-        false_positive_count = validated_results['false_positive_count']
-
-        final_accuracy = (validated_count / total_findings * 100) if total_findings > 0 else 0
+        # Filter out false positives from the count
+        confirmed_vulnerabilities = [
+            v for v in validated_results.get('validated_vulnerabilities', [])
+            if v.get('status', 'confirmed') != 'false_positive'
+        ]
+        false_positive_vulnerabilities = [
+            v for v in validated_results.get('validated_vulnerabilities', [])
+            if v.get('status') == 'false_positive'
+        ]
+        
+        total_findings = len(confirmed_vulnerabilities)
+        false_positive_count = len(false_positive_vulnerabilities)
+        
+        final_accuracy = ((total_findings) / (total_findings + false_positive_count) * 100) if (total_findings + false_positive_count) > 0 else 0
         
         # Generate summary with Phase 3 features
         summary = {
-            'total_vulnerabilities': validated_count,
-            'high_severity_count': len([v for v in validated_results['validated_vulnerabilities']
+            'total_vulnerabilities': total_findings,
+            'high_severity_count': len([v for v in confirmed_vulnerabilities
                                       if (isinstance(v, dict) and v.get('severity', '').lower() in ['high', 'critical']) or
                                          (hasattr(v, 'severity') and v.severity.lower() in ['high', 'critical'])]),
             'execution_time': execution_time,
@@ -597,12 +606,12 @@ class EnhancedAetherAuditEngine:
             'learning_feedback_entries': 0  # Removed - was simulated
         }
         
-        # Generate results structure
+        # Generate results structure - only include confirmed vulnerabilities
         results = {
-            'vulnerabilities': validated_results['validated_vulnerabilities'],
+            'vulnerabilities': confirmed_vulnerabilities,
             'validation_summary': {
-                'total_analyzed': total_findings,
-                'validated': validated_count,
+                'total_analyzed': validated_results.get('total_findings', total_findings + false_positive_count),
+                'validated': total_findings,
                 'false_positives': false_positive_count,
                 'accuracy_rate': final_accuracy
             },
@@ -612,7 +621,7 @@ class EnhancedAetherAuditEngine:
         return {
             'summary': summary,
             'results': results,
-            'validation_results': validated_results['validation_results'],
+            'validation_results': validated_results.get('validation_results', []),
             'enhancement_stats': {
                 'false_positives_prevented': false_positive_count,
                 'accuracy_improvement': final_accuracy,
@@ -881,7 +890,7 @@ class EnhancedAetherAuditEngine:
         return capped
 
     async def _run_foundry_validation(self, contract_path: str, validated_results: Dict[str, Any]) -> None:
-        """Run Foundry validation on detected vulnerabilities."""
+        """Run Foundry validation on detected vulnerabilities and update vulnerability statuses."""
         try:
             if self.foundry_integration is None:
                 from core.enhanced_foundry_integration import EnhancedFoundryIntegration
@@ -905,6 +914,12 @@ class EnhancedAetherAuditEngine:
                     'exploit_pocs_generated': len(submission.get('exploit_pocs', [])),
                     'confidence_score': submission.get('confidence_score', 0.0)
                 })
+                
+                # Extract validation data from submission vulnerabilities
+                foundry_vulns = submission.get('vulnerabilities', [])
+                validated_count = 0
+                false_positive_count = 0
+                
             else:
                 # Object with attributes
                 validated_results['foundry_validation'].update({
@@ -914,13 +929,70 @@ class EnhancedAetherAuditEngine:
                     'exploit_pocs_generated': len(getattr(submission, 'exploit_pocs', [])),
                     'confidence_score': getattr(submission, 'confidence_score', 0.0)
                 })
+                
+                # Extract validation data from submission vulnerabilities
+                foundry_vulns = getattr(submission, 'vulnerabilities', [])
+                validated_count = 0
+                false_positive_count = 0
+            
+            # Update vulnerability statuses based on Foundry validation results
+            # Create a mapping of vulnerability identifiers to their Foundry validation status
+            foundry_validation_map = {}
+            for vuln_data in foundry_vulns:
+                # Build a key from vulnerability type, line number, and description for matching
+                vuln_type = vuln_data.get('vulnerability_type', '')
+                line_num = vuln_data.get('line_number', 0)
+                # Use a simple key for matching
+                key = f"{vuln_type}_{line_num}"
+                foundry_val = vuln_data.get('foundry_validation', {})
+                foundry_validation_map[key] = {
+                    'validated': foundry_val.get('validated', False),
+                    'exploitable': foundry_val.get('exploitable', False)
+                }
+                if foundry_val.get('validated'):
+                    validated_count += 1
+                else:
+                    false_positive_count += 1
+            
+            # Update the validated vulnerabilities list with Foundry results
+            updated_vulnerabilities = []
+            for vuln in validated_results.get('validated_vulnerabilities', []):
+                # Build matching key
+                vuln_type = vuln.get('vulnerability_type', vuln.get('title', ''))
+                line_num = vuln.get('line_number', vuln.get('line', 0))
+                key = f"{vuln_type}_{line_num}"
+                
+                # Check if Foundry validation found this vulnerability
+                foundry_result = foundry_validation_map.get(key)
+                
+                if foundry_result and not foundry_result['validated']:
+                    # Mark as false positive since Foundry couldn't validate it
+                    vuln['status'] = 'false_positive'
+                    vuln['validation_confidence'] = 0.0
+                    vuln['validation_reasoning'] = 'Foundry validation could not confirm this vulnerability'
+                else:
+                    # Keep as confirmed (or update confidence if Foundry validated)
+                    if foundry_result and foundry_result['validated']:
+                        vuln['status'] = 'confirmed'
+                        vuln['validation_confidence'] = max(vuln.get('validation_confidence', 0.0), 0.95)
+                        vuln['validation_reasoning'] = 'Confirmed by Foundry validation'
+                
+                updated_vulnerabilities.append(vuln)
+            
+            # Update the validated_results with filtered vulnerabilities
+            validated_results['validated_vulnerabilities'] = updated_vulnerabilities
+            
+            # Update metrics
+            validated_results['false_positive_count'] = false_positive_count
+            validated_results['validated_count'] = validated_count
             
             # Handle both dict and object types for print statement
             if isinstance(submission, dict):
                 vuln_count = len(submission.get('vulnerabilities', []))
             else:
                 vuln_count = len(getattr(submission, 'vulnerabilities', []))
-            print(f"✅ Foundry validation completed: {vuln_count} vulnerabilities validated")
+            
+            print(f"✅ Foundry validation completed: {validated_count} real / {false_positive_count} false positive")
             
         except Exception as e:
             print(f"⚠️ Foundry validation failed: {e}")
