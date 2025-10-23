@@ -70,7 +70,7 @@ class EnhancedAetherAuditEngine:
 
     async def run_audit(self, contract_path: str, flow_config: Dict[str, Any], foundry_validation: bool = False, enhanced: bool = True, phase3: bool = False, llm_validation: bool = False, ai_ensemble: bool = False) -> Dict[str, Any]:
         """Run enhanced audit with validation."""
-        print("🚀 Starting enhanced AetherAudit...")
+        print("🚀 Starting enhanced AetherAudit...", flush=True)
         start_time = time.time()
         
         try:
@@ -152,20 +152,20 @@ class EnhancedAetherAuditEngine:
 
     async def _run_enhanced_static_analysis(self, contract_files: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Run enhanced static analysis with improved accuracy."""
-        print("🔍 Running enhanced static analysis...")
+        print("🔍 Running enhanced static analysis...", flush=True)
         
         all_vulnerabilities = []
         total_lines = 0
         
         # STAGE 1: Run Slither static analysis
-        print("   📊 Running Slither static analysis...")
+        print("   📊 Running Slither static analysis...", flush=True)
         slither_findings = self._run_slither_analysis(contract_files)
         all_vulnerabilities.extend(slither_findings)
         if slither_findings:
-            print(f"   📊 Slither total: {len(slither_findings)} findings across all contracts")
+            print(f"   📊 Slither total: {len(slither_findings)} findings across all contracts", flush=True)
         
         # STAGE 2: Run our enhanced pattern-based detectors
-        print("   🔎 Running enhanced pattern-based detectors...")
+        print("   🔎 Running enhanced pattern-based detectors...", flush=True)
         for contract_file in contract_files:
             content = contract_file['content']
             total_lines += len(content.split('\n'))
@@ -215,7 +215,7 @@ class EnhancedAetherAuditEngine:
             slither = SlitherIntegration()
             
             if not slither.slither_available:
-                print("   ⚠️  Slither unavailable (macOS SIP restriction) - using enhanced detectors only")
+                print("   ⚠️  Slither unavailable (macOS SIP restriction) - using enhanced detectors only", flush=True)
                 return []
             
             all_findings = []
@@ -240,13 +240,13 @@ class EnhancedAetherAuditEngine:
                             Path(temp_path).unlink(missing_ok=True)
                 
                 except Exception as e:
-                    print(f"   ⚠️  Slither analysis failed for {contract_file['name']}: {e}")
+                    print(f"   ⚠️  Slither analysis failed for {contract_file['name']}: {e}", flush=True)
                     continue
             
             return all_findings
         
         except Exception as e:
-            print(f"   ⚠️  Could not run Slither analysis: {e}")
+            print(f"   ⚠️  Could not run Slither analysis: {e}", flush=True)
             return []
 
     def _extract_code_snippet(self, contract_content: str, line_number: int, context_lines: int = 5) -> str:
@@ -271,7 +271,7 @@ class EnhancedAetherAuditEngine:
 
     async def _run_enhanced_llm_analysis(self, contract_files: List[Dict[str, Any]], static_results: Dict[str, Any]) -> Dict[str, Any]:
         """Run enhanced LLM analysis with validation."""
-        print("🤖 Running enhanced LLM analysis...")
+        print("🤖 Running enhanced LLM analysis...", flush=True)
         
         # Combine all contract content
         combined_content = "\n\n".join([cf['content'] for cf in contract_files])
@@ -287,7 +287,7 @@ class EnhancedAetherAuditEngine:
 
     async def _run_ai_ensemble_analysis(self, contract_files: List[Dict[str, Any]], static_results: Dict[str, Any]) -> Dict[str, Any]:
         """Run Phase 3 AI ensemble analysis with multi-model consensus."""
-        print("🤖 Running Phase 3 AI ensemble analysis...")
+        print("🤖 Running Phase 3 AI ensemble analysis...", flush=True)
         
         # Combine all contract content
         combined_content = "\n\n".join([cf['content'] for cf in contract_files])
