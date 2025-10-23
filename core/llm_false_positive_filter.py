@@ -344,6 +344,9 @@ class LLMFalsePositiveFilter:
     def _create_validation_prompt(self, context: Dict[str, Any]) -> str:
         """Create validation prompt for LLM."""
         
+        # Detect contract architecture patterns
+        architecture_analysis = self._analyze_contract_architecture(context)
+        
         return f"""
 You are an expert smart contract security auditor. Your task is to validate whether a reported vulnerability is a real security issue or a false positive.
 
@@ -358,6 +361,9 @@ DESCRIPTION: {context['description']}
 |- SWC: {context.get('swc_id', 'N/A')} | Category: {context.get('category', 'N/A')}
 |- Detector confidence: {context.get('detector_confidence', 0.0)}
 
+**ARCHITECTURE ANALYSIS (CRITICAL FOR FALSE POSITIVE DETECTION):**
+{architecture_analysis}
+
 **ORACLE TYPE DETECTED:**
 {context.get('oracle_type', 'No oracle usage detected')}
 
@@ -370,10 +376,10 @@ DESCRIPTION: {context['description']}
 ```
 
 **VULNERABILITY DETAILS (what the detector flagged):**
-- Type: {context.get('vulnerability_type', 'unknown')}
-- Severity: {context.get('severity', 'unknown')}
-- Description: {context.get('description', 'N/A')}
-- Pattern Match: {context.get('pattern_match', 'N/A')}
+|- Type: {context.get('vulnerability_type', 'unknown')}
+|- Severity: {context.get('severity', 'unknown')}
+|- Description: {context.get('description', 'N/A')}
+|- Pattern Match: {context.get('pattern_match', 'N/A')}
 
 **LOCAL CONTEXT (nearby lines around the finding):**
 ```solidity
@@ -448,6 +454,55 @@ Before marking any vulnerability as real, check these common false positive patt
    - VERDICT: If code comments explain the intent → LIKELY FALSE POSITIVE
    - Real vulnerability would require: No documented intent + actual exploit path
 
+7. **Gateway-Controlled Architecture (FALSE POSITIVE) - COMMON IN MANAGED TOKEN SYSTEMS**
+   - Pattern: Finding claims "owner/admin can do privileged action" (mint, transfer ownership, configure)
+   - Architecture: Contract inherits from GatewayGuarded, GatewayGuardedOwnable, or similar
+   - Why it's safe: The ENTIRE SYSTEM is designed around centralized gateway control
+   - This is INTENTIONAL - tokens/NFTs are managed via a gateway, not decentralized
+   - Check: 
+     * Does contract inherit from GatewayGuarded* or similar gateway base?
+     * Are privileged functions protected with onlyGateway or onlyGatewayOrOwner?
+     * Is there a Gateway interface being used for these functions?
+     * Are comments/NatSpec mentioning "gateway", "manager", "managed token"?
+   - INDICATORS TO LOOK FOR:
+     * Import statements: "import ... GatewayGuarded"
+     * Inheritance: "contract X is ... GatewayGuarded..."
+     * Modifiers: onlyGateway, onlyGatewayOrOwner
+     * Comments: "gateway", "managed", "controlled", "manager"
+   - VERDICT: If contract is architecture for centralized gateway control → LIKELY FALSE POSITIVE
+   - Real vulnerability would require: Function that SHOULD be protected but ISN'T, OR unintended access path
+
+8. **Manager Transition Grace Period (FALSE POSITIVE)**
+   - Pattern: Finding claims "previous manager retains access for 24 hours after reassignment"
+   - Why it's safe: This is INTENTIONAL - documented feature for safe manager transitions
+   - Function context: setManagerOf() or similar manager assignment function
+   - Comment pattern: "grace period", "previous manager", "transition", "retains access"
+   - Real purpose: Prevents "manager locked out" scenarios, allows rollback if new manager is misconfigured
+   - VERDICT: If NatSpec/comments explain this as documented feature → LIKELY FALSE POSITIVE
+   - Real vulnerability would require: Grace period not actually enforced OR allowing privilege escalation
+
+9. **Mock/Test Oracle Contracts (FALSE POSITIVE)**
+   - Pattern: Finding claims "oracle price can be manipulated" on Aggregator-like contract
+   - Why it's safe: Contract has updateRoundData(onlyOwner) with NO Chainlink inheritance
+   - This is clearly a MOCK/TEST oracle, not production oracle
+   - Check:
+     * Does contract implement AggregatorV3Interface OR is it standalone?
+     * Does it have updateRoundData() allowing owner to set prices?
+     * Is it named "Mock*", "Test*", or "Aggregator" without Chainlink integration?
+   - VERDICT: If it's a mock/test contract → Price manipulation is EXPECTED behavior → FALSE POSITIVE
+   - Real vulnerability would require: Production oracle being compromised (Chainlink with proven breach)
+
+10. **Ownership Transfer via Gateway (FALSE POSITIVE)**
+    - Pattern: Finding claims "gateway can transfer contract ownership"
+    - Why it's safe: This is the INTENDED DESIGN - gateway is the owner manager
+    - The vulnerability assumes gateway shouldn't have this power, but gateway IS SUPPOSED to manage ownership
+    - Check:
+      * Function: resetOwner(address newOwner) with onlyGateway modifier
+      * Is this part of owner migration/rotation flow?
+      * Is gateway documented as the central control point?
+    - VERDICT: If gateway is designed to manage ownership → NOT A VULNERABILITY
+    - Real vulnerability would require: Unauthorized gateway access OR malicious gateway that wasn't compromised through proper channels
+
 Please analyze this vulnerability and determine:
 1. Is this a real security vulnerability or a false positive?
 2. What is your confidence level (0.0 to 1.0)?
@@ -455,16 +510,18 @@ Please analyze this vulnerability and determine:
 4. If it's real, suggest corrected severity and description if needed.
 
 Consider these factors:
-- Is the reported vulnerability actually exploitable in practice?
-- Are there proper mitigations already in place (bounds checks, reverts, access control)?
-- Is this expected behavior for the contract's design (intentional revert pattern)?
-- Are there any access controls or validations that prevent exploitation?
-- Is this a common false positive pattern (SafeCast, inherited access control)?
-- If accessing inherited functions, was parent contract's protection verified?
-- **USE THE ORACLE TYPE INFO**: If Chainlink is detected, flash loan manipulation is impossible
-- **USE THE DESIGN INTENT INFO**: If comments explain the behavior, it's likely intentional
-- Does the full contract code show imports/inheritance that provide protections?
-- Are there protective patterns (staleness checks, timeouts, price decay) in the full code?
+|- Is the reported vulnerability actually exploitable in practice?
+|- Are there proper mitigations already in place (bounds checks, reverts, access control)?
+|- Is this expected behavior for the contract's design (intentional revert pattern)?
+|- Are there any access controls or validations that prevent exploitation?
+|- Is this a common false positive pattern (SafeCast, inherited access control)?
+|- If accessing inherited functions, was parent contract's protection verified?
+|- **USE THE ORACLE TYPE INFO**: If Chainlink is detected, flash loan manipulation is impossible
+|- **USE THE DESIGN INTENT INFO**: If comments explain the behavior, it's likely intentional
+|- **USE THE ARCHITECTURE ANALYSIS**: If contract is gateway-controlled, centralized control is expected
+|- Does the full contract code show imports/inheritance that provide protections?
+|- Are there protective patterns (staleness checks, timeouts, price decay) in the full code?
+|- Is this a managed token system where the gateway IS the authority?
 
 Respond ONLY in JSON format (no extra text):
 {{
@@ -475,6 +532,62 @@ Respond ONLY in JSON format (no extra text):
     "corrected_description": "improved description" (if needed)
 }}
 """
+
+    def _analyze_contract_architecture(self, context: Dict[str, Any]) -> str:
+        """Analyze contract architecture to detect gateway systems and managed tokens."""
+        import re
+        
+        contract_code = context.get('contract_code', '')
+        inheritance = context.get('inheritance', [])
+        imports = context.get('imports', [])
+        
+        findings = []
+        
+        # Check for gateway patterns
+        if any('Gateway' in inh for inh in inheritance):
+            findings.append("🔴 **GATEWAY-CONTROLLED ARCHITECTURE DETECTED**")
+            findings.append("   - Contract inherits from GatewayGuarded, GatewayGuardedOwnable, or similar")
+            findings.append("   - This means: Access control is CENTRALIZED via gateway by design")
+            findings.append("   - Implication: 'Admin can do X' findings are likely FALSE POSITIVES")
+        
+        # Check for managed token patterns
+        if any('ERC20' in inh or 'ERC721' in inh or 'ERC1155' in inh for inh in inheritance):
+            if any('Gateway' in inh for inh in inheritance):
+                findings.append("🟡 **MANAGED TOKEN SYSTEM**")
+                findings.append("   - Token inherits from both ERC* and Gateway*")
+                findings.append("   - This is a CENTRALIZED token system (not decentralized DeFi)")
+        
+        # Check for onlyGateway or onlyGatewayOrOwner modifiers
+        if 'onlyGateway' in contract_code or 'onlyGatewayOrOwner' in contract_code:
+            findings.append("🟡 **GATEWAY ACCESS CONTROL MODIFIERS FOUND**")
+            findings.append("   - Functions use onlyGateway or onlyGatewayOrOwner modifiers")
+            findings.append("   - These functions are PROTECTED by design - not exploitable by end users")
+        
+        # Check for grace period patterns
+        if 'grace' in contract_code.lower() or 'previous.*manager' in contract_code.lower():
+            findings.append("🟡 **GRACE PERIOD / TRANSITION FEATURE DETECTED**")
+            findings.append("   - Contract implements manager/ownership grace periods")
+            findings.append("   - This is INTENTIONAL for safe transitions")
+        
+        # Check for mock oracle patterns
+        if 'updateRoundData' in contract_code and 'Aggregator' in context.get('contract_name', ''):
+            if 'ChainLink' not in imports and 'AggregatorV3Interface' not in contract_code:
+                findings.append("🔴 **MOCK/TEST ORACLE DETECTED**")
+                findings.append("   - Contract has updateRoundData() but no Chainlink integration")
+                findings.append("   - This is a test/mock oracle, not production")
+                findings.append("   - Price manipulation is EXPECTED in test environments")
+        
+        # Check for Chainlink oracles
+        if any('Chainlink' in imp or 'AggregatorV3Interface' in imp for imp in imports):
+            findings.append("✅ **CHAINLINK ORACLE DETECTED**")
+            findings.append("   - Contract uses Chainlink off-chain aggregators")
+            findings.append("   - Chainlink is IMMUNE to flash loan attacks")
+            findings.append("   - Any 'flash loan oracle manipulation' findings are likely FALSE POSITIVES")
+        
+        if not findings:
+            findings.append("ℹ️  No special architecture patterns detected - analyze as standard contract")
+        
+        return "\n".join(findings)
     
     def _parse_validation_response(self, response: str) -> ValidationResult:
         """Parse LLM validation response."""
