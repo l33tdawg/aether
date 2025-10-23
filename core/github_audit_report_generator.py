@@ -155,18 +155,31 @@ class GitHubAuditReportGenerator:
             # Get contracts
             if contract_id and single_contract:
                 contracts = [single_contract]
-            elif scope_id:
-                cursor.execute("""
-                    SELECT DISTINCT c.* FROM contracts c
-                    WHERE c.project_id = ? 
-                    AND c.id IN (
-                        SELECT contract_id FROM analysis_results 
-                        WHERE contract_id IN (
-                            SELECT id FROM contracts WHERE project_id = ?
+            elif scope_id and scope_info:
+                # Filter contracts to only those in the scope's selected_contracts list
+                selected_contracts_json = scope_info.get('selected_contracts', '[]')
+                try:
+                    selected_paths = json.loads(selected_contracts_json) if isinstance(selected_contracts_json, str) else selected_contracts_json
+                except json.JSONDecodeError:
+                    selected_paths = []
+                
+                if selected_paths:
+                    # Get only contracts that are in the scope and have analysis results
+                    placeholders = ','.join('?' * len(selected_paths))
+                    cursor.execute(f"""
+                        SELECT DISTINCT c.* FROM contracts c
+                        WHERE c.project_id = ? 
+                        AND c.file_path IN ({placeholders})
+                        AND c.id IN (
+                            SELECT contract_id FROM analysis_results 
+                            WHERE contract_id IN (
+                                SELECT id FROM contracts WHERE project_id = ?
+                            )
                         )
-                    )
-                """, (project_info['id'], project_info['id']))
-                contracts = [dict(row) for row in cursor.fetchall()]
+                    """, (project_info['id'], *selected_paths, project_info['id']))
+                    contracts = [dict(row) for row in cursor.fetchall()]
+                else:
+                    contracts = []
             else:
                 cursor.execute("SELECT * FROM contracts WHERE project_id = ?", (project_info['id'],))
                 contracts = [dict(row) for row in cursor.fetchall()]

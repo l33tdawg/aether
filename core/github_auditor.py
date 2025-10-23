@@ -46,6 +46,7 @@ class AuditResult:
     contracts_analyzed: int
     findings: List[Dict[str, Any]]
     cancelled: bool = False  # Indicates if the audit was cancelled by the user
+    scope_id: Optional[int] = None  # ID of the audit scope that was executed
 
 
 class ScopeSelector:
@@ -222,11 +223,11 @@ class GitHubAuditor:
                             self.console.print(f"  Audited: {scope['total_audited']}/{scope['total_selected']}")
                             self.console.print(f"  Pending: {scope['total_pending']}/{scope['total_selected']}")
                             return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
-                                             contracts_analyzed=scope['total_audited'], findings=[])
+                                             contracts_analyzed=scope['total_audited'], findings=[], scope_id=current_scope_id)
                         
                         elif action == 'cancel':
                             return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
-                                             contracts_analyzed=0, findings=[], cancelled=True)
+                                             contracts_analyzed=0, findings=[], cancelled=True, scope_id=current_scope_id)
                 
                 # INTERACTIVE SCOPE SELECTION (for first-time users or new scope)
                 # Only show selector if resume menu wasn't processed or user chose 'new_scope'
@@ -239,7 +240,7 @@ class GitHubAuditor:
                     if not selected_paths:
                         print("⚠️  No contracts selected. Exiting.", flush=True)
                         return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
-                                         contracts_analyzed=0, findings=[], cancelled=True)
+                                         contracts_analyzed=0, findings=[], cancelled=True, scope_id=current_scope_id)
                     
                     # Save scope to database
                     if project_id is not None:
@@ -287,11 +288,11 @@ class GitHubAuditor:
                         pass
                     
                     return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
-                                     contracts_analyzed=len(outcomes), findings=findings)
+                                     contracts_analyzed=len(outcomes), findings=findings, scope_id=current_scope_id)
                 except Exception as e:
                     print(f"❌ Analysis failed: {e}", flush=True)
                     return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
-                                     contracts_analyzed=0, findings=[])
+                                     contracts_analyzed=0, findings=[], scope_id=current_scope_id)
 
         # SLOW PATH: Clone/build/discover (for new projects or fresh runs)
         print(f"⏳ Cloning repository (first time or fresh run)...", flush=True)
@@ -440,10 +441,10 @@ class GitHubAuditor:
                             self.console.print("[bold]📊 Partial Audit Report[/bold]")
                             self.console.print(f"  Audited: {scope['total_audited']}/{scope['total_selected']}")
                             self.console.print(f"  Pending: {scope['total_pending']}/{scope['total_selected']}")
-                            return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=scope['total_audited'], findings=findings)
+                            return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=scope['total_audited'], findings=findings, scope_id=current_scope_id)
                         
                         elif action == 'cancel':
-                            return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[], cancelled=True)
+                            return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[], cancelled=True, scope_id=current_scope_id)
                 
                 # INTERACTIVE SCOPE SELECTION (for first-time users or new scope)
                 # Only show selector if resume menu wasn't processed or user chose 'new_scope'
@@ -453,7 +454,7 @@ class GitHubAuditor:
                     selected_paths = self.scope_selector.select_scope(contract_info_list, audited_contracts=audited_contracts)
                     if not selected_paths:
                         self.console.print("[red]No contracts selected. Audit cancelled.[/red]")
-                        return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[], cancelled=True)
+                        return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[], cancelled=True, scope_id=current_scope_id)
                     
                     # Save scope to database
                     if project_id is not None:
@@ -521,7 +522,7 @@ class GitHubAuditor:
             # Non-fatal; reporting will still work
             pass
 
-        return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=contracts_analyzed, findings=findings)
+        return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=contracts_analyzed, findings=findings, scope_id=current_scope_id)
 
     def _detect_project_type(self, repo_path: Path) -> str:
         """Detect the type of project based on files present."""

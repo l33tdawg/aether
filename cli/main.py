@@ -803,6 +803,7 @@ class AetherCLI:
                 report_paths = report_generator.generate_report(
                     output_dir=output_dir,
                     project_id=project_id,
+                    scope_id=result.scope_id,  # Pass scope_id from audit result
                     format='all'  # Generate markdown, JSON, and HTML
                 )
                 
