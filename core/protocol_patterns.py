@@ -52,16 +52,32 @@ class ProtocolPatternLibrary:
                     'max value of uint128',
                     'tokensOwed can never be',
                 ],
-                file_markers=['Position.sol', 'Tick.sol', 'Pool.sol'],
+                file_markers=[],  # Generic - look for comment markers not filenames
                 code_markers=[
-                    'uint128(',
-                    'tokensOwed0',
-                    'tokensOwed1',
-                    'feeGrowthInside',
+                    'uint128',
+                    '+=',
                 ],
                 reason='Documented design: Users must withdraw before uint128.max fees accumulate. Overflow is intentional and bounded.',
                 acceptable_behavior=True,
                 solidity_version_specific='<0.8.0'
+            ),
+            'audited_math_library': ProtocolPattern(
+                pattern_type='integer_overflow',
+                comment_markers=[
+                    'Credit to',
+                    'MIT license',
+                    'Remco Bloemen',
+                    'xn--2-umb.com',
+                ],
+                file_markers=[],
+                code_markers=[
+                    'mulDiv',
+                    'library',
+                    'internal pure',
+                    'assembly',
+                ],
+                reason='Well-audited mathematical library (Remco Bloemen mulDiv). Extensively tested and verified.',
+                acceptable_behavior=True
             ),
             'ownership_renunciation': ProtocolPattern(
                 pattern_type='access_control',
@@ -70,14 +86,19 @@ class ProtocolPatternLibrary:
                     'allow zero address',
                     'ownership transfer',
                     'renounce ownership',
+                    'transfer ownership',
+                    'can be changed by',
+                    'decentralization',
+                    'immutable',
                 ],
-                file_markers=['Factory.sol', 'Ownable.sol'],
+                file_markers=[],  # Don't restrict by filename - look for patterns in any file
                 code_markers=[
                     'function setOwner',
-                    'address _owner',
-                    'owner = _owner',
+                    'function transferOwnership',
+                    'owner =',
+                    'msg.sender == owner',
                 ],
-                reason='Decentralization feature - allowing ownership renunciation to address(0) is intentional.',
+                reason='Decentralization feature - allowing ownership renunciation to address(0) is intentional in DeFi protocols.',
                 acceptable_behavior=True
             ),
             'fixed_point_precision': ProtocolPattern(
@@ -87,19 +108,19 @@ class ProtocolPatternLibrary:
                     'Q64.96',
                     'UQ112x112',
                     'precision loss acceptable',
+                    'within <1 wei',
+                    'lossless version',
+                    'rounding',
+                    'round up',
+                    'round down',
                 ],
-                file_markers=[
-                    'FixedPoint.sol',
-                    'FullMath.sol',
-                    'SqrtPriceMath.sol',
-                    'TickMath.sol',
-                ],
+                file_markers=[],  # Don't restrict by filename - look for patterns
                 code_markers=[
-                    'X96',
-                    'X128',
                     'mulDiv',
                     'divRoundingUp',
-                    'UnsafeMath',
+                    'mulDivRoundingUp',
+                    'FixedPoint',
+                    'fixed-point',
                 ],
                 reason='Fixed-point arithmetic - precision loss is part of the mathematical model and is bounded.',
                 acceptable_behavior=True
@@ -312,6 +333,30 @@ class ProtocolPatternLibrary:
             ),
         }
     
+    def _normalize_vulnerability_type(self, vuln_type: str) -> str:
+        """
+        Normalize vulnerability type names to match protocol patterns.
+        Maps specific detector types to general pattern categories.
+        """
+        vuln_type_lower = vuln_type.lower().strip()
+        
+        # Precision loss variations
+        if 'precision' in vuln_type_lower or 'division' in vuln_type_lower:
+            return 'precision_loss'
+        
+        # Access control / parameter validation
+        if 'parameter_validation' in vuln_type_lower or 'validation' in vuln_type_lower:
+            # Could be access control (ownership) or input validation
+            # Return list to check both
+            return 'access_control'
+        
+        # Integer overflow variations  
+        if 'overflow' in vuln_type_lower or 'underflow' in vuln_type_lower:
+            return 'integer_overflow'
+        
+        # Return as-is if no normalization needed
+        return vuln_type_lower
+    
     def check_pattern_match(
         self, 
         vulnerability_type: str, 
@@ -329,12 +374,24 @@ class ProtocolPatternLibrary:
         Returns:
             ProtocolPattern if a match is found, None otherwise
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Normalize the vulnerability type for better matching
+        normalized_type = self._normalize_vulnerability_type(vulnerability_type)
+        logger.debug(f"    Original type: '{vulnerability_type}' -> Normalized: '{normalized_type}'")
+        
         # Check all protocols
         for protocol_name, protocol_patterns in self.patterns.items():
             for pattern_name, pattern in protocol_patterns.items():
-                if pattern.pattern_type == vulnerability_type:
+                # Check both original and normalized types
+                if pattern.pattern_type == vulnerability_type or pattern.pattern_type == normalized_type:
+                    logger.debug(f"    Checking pattern '{pattern_name}' ({pattern.pattern_type})")
                     if self._matches_pattern(pattern, contract_code, context):
+                        logger.info(f"    ✓ MATCHED: {pattern_name} - {pattern.reason}")
                         return pattern
+                    else:
+                        logger.debug(f"    ✗ No match for {pattern_name}")
         
         return None
     
@@ -379,26 +436,33 @@ class ProtocolPatternLibrary:
                 for marker in pattern.code_markers
             )
         
-        # A pattern matches if we have:
-        # 1. File marker + code marker OR
-        # 2. Comment marker + code marker OR
-        # 3. Code marker alone (for strong indicators like imports) OR
-        # 4. Import match (for external dependencies)
-        if file_match and code_match:
-            return True
+        # Improved matching logic - more flexible and generic:
+        # 1. If pattern has comment markers and they match + code markers match -> TRUE (strong signal)
+        # 2. If pattern has no file markers (generic pattern) and code markers match -> TRUE
+        # 3. If pattern has file markers and they match + code markers -> TRUE (specific file pattern)
+        # 4. Import-based patterns (like Chainlink oracles) -> TRUE
+        
+        # Strong signal: Comment markers are explicit documentation
         if comment_match and code_match:
             return True
-        if code_match and len(pattern.code_markers) > 0:
-            # Only allow code-only match if it's a strong signal
-            # Check for import statements or specific API usage
-            if import_match:
-                return True
-            # Or if it matches multiple code markers (stronger signal)
-            matching_markers = sum(1 for marker in pattern.code_markers if marker in searchable_code)
-            if matching_markers >= 2:
-                return True
+        
+        # Generic patterns (no file restrictions) with code match
+        if not pattern.file_markers and code_match:
+            return True
+        
+        # File-specific patterns
+        if file_match and code_match:
+            return True
+        
+        # Import-based patterns
         if import_match:
             return True
+        
+        # Multiple code markers (stronger signal for generic patterns)
+        if pattern.code_markers:
+            matching_markers = sum(1 for marker in pattern.code_markers if marker in searchable_code)
+            if matching_markers >= 3:  # At least 3 code markers = strong signal
+                return True
         
         return False
     

@@ -121,11 +121,15 @@ class LLMFalsePositiveFilter:
         
         # Pre-validation: Check protocol patterns first (fast, deterministic)
         if self.protocol_patterns:
+            logger.info(f"🔍 Checking protocol patterns for {vulnerability.get('vulnerability_type', 'unknown')}")
             pattern_result = self._check_protocol_patterns(vulnerability, contract_code)
             if pattern_result:
                 # Protocol pattern found a match - mark as false positive
+                logger.info(f"✓ Protocol pattern matched: {pattern_result.reasoning}")
                 self.validation_cache[cache_key] = pattern_result
                 return pattern_result
+            else:
+                logger.info(f"✗ No protocol pattern match found, proceeding to LLM validation")
         
         # Prepare context for LLM - ALWAYS use full contract code
         context = self._prepare_validation_context(vulnerability, contract_code, contract_name)
@@ -946,6 +950,7 @@ Respond ONLY in JSON format (no extra text):
             return None
         
         vuln_type = vulnerability.get('vulnerability_type', vulnerability.get('type', ''))
+        logger.debug(f"  Vulnerability type: {vuln_type}")
         
         # Build context for pattern matching
         context = {
@@ -955,11 +960,18 @@ Respond ONLY in JSON format (no extra text):
             'function_context': vulnerability.get('context', {}).get('function_context', ''),
             'line_number': vulnerability.get('line_number', 0),
         }
+        logger.debug(f"  Context file_path: {context['file_path']}")
+        logger.debug(f"  Code snippet length: {len(context['code_snippet'])} chars")
         
         # Check if it matches a protocol pattern
         pattern = self.protocol_patterns.check_pattern_match(
             vuln_type, contract_code, context
         )
+        
+        if pattern:
+            logger.debug(f"  Pattern found: {pattern.reason}")
+        else:
+            logger.debug(f"  No pattern matched for vulnerability type: {vuln_type}")
         
         if pattern and pattern.acceptable_behavior:
             # Check Solidity version compatibility if specified
