@@ -45,6 +45,7 @@ class AuditResult:
     framework: Optional[str]
     contracts_analyzed: int
     findings: List[Dict[str, Any]]
+    cancelled: bool = False  # Indicates if the audit was cancelled by the user
 
 
 class ScopeSelector:
@@ -225,7 +226,7 @@ class GitHubAuditor:
                         
                         elif action == 'cancel':
                             return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
-                                             contracts_analyzed=0, findings=[])
+                                             contracts_analyzed=0, findings=[], cancelled=True)
                 
                 # INTERACTIVE SCOPE SELECTION (for first-time users or new scope)
                 # Only show selector if resume menu wasn't processed or user chose 'new_scope'
@@ -238,7 +239,7 @@ class GitHubAuditor:
                     if not selected_paths:
                         print("⚠️  No contracts selected. Exiting.", flush=True)
                         return AuditResult(project_path=repo_dir, framework=project.get('framework', 'unknown'),
-                                         contracts_analyzed=0, findings=[])
+                                         contracts_analyzed=0, findings=[], cancelled=True)
                     
                     # Save scope to database
                     if project_id is not None:
@@ -442,7 +443,7 @@ class GitHubAuditor:
                             return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=scope['total_audited'], findings=findings)
                         
                         elif action == 'cancel':
-                            return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[])
+                            return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[], cancelled=True)
                 
                 # INTERACTIVE SCOPE SELECTION (for first-time users or new scope)
                 # Only show selector if resume menu wasn't processed or user chose 'new_scope'
@@ -452,7 +453,7 @@ class GitHubAuditor:
                     selected_paths = self.scope_selector.select_scope(contract_info_list, audited_contracts=audited_contracts)
                     if not selected_paths:
                         self.console.print("[red]No contracts selected. Audit cancelled.[/red]")
-                        return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[])
+                        return AuditResult(project_path=clone.repo_path, framework=framework, contracts_analyzed=0, findings=[], cancelled=True)
                     
                     # Save scope to database
                     if project_id is not None:

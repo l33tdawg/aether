@@ -772,6 +772,14 @@ class AetherCLI:
             'repo_name': result.project_path.name,
         }
         
+        # Skip report generation if the audit was cancelled
+        if result.cancelled:
+            print("🚀 GitHub audit completed")
+            print(f"📁 Repo: {result.project_path}")
+            print(f"🧰 Framework: {result.framework}")
+            print("No findings to display")
+            return 0
+        
         # Generate comprehensive reports automatically
         try:
             from core.github_audit_report_generator import GitHubAuditReportGenerator
