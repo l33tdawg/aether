@@ -890,29 +890,33 @@ class EnhancedAetherAuditEngine:
         return capped
 
     async def _run_foundry_validation(self, contract_path: str, validated_results: Dict[str, Any]) -> None:
-        """Run Foundry validation on detected vulnerabilities and update vulnerability statuses."""
+        """Run enhanced validation on detected vulnerabilities (LLM-based with optional Foundry testing)."""
         try:
             if self.foundry_integration is None:
                 from core.enhanced_foundry_integration import EnhancedFoundryIntegration
                 self.foundry_integration = EnhancedFoundryIntegration()
             
-            print("🔨 Running Foundry validation...")
+            print("🔬 Running enhanced validation (LLM + Foundry)...")
             
             # Run analysis and validation
             submission = await self.foundry_integration.analyze_and_validate_contract(contract_path)
             
-            # Add Foundry results to validated results
-            if 'foundry_validation' not in validated_results:
-                validated_results['foundry_validation'] = {}
+            # Add validation results to validated results
+            if 'enhanced_validation' not in validated_results:
+                validated_results['enhanced_validation'] = {}
             
             # Handle both dict and object types for submission
             if isinstance(submission, dict):
-                validated_results['foundry_validation'].update({
+                # Extract validation mode to inform users about the method being used
+                validation_method = submission.get('validation', {}).get('validation_method', 'unknown')
+                
+                validated_results['enhanced_validation'].update({
                     'submission': submission,
                     'vulnerabilities_validated': len(submission.get('vulnerabilities', [])),
                     'foundry_tests_generated': len(submission.get('foundry_tests', [])),
                     'exploit_pocs_generated': len(submission.get('exploit_pocs', [])),
-                    'confidence_score': submission.get('confidence_score', 0.0)
+                    'confidence_score': submission.get('confidence_score', 0.0),
+                    'validation_method': validation_method  # NEW: Track which validation method was used
                 })
                 
                 # Extract validation data from submission vulnerabilities
@@ -922,12 +926,15 @@ class EnhancedAetherAuditEngine:
                 
             else:
                 # Object with attributes
-                validated_results['foundry_validation'].update({
+                validation_method = getattr(submission, 'verification_method', 'unknown')
+                
+                validated_results['enhanced_validation'].update({
                     'submission': submission,
                     'vulnerabilities_validated': len(getattr(submission, 'vulnerabilities', [])),
                     'foundry_tests_generated': len(getattr(submission, 'foundry_tests', [])),
                     'exploit_pocs_generated': len(getattr(submission, 'exploit_pocs', [])),
-                    'confidence_score': getattr(submission, 'confidence_score', 0.0)
+                    'confidence_score': getattr(submission, 'confidence_score', 0.0),
+                    'validation_method': validation_method  # NEW: Track which validation method was used
                 })
                 
                 # Extract validation data from submission vulnerabilities
@@ -935,26 +942,26 @@ class EnhancedAetherAuditEngine:
                 validated_count = 0
                 false_positive_count = 0
             
-            # Update vulnerability statuses based on Foundry validation results
-            # Create a mapping of vulnerability identifiers to their Foundry validation status
-            foundry_validation_map = {}
+            # Update vulnerability statuses based on enhanced validation results
+            # Create a mapping of vulnerability identifiers to their validation status
+            validation_map = {}
             for vuln_data in foundry_vulns:
                 # Build a key from vulnerability type, line number, and description for matching
                 vuln_type = vuln_data.get('vulnerability_type', '')
                 line_num = vuln_data.get('line_number', 0)
                 # Use a simple key for matching
                 key = f"{vuln_type}_{line_num}"
-                foundry_val = vuln_data.get('foundry_validation', {})
-                foundry_validation_map[key] = {
-                    'validated': foundry_val.get('validated', False),
-                    'exploitable': foundry_val.get('exploitable', False)
+                vuln_val = vuln_data.get('foundry_validation', {})
+                validation_map[key] = {
+                    'validated': vuln_val.get('validated', False),
+                    'exploitable': vuln_val.get('exploitable', False)
                 }
-                if foundry_val.get('validated'):
+                if vuln_val.get('validated'):
                     validated_count += 1
                 else:
                     false_positive_count += 1
             
-            # Update the validated vulnerabilities list with Foundry results
+            # Update the validated vulnerabilities list with validation results
             updated_vulnerabilities = []
             for vuln in validated_results.get('validated_vulnerabilities', []):
                 # Build matching key
@@ -962,20 +969,20 @@ class EnhancedAetherAuditEngine:
                 line_num = vuln.get('line_number', vuln.get('line', 0))
                 key = f"{vuln_type}_{line_num}"
                 
-                # Check if Foundry validation found this vulnerability
-                foundry_result = foundry_validation_map.get(key)
+                # Check if validation found this vulnerability
+                validation_result = validation_map.get(key)
                 
-                if foundry_result and not foundry_result['validated']:
-                    # Mark as false positive since Foundry couldn't validate it
+                if validation_result and not validation_result['validated']:
+                    # Mark as false positive since validation couldn't confirm it
                     vuln['status'] = 'false_positive'
                     vuln['validation_confidence'] = 0.0
-                    vuln['validation_reasoning'] = 'Foundry validation could not confirm this vulnerability'
+                    vuln['validation_reasoning'] = f'Enhanced validation ({validation_method}) could not confirm this vulnerability'
                 else:
-                    # Keep as confirmed (or update confidence if Foundry validated)
-                    if foundry_result and foundry_result['validated']:
+                    # Keep as confirmed (or update confidence if validation confirmed)
+                    if validation_result and validation_result['validated']:
                         vuln['status'] = 'confirmed'
                         vuln['validation_confidence'] = max(vuln.get('validation_confidence', 0.0), 0.95)
-                        vuln['validation_reasoning'] = 'Confirmed by Foundry validation'
+                        vuln['validation_reasoning'] = f'Confirmed by enhanced validation ({validation_method})'
                 
                 updated_vulnerabilities.append(vuln)
             
@@ -992,10 +999,10 @@ class EnhancedAetherAuditEngine:
             else:
                 vuln_count = len(getattr(submission, 'vulnerabilities', []))
             
-            print(f"✅ Foundry validation completed: {validated_count} real / {false_positive_count} false positive")
+            print(f"✅ Enhanced validation completed ({validation_method}): {validated_count} real / {false_positive_count} false positive")
             
         except Exception as e:
-            print(f"⚠️ Foundry validation failed: {e}")
+            print(f"⚠️ Enhanced validation failed: {e}")
             if self.verbose:
                 import traceback
                 traceback.print_exc()
