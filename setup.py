@@ -242,16 +242,31 @@ class AetherSetup:
         else:
             table.add_row("Etherscan API Key", "✗ Not set", "-")
         
-        # Show model selections
-        if openai_key:
-            table.add_row("OpenAI Validation Model", "✓ Set", getattr(self.existing_config, 'openai_validation_model', 'gpt-5-chat-latest'))
-            table.add_row("OpenAI Analysis Model", "✓ Set", getattr(self.existing_config, 'openai_analysis_model', 'gpt-5-chat-latest'))
-            table.add_row("OpenAI Generation Model", "✓ Set", getattr(self.existing_config, 'openai_generation_model', 'gpt-5-mini'))
+        # Show active model selections (based on provider)
+        validation_provider = getattr(self.existing_config, 'validation_provider', 'openai')
+        analysis_provider = getattr(self.existing_config, 'analysis_provider', 'openai')
+        generation_provider = getattr(self.existing_config, 'generation_provider', 'openai')
         
-        if gemini_key:
-            table.add_row("Gemini Validation Model", "✓ Set", getattr(self.existing_config, 'gemini_validation_model', 'gemini-2.5-flash'))
-            table.add_row("Gemini Analysis Model", "✓ Set", getattr(self.existing_config, 'gemini_analysis_model', 'gemini-2.5-flash'))
-            table.add_row("Gemini Generation Model", "✓ Set", getattr(self.existing_config, 'gemini_generation_model', 'gemini-2.5-flash'))
+        # Get the active model for each task
+        if validation_provider == 'openai':
+            validation_model = getattr(self.existing_config, 'openai_validation_model', 'gpt-5-chat-latest')
+        else:
+            validation_model = getattr(self.existing_config, 'gemini_validation_model', 'gemini-2.5-flash')
+        
+        if analysis_provider == 'openai':
+            analysis_model = getattr(self.existing_config, 'openai_analysis_model', 'gpt-5-chat-latest')
+        else:
+            analysis_model = getattr(self.existing_config, 'gemini_analysis_model', 'gemini-2.5-flash')
+        
+        if generation_provider == 'openai':
+            generation_model = getattr(self.existing_config, 'openai_generation_model', 'gpt-5-mini')
+        else:
+            generation_model = getattr(self.existing_config, 'gemini_generation_model', 'gemini-2.5-flash')
+        
+        # Display active models
+        table.add_row("Active Validation Model", "✓ Set", f"{validation_provider} / {validation_model}")
+        table.add_row("Active Analysis Model", "✓ Set", f"{analysis_provider} / {analysis_model}")
+        table.add_row("Active Generation Model", "✓ Set", f"{generation_provider} / {generation_model}")
         
         self.console.print(table)
     
