@@ -293,13 +293,18 @@ class ExternalTrustAnalyzer:
         vulnerabilities = []
         
         # Pattern for external calls followed by state changes
-        external_call_pattern = r'(\w+)\.(call|delegatecall|staticcall|transfer|send)\s*\([^)]*\)'
+        # Updated to handle .call{value: amount}("") syntax
+        external_call_pattern = r'(\w+)\.(call|delegatecall|staticcall|transfer|send)(\{[^}]*\})?\s*\('
         matches = re.finditer(external_call_pattern, contract_content, re.MULTILINE)
         
         for match in matches:
             line_number = self._get_line_number(match.start(), contract_content)
             code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
             target_contract = match.group(1)
+            
+            # Check for reentrancy guards (nonReentrant modifier, etc.)
+            if self._has_reentrancy_guard(contract_content, line_number):
+                continue
             
             # Check if there are state changes after this call
             has_state_changes_after = self._has_state_changes_after(contract_content, line_number)
@@ -425,6 +430,58 @@ class ExternalTrustAnalyzer:
                     return i + 1
         
         return None
+    
+    def _has_reentrancy_guard(self, contract_content: str, line_number: int) -> bool:
+        """Check if the function has a reentrancy guard"""
+        function_context = self._get_function_context_for_line(contract_content, line_number)
+        
+        if not function_context:
+            return False
+        
+        # Check for nonReentrant modifier
+        if 'nonReentrant' in function_context:
+            return True
+        
+        # Check for custom guards
+        guard_patterns = [
+            r'require\s*\(\s*!locked',
+            r'require\s*\(\s*_status\s*!=',
+            r'require\s*\(\s*statusReentrant',
+            r'_ENTERED',
+            r'_NOT_ENTERED',
+        ]
+        
+        for pattern in guard_patterns:
+            if re.search(pattern, function_context):
+                return True
+        
+        return False
+    
+    def _get_function_context_for_line(self, contract_content: str, line_number: int) -> str:
+        """Extract the function containing the specified line"""
+        lines = contract_content.split('\n')
+        
+        function_start = -1
+        for i in range(line_number - 1, -1, -1):
+            if i >= len(lines):
+                continue
+            if re.match(r'\s*function\s+\w+', lines[i]):
+                function_start = i
+                break
+        
+        if function_start == -1:
+            return ""
+        
+        function_end = len(lines)
+        brace_count = 0
+        for i in range(function_start, len(lines)):
+            line = lines[i]
+            brace_count += line.count('{') - line.count('}')
+            if brace_count == 0 and '{' in '\n'.join(lines[function_start:i+1]):
+                function_end = i + 1
+                break
+        
+        return '\n'.join(lines[function_start:function_end])
     
     def _calculate_external_call_confidence(self, match: re.Match, code_snippet: str, target_contract: str) -> float:
         """Calculate confidence score for external call detection"""

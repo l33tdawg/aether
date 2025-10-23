@@ -189,6 +189,10 @@ class PrecisionAnalyzer:
             line_number = self._get_line_number(match.start(), contract_content)
             code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
             
+            # Skip import statements
+            if code_snippet.startswith('import '):
+                continue
+            
             # Check if this is a false positive
             if self._is_false_positive_precision(match, code_snippet):
                 continue

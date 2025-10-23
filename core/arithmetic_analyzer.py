@@ -186,8 +186,12 @@ class ArithmeticAnalyzer:
                 line_number = self._get_line_number(match.start(), contract_content)
                 code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
                 
+                # Skip comments and import statements
+                if code_snippet.startswith('//') or code_snippet.startswith('/*') or code_snippet.startswith('import '):
+                    continue
+                
                 # Check if this is a false positive
-                if self._is_false_positive_underflow(match, code_snippet):
+                if self._is_false_positive_underflow(match, code_snippet, contract_content, line_number):
                     continue
                 
                 vulnerability = VulnerabilityMatch(
@@ -215,6 +219,10 @@ class ArithmeticAnalyzer:
             for match in matches:
                 line_number = self._get_line_number(match.start(), contract_content)
                 code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
+                
+                # Skip comments and import statements
+                if code_snippet.startswith('//') or code_snippet.startswith('/*') or code_snippet.startswith('import '):
+                    continue
                 
                 # Check if this is a false positive
                 if self._is_false_positive_division(match, code_snippet):
@@ -271,6 +279,7 @@ class ArithmeticAnalyzer:
         2. Protocol-specific patterns (Uniswap V3, etc.)
         3. Library usage (SafeMath, SafeCast, etc.)
         4. Solidity version awareness (<0.8.0 vs >=0.8.0)
+        5. Unchecked block detection for Solidity 0.8+
         """
         # Strategy 1: Check for documented overflow acceptance in comments
         if self._has_acceptable_overflow_comment(contract_content, line_number):
@@ -298,6 +307,10 @@ class ArithmeticAnalyzer:
         if 'SafeMath' in code_snippet or 'safe' in code_snippet.lower():
             return True
         
+        # Skip if using Math.mulDiv or similar safe functions
+        if 'Math.mulDiv' in code_snippet or '.mulDiv(' in code_snippet:
+            return True
+        
         # Skip if using SafeCast (intentional type narrowing with revert-on-overflow)
         if 'SafeCast' in code_snippet or '.toUint' in code_snippet:
             return True
@@ -314,9 +327,9 @@ class ArithmeticAnalyzer:
         # In Solidity >=0.8.0, overflow checks are automatic (unless in unchecked block)
         version = self._extract_solidity_version(contract_content)
         if version and self._compare_versions(version, '0.8.0') >= 0:
-            # Check if NOT in unchecked block
-            if 'unchecked' not in code_snippet:
-                return True  # Automatic overflow protection
+            # Check if NOT in unchecked block - THIS IS CRITICAL
+            if not self._is_in_unchecked_block(contract_content, line_number):
+                return True  # Automatic overflow protection in Solidity 0.8+
         
         # Check for uint128 casts in Solidity <0.8 with documented bounds
         if 'uint128(' in code_snippet and version and self._compare_versions(version, '0.8.0') < 0:
@@ -326,7 +339,7 @@ class ArithmeticAnalyzer:
         
         return False
     
-    def _is_false_positive_underflow(self, match: re.Match, code_snippet: str) -> bool:
+    def _is_false_positive_underflow(self, match: re.Match, code_snippet: str, contract_content: str = "", line_number: int = 0) -> bool:
         """Check if underflow detection is a false positive"""
         # Skip if using SafeMath or similar libraries
         if 'SafeMath' in code_snippet or 'safe' in code_snippet.lower():
@@ -339,6 +352,13 @@ class ArithmeticAnalyzer:
         # Skip if using fixed-point arithmetic libraries
         if 'FixedPoint' in code_snippet or 'PRBMath' in code_snippet:
             return True
+        
+        # In Solidity >=0.8.0, underflow checks are automatic (unless in unchecked block)
+        if contract_content and line_number:
+            version = self._extract_solidity_version(contract_content)
+            if version and self._compare_versions(version, '0.8.0') >= 0:
+                if not self._is_in_unchecked_block(contract_content, line_number):
+                    return True  # Automatic underflow protection in Solidity 0.8+
         
         return False
     
@@ -567,3 +587,33 @@ class ArithmeticAnalyzer:
     def set_file_context(self, file_path: str):
         """Set the current file path for context in pattern matching."""
         self.current_file_path = file_path
+    
+    def _is_in_unchecked_block(self, contract_content: str, line_number: int) -> bool:
+        """
+        Check if a line is inside an unchecked{} block.
+        In Solidity >=0.8.0, unchecked blocks disable overflow checking.
+        """
+        lines = contract_content.split('\n')
+        if line_number > len(lines):
+            return False
+        
+        # Search backwards for unchecked block start
+        brace_depth = 0
+        
+        for i in range(line_number - 1, -1, -1):
+            line = lines[i]
+            
+            # Count braces backwards (reversed)
+            brace_depth += line.count('}') - line.count('{')
+            
+            # Check for unchecked keyword
+            if 'unchecked' in line and '{' in line:
+                # If we're at same or lower brace depth, we're in this unchecked block
+                if brace_depth <= 0:
+                    return True
+            
+            # If we've exited too many blocks, stop searching
+            if brace_depth > 3:
+                break
+        
+        return False

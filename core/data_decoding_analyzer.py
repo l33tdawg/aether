@@ -185,7 +185,7 @@ class DataDecodingAnalyzer:
                 code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
                 
                 # Check if this is a false positive
-                if self._is_false_positive_malformed(match, code_snippet):
+                if self._is_false_positive_malformed(match, code_snippet, contract_content, line_number):
                     continue
                 
                 # Check if there's validation nearby
@@ -437,7 +437,7 @@ class DataDecodingAnalyzer:
         
         return min(confidence, 1.0)
     
-    def _is_false_positive_malformed(self, match: re.Match, code_snippet: str) -> bool:
+    def _is_false_positive_malformed(self, match: re.Match, code_snippet: str, contract_content: str = "", line_number: int = 0) -> bool:
         """Check if malformed detection is a false positive"""
         # Skip if there's explicit validation
         if 'require(' in code_snippet or 'assert(' in code_snippet:
@@ -450,6 +450,11 @@ class DataDecodingAnalyzer:
         # Skip if in a try-catch block
         if 'try' in code_snippet and 'catch' in code_snippet:
             return True
+        
+        # Skip if governance/admin controlled (config, managerData, etc.)
+        if contract_content and line_number:
+            if self._is_governance_controlled(code_snippet, contract_content, line_number):
+                return True
         
         return False
     
@@ -559,6 +564,70 @@ class DataDecodingAnalyzer:
     def _get_line_number(self, position: int, content: str) -> int:
         """Get line number from character position"""
         return content[:position].count('\n') + 1
+    
+    def _is_governance_controlled(self, code_snippet: str, contract_content: str, line_number: int) -> bool:
+        """Check if the decoded data comes from governance/trusted source"""
+        # Common governance patterns
+        governance_patterns = [
+            r'config',
+            r'managerData',
+            r'oracleConfig',
+            r'oracleData',
+            r'whitelistData',
+        ]
+        
+        for pattern in governance_patterns:
+            if pattern in code_snippet:
+                # Check if this is set by governance
+                function_context = self._get_function_context(contract_content, line_number)
+                if any(modifier in function_context for modifier in ['onlyOwner', 'onlyGovernor', 'onlyAdmin', 'onlyGuardian', 'restricted']):
+                    return True
+        
+        # Check if in a library (libraries often have trusted callers)
+        if self._is_library_context(contract_content, line_number):
+            return True
+        
+        return False
+    
+    def _get_function_context(self, contract_content: str, line_number: int) -> str:
+        """Extract the function containing the specified line"""
+        lines = contract_content.split('\n')
+        
+        function_start = -1
+        for i in range(line_number - 1, -1, -1):
+            if i >= len(lines):
+                continue
+            if re.match(r'\s*function\s+\w+', lines[i]):
+                function_start = i
+                break
+        
+        if function_start == -1:
+            return ""
+        
+        function_end = len(lines)
+        brace_count = 0
+        for i in range(function_start, len(lines)):
+            line = lines[i]
+            brace_count += line.count('{') - line.count('}')
+            if brace_count == 0 and '{' in '\n'.join(lines[function_start:i+1]):
+                function_end = i + 1
+                break
+        
+        return '\n'.join(lines[function_start:function_end])
+    
+    def _is_library_context(self, contract_content: str, line_number: int) -> bool:
+        """Check if code is in a library"""
+        lines = contract_content.split('\n')
+        
+        for i in range(line_number - 1, max(0, line_number - 100), -1):
+            if i < len(lines):
+                line = lines[i]
+                if re.search(r'^\s*library\s+\w+', line):
+                    return True
+                if re.search(r'^\s*contract\s+\w+', line):
+                    return False
+        
+        return False
     
     def get_decoding_summary(self, contract_content: str) -> Dict[str, Any]:
         """Get summary of decoding operations in contract"""
