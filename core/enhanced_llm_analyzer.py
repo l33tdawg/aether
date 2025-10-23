@@ -294,9 +294,9 @@ Before reporting any vulnerability, verify:
             print("⚠️  No API key available for LLM calls")
             return None
         
-        # Estimate token usage for monitoring
+        # Estimate token usage for monitoring (silent)
         estimated_input_tokens = len(prompt) // 3  # Rough estimate: 3 chars per token
-        print(f"📊 Estimated request: ~{estimated_input_tokens:,} input tokens for {model}")
+        # Removed: print(f"📊 Estimated request: ~{estimated_input_tokens:,} input tokens for {model}")
             
         # Try primary model first, then fallbacks
         models_to_try = [model] + [m for m in self.fallback_models if m != model]
