@@ -73,7 +73,7 @@ class ScopeManager:
         except Exception:
             pass
     
-    def interactive_select(self, items: List[Dict[str, Any]], disabled_indices: Optional[List[int]] = None, pre_selected: Optional[List[int]] = None, project_context: Optional[str] = None) -> List[int]:
+    def interactive_select(self, items: List[Dict[str, Any]], disabled_indices: Optional[List[int]] = None, pre_selected: Optional[List[int]] = None, project_context: Optional[str] = None, previously_audited_indices: Optional[List[int]] = None) -> List[int]:
         """
         Interactive multi-select using curses with arrow keys and spacebar.
         
@@ -82,12 +82,13 @@ class ScopeManager:
             disabled_indices: List of indices that are disabled/already selected
             pre_selected: List of indices that should start as checked
             project_context: Optional context string for better cache management
+            previously_audited_indices: List of indices that were previously audited (shown in green but still selectable)
             
         Returns:
             List of selected indices
         """
         try:
-            return curses.wrapper(self._curses_select, items, disabled_indices or [], pre_selected or [], project_context)
+            return curses.wrapper(self._curses_select, items, disabled_indices or [], pre_selected or [], project_context, previously_audited_indices or [])
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Selection cancelled[/yellow]")
             return []
@@ -95,9 +96,10 @@ class ScopeManager:
             self.console.print(f"[red]Selection error: {e}[/red]")
             return []
     
-    def _curses_select(self, stdscr, items: List[Dict[str, Any]], disabled_indices: List[int], pre_selected: List[int], project_context: Optional[str] = None) -> List[int]:
+    def _curses_select(self, stdscr, items: List[Dict[str, Any]], disabled_indices: List[int], pre_selected: List[int], project_context: Optional[str] = None, previously_audited_indices: List[int] = None) -> List[int]:
         """Curses-based interactive selector."""
         items_hash = self._compute_items_hash(items)
+        previously_audited_indices = previously_audited_indices or []
         
         # Try to load cached selection
         cached_selection = self._load_selection_cache(items_hash) if not pre_selected else None
@@ -113,6 +115,7 @@ class ScopeManager:
         curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)   # Info
         curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_BLACK)  # Disabled (dimmed)
         curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK) # Filter active
+        curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Previously audited
         
         def get_filtered_indices():
             """Return indices that match the current filter."""
@@ -142,7 +145,11 @@ class ScopeManager:
             # Draw instructions
             new_selected_count = sum(1 for i, s in enumerate(selected) if s and i not in disabled_indices)
             available_count = len([i for i in range(len(items)) if i not in disabled_indices])
-            instructions = f"Selected: {new_selected_count} / {available_count}  |  [F]ilter | [A]ll | [N]one | [Q]uit"
+            previously_audited_count = len(previously_audited_indices)
+            if previously_audited_count > 0:
+                instructions = f"Selected: {new_selected_count} / {available_count}  |  Previously audited: {previously_audited_count} (green)  |  [F]ilter | [A]ll | [N]one | [Q]uit"
+            else:
+                instructions = f"Selected: {new_selected_count} / {available_count}  |  [F]ilter | [A]ll | [N]one | [Q]uit"
             stdscr.addstr(info_row, 0, instructions[:width], curses.color_pair(3))
             
             # Draw separator
@@ -172,24 +179,32 @@ class ScopeManager:
                 
                 # Format the line
                 is_disabled = actual_index in disabled_indices
+                is_previously_audited = actual_index in previously_audited_indices
                 is_current = (i + scroll_offset == position)
                 
                 if is_disabled:
-                    checkbox = "✓"  # Already selected
+                    checkbox = "✓"  # Already selected (cannot toggle)
                     status = "[ALREADY SELECTED]"
                 else:
                     checkbox = "✓" if selected[actual_index] else " "
-                    status = ""
+                    status = "[PREVIOUSLY AUDITED]" if is_previously_audited else ""
                 
                 line = f"[{checkbox}] [{actual_index:3d}] {file_path:<40} ({contract_name}) {status}"
                 line = line[:width - 1]  # Trim to screen width
                 
                 # Apply styling
                 if is_disabled:
-                    # Disabled contracts in dim gray
+                    # Disabled contracts in dim gray (cannot toggle)
                     attr = curses.A_DIM
                 elif is_current:
+                    # Current selection highlighted
                     attr = curses.color_pair(1) | curses.A_BOLD
+                elif is_previously_audited:
+                    # Previously audited in green (but still selectable)
+                    if selected[actual_index]:
+                        attr = curses.color_pair(6) | curses.A_BOLD  # Green and bold if selected
+                    else:
+                        attr = curses.color_pair(6)  # Just green if not selected
                 elif selected[actual_index]:
                     attr = curses.color_pair(2)
                 else:

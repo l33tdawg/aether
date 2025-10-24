@@ -78,17 +78,23 @@ class ScopeSelector:
         self.console.print("[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n")
         self.console.print(f"[bold]Total contracts discovered: {len(discovered_contracts)}[/bold]")
         
-        # Calculate audited contract indices
+        # Calculate audited contract indices for visual reference only
         audited_indices = []
         if audited_contracts:
-            audited_paths = {c.get('file_path', '') for c in audited_contracts}
+            # Normalize paths for better matching
+            audited_paths = set()
+            for c in audited_contracts:
+                path = c.get('file_path', '').lstrip('./')
+                audited_paths.add(path)
+            
             for i, contract in enumerate(discovered_contracts):
-                if contract.get('file_path', '') in audited_paths:
+                discovered_path = contract.get('file_path', '').lstrip('./')
+                if discovered_path in audited_paths:
                     audited_indices.append(i)
             
             if audited_indices:
-                self.console.print(f"[green]✅ {len(audited_indices)} contracts already audited (cached)[/green]")
-                self.console.print("[italic yellow]These are shown as [ALREADY SELECTED] (cannot toggle)[/italic yellow]\n")
+                self.console.print(f"[yellow]ℹ️  {len(audited_indices)} of {len(discovered_contracts)} contracts were previously audited[/yellow]")
+                self.console.print("[italic cyan]Previously audited contracts are shown in GREEN - you can still select them if needed[/italic cyan]\n")
         
         # Check if there's a cached selection
         import hashlib
@@ -110,8 +116,8 @@ class ScopeSelector:
         
         self.console.print("[bold cyan]Launching interactive selector... Press arrow keys to navigate[/bold cyan]\n")
         
-        # Use the interactive curses-based selector, passing audited indices as disabled
-        selected_indices = self.scope_manager.interactive_select(discovered_contracts, disabled_indices=audited_indices)
+        # Use the interactive curses-based selector, passing audited indices as markers (not disabled)
+        selected_indices = self.scope_manager.interactive_select(discovered_contracts, disabled_indices=[], previously_audited_indices=audited_indices)
         
         if not selected_indices:
             self.console.print("[yellow]No contracts selected. Audit cancelled.[/yellow]")
@@ -558,28 +564,42 @@ class GitHubAuditor:
         return ', '.join(files[:3]) if files else 'various project files'
 
     def _get_audited_contracts(self, project_id: Optional[int]) -> List[Dict[str, Any]]:
-        """Get list of already audited contracts from the database."""
+        """Get ALL contracts that were in ANY completed scope for this project."""
         if not project_id:
             return []
         
         try:
+            # Get all scopes for this project
+            all_scopes = self.db.get_all_scopes(project_id)
+            
+            # Collect all contracts from all scopes
+            all_audited_paths = set()
+            for scope in all_scopes:
+                selected_contracts = scope.get('selected_contracts', [])
+                if isinstance(selected_contracts, str):
+                    import json
+                    try:
+                        selected_contracts = json.loads(selected_contracts)
+                    except:
+                        selected_contracts = []
+                
+                for path in selected_contracts:
+                    all_audited_paths.add(path)
+            
+            # Now get the contract details from the database
             contracts = self.db.get_contracts(project_id)
             audited = []
             
             for contract in contracts:
-                contract_id = int(contract.get('id', 0))
-                if contract_id > 0:
-                    # Check if this contract has been analyzed
-                    results = self.db.get_analysis_results(contract_id)
-                    # If there's any successful analysis, consider it audited
-                    if any(r.get('status') == 'success' for r in results):
-                        audited.append({
-                            'file_path': contract.get('file_path', ''),
-                            'contract_name': contract.get('contract_name', 'Unknown')
-                        })
+                file_path = contract.get('file_path', '')
+                if file_path in all_audited_paths:
+                    audited.append({
+                        'file_path': file_path,
+                        'contract_name': contract.get('contract_name', 'Unknown')
+                    })
             
             return audited
-        except Exception:
+        except Exception as e:
             return []
 
     def _parse_owner_repo(self, github_url: str) -> Tuple[str, str]:
