@@ -10,7 +10,6 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
 - **Deployment Analysis**: Verifies code paths are actually used in production
 - **Built-in Protection Checks**: Recognizes Solidity 0.8+ auto-protection and SafeMath usage
 - **Governance-Aware LLM Validation**: Enhanced prompts with 4-stage validation checklist
-- **Immunefi Report Generation**: Automated professional bug bounty submissions
 - **Accuracy Tracking**: Monitors submission outcomes and bounty earnings
 - **Smart Caching**: 2x faster analysis with intelligent result caching
 
@@ -34,7 +33,6 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
   - **Governance detector** (`core/governance_detector.py`) identifies access-controlled parameters
   - **Deployment analyzer** (`core/deployment_analyzer.py`) verifies production code paths
   - **Enhanced LLM validation** (`core/llm_false_positive_filter.py`) with governance-aware prompts
-  - **Immunefi formatter** (`core/immunefi_formatter.py`) generates professional bug bounty reports
   - **Accuracy tracking** (`core/accuracy_tracker.py`) monitors submission outcomes and earnings
   - **Smart caching** (`core/analysis_cache.py`) for 2x faster repeated analysis
   - **163 comprehensive tests** ensuring reliability and accuracy
