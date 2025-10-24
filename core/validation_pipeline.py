@@ -35,6 +35,9 @@ class ValidationPipeline:
         self._governance_detector = None
         self._deployment_analyzer = None
         self._validation_detector = None
+        self._design_assumption_detector = None
+        self._reentrancy_guard_detector = None
+        self._scope_classifier = None
     
     @property
     def governance_detector(self):
@@ -72,6 +75,39 @@ class ValidationPipeline:
                 self._validation_detector = None
         return self._validation_detector
     
+    @property
+    def design_assumption_detector(self):
+        """Lazy load design assumption detector."""
+        if self._design_assumption_detector is None:
+            try:
+                from core.design_assumption_detector import DesignAssumptionDetector
+                self._design_assumption_detector = DesignAssumptionDetector()
+            except ImportError:
+                self._design_assumption_detector = None
+        return self._design_assumption_detector
+    
+    @property
+    def reentrancy_guard_detector(self):
+        """Lazy load reentrancy guard detector."""
+        if self._reentrancy_guard_detector is None:
+            try:
+                from core.reentrancy_guard_detector import ReentrancyGuardDetector
+                self._reentrancy_guard_detector = ReentrancyGuardDetector()
+            except ImportError:
+                self._reentrancy_guard_detector = None
+        return self._reentrancy_guard_detector
+    
+    @property
+    def scope_classifier(self):
+        """Lazy load scope classifier."""
+        if self._scope_classifier is None:
+            try:
+                from core.scope_classifier import ScopeClassifier
+                self._scope_classifier = ScopeClassifier()
+            except ImportError:
+                self._scope_classifier = None
+        return self._scope_classifier
+    
     def validate(self, vulnerability: Dict) -> List[ValidationStage]:
         """
         Run vulnerability through all validation stages.
@@ -91,19 +127,37 @@ class ValidationPipeline:
             results.append(builtin_check)
             return results  # Early exit
         
-        # Stage 2: Governance control check
+        # Stage 2: Design assumption check
+        design_check = self._check_design_assumptions(vulnerability)
+        if design_check:
+            results.append(design_check)
+            return results  # Early exit
+        
+        # Stage 3: Reentrancy guard check
+        reentrancy_check = self._check_reentrancy_protection(vulnerability)
+        if reentrancy_check:
+            results.append(reentrancy_check)
+            return results  # Early exit
+        
+        # Stage 4: Scope classification (admin-only, etc.)
+        scope_check = self._check_scope_classification(vulnerability)
+        if scope_check:
+            results.append(scope_check)
+            return results  # Early exit
+        
+        # Stage 5: Governance control check
         governance_check = self._check_governance_control(vulnerability)
         if governance_check:
             results.append(governance_check)
             return results  # Early exit
         
-        # Stage 3: Deployment check
+        # Stage 6: Deployment check
         deployment_check = self._check_deployment(vulnerability)
         if deployment_check:
             results.append(deployment_check)
             return results  # Early exit
         
-        # Stage 4: Local validation check
+        # Stage 7: Local validation check
         validation_check = self._check_local_validation(vulnerability)
         if validation_check:
             results.append(validation_check)
@@ -344,12 +398,99 @@ class ValidationPipeline:
         
         return None
     
+    def _check_design_assumptions(self, vuln: Dict) -> Optional[ValidationStage]:
+        """Check if vulnerability is a documented design assumption."""
+        if not self.design_assumption_detector:
+            return None
+        
+        contract_name = vuln.get('contract_name', '')
+        
+        # Detect all design assumptions in contract
+        assumptions = self.design_assumption_detector.detect_assumptions(
+            self.contract_code,
+            contract_name
+        )
+        
+        # Check if this vulnerability is covered by an assumption
+        if self.design_assumption_detector.is_vulnerability_assumed_safe(vuln, assumptions):
+            matching_assumption = None
+            for assumption in assumptions:
+                if self.design_assumption_detector.is_vulnerability_assumed_safe(vuln, [assumption]):
+                    matching_assumption = assumption
+                    break
+            
+            if matching_assumption:
+                reason = self.design_assumption_detector.generate_filter_reason(vuln, matching_assumption)
+                return ValidationStage(
+                    stage_name="design_assumption",
+                    is_false_positive=True,
+                    confidence=0.85,
+                    reasoning=reason
+                )
+        
+        return None
+    
+    def _check_reentrancy_protection(self, vuln: Dict) -> Optional[ValidationStage]:
+        """Check if function has reentrancy protection."""
+        if not self.reentrancy_guard_detector:
+            return None
+        
+        vuln_type = vuln.get('type', '').lower()
+        
+        # Only check reentrancy-related vulnerabilities
+        if 'reentr' not in vuln_type and 'callback' not in vuln_type:
+            return None
+        
+        contract_name = vuln.get('contract_name', '')
+        should_filter, reason = self.reentrancy_guard_detector.should_filter_reentrancy_vuln(
+            vuln,
+            self.contract_code,
+            contract_name
+        )
+        
+        if should_filter:
+            return ValidationStage(
+                stage_name="reentrancy_protection",
+                is_false_positive=True,
+                confidence=0.9,
+                reasoning=reason
+            )
+        
+        return None
+    
+    def _check_scope_classification(self, vuln: Dict) -> Optional[ValidationStage]:
+        """Check if vulnerability is out of bug bounty scope."""
+        if not self.scope_classifier:
+            return None
+        
+        contract_name = vuln.get('contract_name', '')
+        classification = self.scope_classifier.classify_vulnerability(
+            vuln,
+            self.contract_code,
+            contract_name
+        )
+        
+        # Filter out-of-scope vulnerabilities
+        from core.scope_classifier import ScopeStatus
+        if classification.status == ScopeStatus.OUT_OF_SCOPE:
+            return ValidationStage(
+                stage_name="scope_classification",
+                is_false_positive=True,
+                confidence=classification.confidence,
+                reasoning=f"Out of scope: {classification.reason} (Category: {classification.category})"
+            )
+        
+        return None
+    
     def get_summary(self) -> Dict:
         """Get summary of available validators."""
         return {
             'has_governance_detector': self.governance_detector is not None,
             'has_deployment_analyzer': self.deployment_analyzer is not None,
             'has_validation_detector': self.validation_detector is not None,
+            'has_design_assumption_detector': self.design_assumption_detector is not None,
+            'has_reentrancy_guard_detector': self.reentrancy_guard_detector is not None,
+            'has_scope_classifier': self.scope_classifier is not None,
             'project_path': str(self.project_path) if self.project_path else None,
         }
 
