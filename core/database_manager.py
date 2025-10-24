@@ -393,6 +393,28 @@ class AetherDatabase:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _convert_utc_to_local(self, utc_timestamp: str) -> str:
+        """Convert UTC timestamp from SQLite to local timezone."""
+        if not utc_timestamp:
+            return 'Unknown'
+        try:
+            from datetime import datetime
+            import time
+            
+            # Parse the UTC timestamp (SQLite format: YYYY-MM-DD HH:MM:SS)
+            utc_dt = datetime.strptime(utc_timestamp, '%Y-%m-%d %H:%M:%S')
+            
+            # Convert to local time by adding the timezone offset
+            # time.timezone gives the offset in seconds (negative for timezones ahead of UTC)
+            local_offset = -time.timezone if not time.daylight else -time.altzone
+            from datetime import timedelta
+            local_dt = utc_dt + timedelta(seconds=local_offset)
+            
+            return local_dt.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            # If parsing fails, return the original timestamp
+            return utc_timestamp
+
     # Convenience helpers used by CLI
     def get_project_by_id(self, project_id: int) -> Optional[Dict[str, Any]]:
         try:
@@ -1506,8 +1528,8 @@ class AetherDatabase:
                     'total_audited': row[6],
                     'total_pending': row[7],
                     'last_audited_contract_id': row[8],
-                    'created_at': row[9],
-                    'modified_at': row[10]
+                    'created_at': self._convert_utc_to_local(row[9]),
+                    'modified_at': self._convert_utc_to_local(row[10])
                 }
         except Exception as e:
             self.console.print(f"[red]❌ Failed to retrieve active scope: {e}[/red]")
@@ -1541,8 +1563,8 @@ class AetherDatabase:
                     'total_audited': row[6],
                     'total_pending': row[7],
                     'last_audited_contract_id': row[8],
-                    'created_at': row[9],
-                    'modified_at': row[10]
+                    'created_at': self._convert_utc_to_local(row[9]),
+                    'modified_at': self._convert_utc_to_local(row[10])
                 }
         except Exception as e:
             self.console.print(f"[red]❌ Failed to retrieve last scope: {e}[/red]")
@@ -1574,8 +1596,8 @@ class AetherDatabase:
                         'total_audited': row[6],
                         'total_pending': row[7],
                         'last_audited_contract_id': row[8],
-                        'created_at': row[9],
-                        'modified_at': row[10]
+                        'created_at': self._convert_utc_to_local(row[9]),
+                        'modified_at': self._convert_utc_to_local(row[10])
                     })
                 return scopes
         except Exception as e:
@@ -1703,7 +1725,7 @@ class AetherDatabase:
                         'status': row[3],
                         'total_selected': row[4],
                         'total_audited': row[5],
-                        'created_at': row[6]
+                        'created_at': self._convert_utc_to_local(row[6])
                     })
                 return scopes
         except Exception as e:
