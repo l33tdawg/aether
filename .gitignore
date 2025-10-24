@@ -9,6 +9,7 @@ __pycache__/
 .Python
 build/
 develop-eggs/
+poc-tests/ 
 dist/
 downloads/
 eggs/
@@ -171,6 +172,7 @@ docs/_build/
 !foundry.lock
 !foundry.toml
 scripts/fix_unknown_vulnerability_types.py
+*.md
 
 # Local web UI (ignored until release)
 webui/
