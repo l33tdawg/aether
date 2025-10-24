@@ -188,6 +188,11 @@ class EnhancedAetherAuditEngine:
         
         # STAGE 2: Run our enhanced pattern-based detectors
         print("   🔎 Running enhanced pattern-based detectors...", flush=True)
+        
+        # NEW: Build call graph across all contracts for better cross-contract analysis
+        print("   🔗 Building call graph for cross-contract analysis...", flush=True)
+        self.vulnerability_detector.build_call_graph_from_contracts(contract_files)
+        
         for contract_file in contract_files:
             content = contract_file['content']
             total_lines += len(content.split('\n'))

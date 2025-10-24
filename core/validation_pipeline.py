@@ -127,6 +127,12 @@ class ValidationPipeline:
             results.append(builtin_check)
             return results  # Early exit
         
+        # Stage 1.5: Constructor context check (NEW)
+        constructor_check = self._check_constructor_context(vulnerability)
+        if constructor_check and constructor_check.is_false_positive:
+            results.append(constructor_check)
+            return results  # Early exit
+        
         # Stage 2: Design assumption check
         design_check = self._check_design_assumptions(vulnerability)
         if design_check:
@@ -228,6 +234,84 @@ class ValidationPipeline:
             context = '\n'.join(lines[context_start:line_number])
             
             if 'unchecked' in context.lower():
+                return True
+        
+        return False
+    
+    def _check_constructor_context(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check if vulnerability is in constructor (deployment-time only).
+        
+        Constructor vulnerabilities are typically deployment concerns, not runtime exploits.
+        """
+        line_number = vuln.get('line', 0) or vuln.get('line_number', 0)
+        
+        if line_number == 0:
+            return None  # Can't determine context without line number
+        
+        # Check if this line is inside constructor
+        in_constructor = self._is_inside_constructor(line_number, self.contract_code)
+        
+        if in_constructor:
+            # Check if there's proper initialization pattern
+            has_initializer = self._has_initialization_function(self.contract_code)
+            
+            if has_initializer:
+                return ValidationStage(
+                    stage_name="constructor_context",
+                    is_false_positive=True,
+                    confidence=0.9,
+                    reasoning="Vulnerability in constructor with proper initialization pattern - deployment-time only, not runtime exploitable"
+                )
+            else:
+                # Constructor without initializer - could be deployment concern but flag for review
+                return ValidationStage(
+                    stage_name="constructor_context",
+                    is_false_positive=False,
+                    confidence=0.6,
+                    reasoning="Constructor issue with no clear initialization pattern - needs manual review"
+                )
+        
+        return None  # Not in constructor
+    
+    def _is_inside_constructor(self, line_num: int, code: str) -> bool:
+        """Check if line is inside constructor."""
+        lines = code.split('\n')
+        
+        # Find constructor start
+        constructor_pattern = r'constructor\s*\('
+        
+        brace_depth = 0
+        in_constructor = False
+        
+        for i, line in enumerate(lines, 1):
+            if re.search(constructor_pattern, line):
+                in_constructor = True
+                
+            if in_constructor:
+                brace_depth += line.count('{') - line.count('}')
+                
+                if i == line_num:
+                    return True
+                    
+                if brace_depth == 0 and i > 1:  # Constructor ended
+                    in_constructor = False
+        
+        return False
+    
+    def _has_initialization_function(self, code: str) -> bool:
+        """Check if contract has an initialization function (initializer/reinitializer)."""
+        # Check for common initialization patterns
+        init_patterns = [
+            r'function\s+initialize\s*\(',
+            r'function\s+init\s*\(',
+            r'\binitializer\b',
+            r'\breinitializer\b',
+            r'__\w+_init\(',  # OpenZeppelin style
+        ]
+        
+        for pattern in init_patterns:
+            if re.search(pattern, code):
                 return True
         
         return False
