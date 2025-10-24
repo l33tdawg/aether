@@ -19,19 +19,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ValidationResult:
-    """Result of LLM validation."""
+    """Result of LLM validation with governance awareness."""
     is_false_positive: bool
     confidence: float
     reasoning: str
     corrected_severity: Optional[str] = None
     corrected_description: Optional[str] = None
+    governance_controlled: Optional[bool] = None
+    has_validation: Optional[bool] = None
+    attack_vector: Optional[str] = None
 
 class LLMFalsePositiveFilter:
     """LLM-based false positive filter for vulnerability findings."""
     
-    def __init__(self, llm_analyzer: Optional[EnhancedLLMAnalyzer] = None):
+    def __init__(self, llm_analyzer: Optional[EnhancedLLMAnalyzer] = None, project_path: Optional[Path] = None):
         self.llm_analyzer = llm_analyzer or EnhancedLLMAnalyzer()
         self.validation_cache = {}
+        self.project_path = project_path
         
         # Initialize protocol pattern library for enhanced validation
         try:
@@ -47,6 +51,33 @@ class LLMFalsePositiveFilter:
         contract_name: str
     ) -> List[Dict[str, Any]]:
         """Validate vulnerabilities and filter out false positives."""
+        
+        logger.info(f"Validating {len(vulnerabilities)} vulnerabilities with multi-stage pipeline")
+        
+        # Stage 0: Run validation pipeline first (fast, deterministic)
+        try:
+            from core.validation_pipeline import ValidationPipeline
+            
+            pipeline = ValidationPipeline(self.project_path, contract_code)
+            pipeline_filtered = []
+            
+            for vuln in vulnerabilities:
+                pipeline_results = pipeline.validate(vuln)
+                
+                # Check if any stage marked as false positive
+                if any(stage.is_false_positive for stage in pipeline_results):
+                    false_positive_stage = next(s for s in pipeline_results if s.is_false_positive)
+                    print(f"   ✗ FILTERED by {false_positive_stage.stage_name}: {vuln.get('vulnerability_type', 'unknown')}")
+                    print(f"      {false_positive_stage.reasoning}")
+                    continue
+                
+                pipeline_filtered.append(vuln)
+            
+            logger.info(f"Pipeline filtered: {len(vulnerabilities)} → {len(pipeline_filtered)} vulnerabilities")
+            vulnerabilities = pipeline_filtered
+            
+        except ImportError:
+            logger.warning("Validation pipeline not available, skipping pipeline stage")
         
         logger.info(f"Validating {len(vulnerabilities)} vulnerabilities with LLM")
         
@@ -361,26 +392,57 @@ class LLMFalsePositiveFilter:
             return "No explicit design intent comments found"
     
     def _create_validation_prompt(self, context: Dict[str, Any]) -> str:
-        """Create validation prompt for LLM."""
+        """Create enhanced governance-aware validation prompt for LLM."""
         
         # Detect contract architecture patterns
         architecture_analysis = self._analyze_contract_architecture(context)
         
         return f"""
-You are an expert smart contract security auditor. Your task is to validate whether a reported vulnerability is a real security issue or a false positive.
+You are an expert smart contract security auditor validating a potential vulnerability.
+
+**CRITICAL VALIDATION CHECKLIST:**
+
+1. GOVERNANCE CONTROLS
+   - Is this parameter set by governance (onlyOwner, onlyGovernor, onlyGuardian, etc.)?
+   - Does the setter function have validation (require checks, monotonic checks)?
+   - If yes to both: This is a GOVERNANCE RISK, not a vulnerability
+   - Action: Check for access control modifiers in setter functions
+
+2. BUILT-IN PROTECTIONS
+   - Does Solidity 0.8+ provide automatic protection (overflow/underflow)?
+   - Are there SafeMath/SafeCast libraries used?
+   - Is there a require() or if-revert before the operation?
+   - If protected: Mark as FALSE POSITIVE unless unsafe operations (unchecked{{}}) are used
+   - Action: Check pragma solidity version and protection patterns
+
+3. DEPLOYMENT STATUS
+   - Is this code path actually reachable in production?
+   - Are there comments suggesting "not implemented" or "future feature"?
+   - Does the feature appear to be dead code?
+   - If unreachable: Mark as FALSE POSITIVE
+   - Action: Look for deployment evidence and code usage patterns
+
+4. CONTEXT VALIDATION
+   - Look at 30 lines BEFORE the vulnerability
+   - Look at the function signature for modifiers
+   - Check parent contracts for inherited protections
+   - Verify the issue exists in the actual code flow
+   - Action: Full context analysis required
+
+**VULNERABILITY TO VALIDATE:**
 
 CONTRACT: {context['contract_name']}
-VULNERABILITY TYPE: {context['vulnerability_type']}
-SEVERITY: {context['severity']}
-LINE: {context['line_number']}
-DESCRIPTION: {context['description']}
+Type: {context.get('vulnerability_type')}
+Severity: {context.get('severity')}
+Line: {context.get('line_number')}
+Description: {context.get('description')}
 
 **FILE INFO:**
 |- Path: {context.get('file_path', 'N/A')}
 |- SWC: {context.get('swc_id', 'N/A')} | Category: {context.get('category', 'N/A')}
 |- Detector confidence: {context.get('detector_confidence', 0.0)}
 
-**ARCHITECTURE ANALYSIS (CRITICAL FOR FALSE POSITIVE DETECTION):**
+**ARCHITECTURE ANALYSIS:**
 {architecture_analysis}
 
 **ORACLE TYPE DETECTED:**
@@ -389,34 +451,28 @@ DESCRIPTION: {context['description']}
 **DESIGN INTENT FROM CODE COMMENTS:**
 {context.get('design_intent', 'No explicit design intent comments found')}
 
-**FLAGGED CODE SNIPPET (the specific lines being evaluated) - LINE {context['line_number']} HIGHLIGHTED:**
+**CODE SNIPPET:**
 ```solidity
 {context.get('code_snippet', 'N/A')}
 ```
 
-**VULNERABILITY DETAILS (what the detector flagged):**
-|- Type: {context.get('vulnerability_type', 'unknown')}
-|- Severity: {context.get('severity', 'unknown')}
-|- Description: {context.get('description', 'N/A')}
-|- Pattern Match: {context.get('pattern_match', 'N/A')}
-
-**LOCAL CONTEXT (nearby lines around the finding):**
+**LOCAL CONTEXT (nearby lines):**
 ```solidity
 {context.get('surrounding_context', 'N/A')}
 ```
 
-**FUNCTION CONTEXT (if available):**
+**FUNCTION CONTEXT:**
 ```solidity
 {context.get('function_context', 'N/A')}
 ```
 
-**IMPORTS DETECTED:**
+**IMPORTS:**
 {chr(10).join(context.get('imports', []) or ['N/A'])}
 
 **INHERITANCE:**
 {chr(10).join(context.get('inheritance', []) or ['N/A'])}
 
-**RELATED IMPORTED SOURCES (resolved locally where possible):**
+**RELATED SOURCES:**
 {chr(10).join([f"--- {p} ---\n```solidity\n{src}\n```" for p, src in (context.get('related_sources', {}) or {}).items()]) or 'N/A'}
 
 **FULL CONTRACT CODE:**
@@ -522,34 +578,38 @@ Before marking any vulnerability as real, check these common false positive patt
     - VERDICT: If gateway is designed to manage ownership → NOT A VULNERABILITY
     - Real vulnerability would require: Unauthorized gateway access OR malicious gateway that wasn't compromised through proper channels
 
-Please analyze this vulnerability and determine:
-1. Is this a real security vulnerability or a false positive?
-2. What is your confidence level (0.0 to 1.0)?
-3. Provide detailed reasoning for your decision.
-4. If it's real, suggest corrected severity and description if needed.
+**OUTPUT FORMAT (JSON):**
 
-Consider these factors:
-|- Is the reported vulnerability actually exploitable in practice?
-|- Are there proper mitigations already in place (bounds checks, reverts, access control)?
-|- Is this expected behavior for the contract's design (intentional revert pattern)?
-|- Are there any access controls or validations that prevent exploitation?
-|- Is this a common false positive pattern (SafeCast, inherited access control)?
-|- If accessing inherited functions, was parent contract's protection verified?
-|- **USE THE ORACLE TYPE INFO**: If Chainlink is detected, flash loan manipulation is impossible
-|- **USE THE DESIGN INTENT INFO**: If comments explain the behavior, it's likely intentional
-|- **USE THE ARCHITECTURE ANALYSIS**: If contract is gateway-controlled, centralized control is expected
-|- Does the full contract code show imports/inheritance that provide protections?
-|- Are there protective patterns (staleness checks, timeouts, price decay) in the full code?
-|- Is this a managed token system where the gateway IS the authority?
+Respond ONLY in valid JSON format with these fields:
 
-Respond ONLY in JSON format (no extra text):
 {{
-    "is_false_positive": true/false,
-    "confidence": 0.0-1.0,
-    "reasoning": "detailed explanation",
-    "corrected_severity": "high/medium/low" (if different),
-    "corrected_description": "improved description" (if needed)
+  "is_false_positive": true/false,
+  "confidence": 0.0-1.0,
+  "reasoning": "Clear explanation with specific code references",
+  "actual_severity": "critical/high/medium/low/info" or null,
+  "governance_controlled": true/false,
+  "has_validation": true/false,
+  "attack_vector": "Specific attack steps" or null,
+  "corrected_severity": "high/medium/low" (if different from original),
+  "corrected_description": "improved description" (if needed)
 }}
+
+**IMPORTANT VALIDATION RULES:**
+- If governance-controlled (onlyOwner/onlyGovernor + validation): Mark as FALSE POSITIVE
+- If protected by Solidity 0.8+ without unchecked{{}}: Mark as FALSE POSITIVE
+- If no concrete attack vector exists: Mark as FALSE POSITIVE
+- If SafeCast with intentional revert: Mark as FALSE POSITIVE
+- If Chainlink oracle + flash loan claim: Mark as FALSE POSITIVE
+- If gateway-controlled architecture + centralized control claim: Mark as FALSE POSITIVE
+
+**CONTEXT TO USE:**
+|- Oracle type detected: {context.get('oracle_type', 'N/A')}
+|- Design intent: {context.get('design_intent', 'N/A')}
+|- Architecture: Gateway-controlled or decentralized?
+|- Imports/Inheritance: Check for inherited protections
+|- Full contract: Look for protective patterns
+
+Be STRICT: Only mark as REAL if you can describe exact exploitation steps.
 """
 
     def _analyze_contract_architecture(self, context: Dict[str, Any]) -> str:
@@ -609,7 +669,7 @@ Respond ONLY in JSON format (no extra text):
         return "\n".join(findings)
     
     def _parse_validation_response(self, response: str) -> ValidationResult:
-        """Parse LLM validation response."""
+        """Parse LLM validation response with governance-aware fields."""
         
         try:
             # Try to extract JSON from response
@@ -622,7 +682,10 @@ Respond ONLY in JSON format (no extra text):
                     confidence=float(data.get('confidence', 0.5)),
                     reasoning=data.get('reasoning', 'No reasoning provided'),
                     corrected_severity=data.get('corrected_severity'),
-                    corrected_description=data.get('corrected_description')
+                    corrected_description=data.get('corrected_description'),
+                    governance_controlled=data.get('governance_controlled'),
+                    has_validation=data.get('has_validation'),
+                    attack_vector=data.get('attack_vector')
                 )
             # Fallback parsing
             is_false_positive = 'false positive' in response.lower()
