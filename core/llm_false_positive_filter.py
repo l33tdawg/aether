@@ -79,6 +79,43 @@ class LLMFalsePositiveFilter:
         except ImportError:
             logger.warning("Validation pipeline not available, skipping pipeline stage")
         
+        # Stage 0.5: Pre-filtering with function context (NEW - saves LLM costs)
+        try:
+            from core.enhanced_prompts import should_pre_filter
+            from core.function_context_analyzer import FunctionContextAnalyzer
+            
+            func_analyzer = FunctionContextAnalyzer()
+            pre_filtered = []
+            
+            for vuln in vulnerabilities:
+                # Extract function context for pre-filtering
+                function_name = vuln.get('function', '')
+                if function_name:
+                    # Try to get function code
+                    import re
+                    pattern = rf'function\s+{re.escape(function_name)}\s*\([^)]*\)[^{{]*\{{'
+                    match = re.search(pattern, contract_code)
+                    
+                    if match:
+                        # Extract minimal function signature for quick analysis
+                        func_sig = contract_code[match.start():match.end() + 100]
+                        context = func_analyzer.analyze_function(func_sig, function_name)
+                        
+                        # Check pre-filter
+                        should_filter, reason = should_pre_filter(vuln, context)
+                        if should_filter:
+                            print(f"   ✗ PRE-FILTERED: {vuln.get('vulnerability_type', 'unknown')}")
+                            print(f"      {reason}")
+                            continue
+                
+                pre_filtered.append(vuln)
+            
+            logger.info(f"Pre-filtering: {len(vulnerabilities)} → {len(pre_filtered)} vulnerabilities (saved {len(vulnerabilities) - len(pre_filtered)} LLM calls)")
+            vulnerabilities = pre_filtered
+            
+        except Exception as e:
+            logger.warning(f"Pre-filtering failed: {e}, continuing with full list")
+        
         logger.info(f"Validating {len(vulnerabilities)} vulnerabilities with LLM")
         
         validated_vulnerabilities = []

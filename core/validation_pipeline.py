@@ -38,6 +38,11 @@ class ValidationPipeline:
         self._design_assumption_detector = None
         self._reentrancy_guard_detector = None
         self._scope_classifier = None
+        
+        # NEW: Advanced analyzers for improved false positive detection
+        self._function_context_analyzer = None
+        self._impact_analyzer = None
+        self._confidence_scorer = None
     
     @property
     def governance_detector(self):
@@ -108,6 +113,39 @@ class ValidationPipeline:
                 self._scope_classifier = None
         return self._scope_classifier
     
+    @property
+    def function_context_analyzer(self):
+        """Lazy load function context analyzer."""
+        if self._function_context_analyzer is None:
+            try:
+                from core.function_context_analyzer import FunctionContextAnalyzer
+                self._function_context_analyzer = FunctionContextAnalyzer()
+            except ImportError:
+                self._function_context_analyzer = None
+        return self._function_context_analyzer
+    
+    @property
+    def impact_analyzer(self):
+        """Lazy load impact analyzer."""
+        if self._impact_analyzer is None:
+            try:
+                from core.impact_analyzer import ImpactAnalyzer
+                self._impact_analyzer = ImpactAnalyzer()
+            except ImportError:
+                self._impact_analyzer = None
+        return self._impact_analyzer
+    
+    @property
+    def confidence_scorer(self):
+        """Lazy load confidence scorer."""
+        if self._confidence_scorer is None:
+            try:
+                from core.confidence_scorer import ConfidenceScorer
+                self._confidence_scorer = ConfidenceScorer()
+            except ImportError:
+                self._confidence_scorer = None
+        return self._confidence_scorer
+    
     def validate(self, vulnerability: Dict) -> List[ValidationStage]:
         """
         Run vulnerability through all validation stages.
@@ -127,10 +165,22 @@ class ValidationPipeline:
             results.append(builtin_check)
             return results  # Early exit
         
-        # Stage 1.5: Constructor context check (NEW)
+        # Stage 1.5: Constructor context check
         constructor_check = self._check_constructor_context(vulnerability)
         if constructor_check and constructor_check.is_false_positive:
             results.append(constructor_check)
+            return results  # Early exit
+        
+        # Stage 1.6: Function context check (NEW - fast, deterministic)
+        context_check = self._check_function_context(vulnerability)
+        if context_check and context_check.is_false_positive:
+            results.append(context_check)
+            return results  # Early exit
+        
+        # Stage 1.7: Impact analysis check (NEW - fast, deterministic)
+        impact_check = self._check_impact_alignment(vulnerability)
+        if impact_check and impact_check.is_false_positive:
+            results.append(impact_check)
             return results  # Early exit
         
         # Stage 2: Design assumption check
@@ -566,12 +616,154 @@ class ValidationPipeline:
         
         return None
     
+    def _check_function_context(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check if finding misaligns with function context (NEW STAGE).
+        
+        Example: High severity finding claiming fund impact on a view function.
+        """
+        if not self.function_context_analyzer:
+            return None
+        
+        # Extract function code from contract
+        function_name = vuln.get('function', '') or self._extract_function_name_from_vuln(vuln)
+        if not function_name:
+            return None
+        
+        # Find function in contract code
+        function_code = self._extract_function_code(function_name)
+        if not function_code:
+            return None
+        
+        # Analyze function context
+        context = self.function_context_analyzer.analyze_function(function_code, function_name, self.contract_code)
+        
+        # Check for false positive based on context
+        vuln_type = vuln.get('vulnerability_type', '')
+        description = vuln.get('description', '')
+        
+        is_fp, reason = self.function_context_analyzer.is_false_positive(vuln_type, description, context)
+        
+        if is_fp:
+            return ValidationStage(
+                stage_name="function_context",
+                is_false_positive=True,
+                confidence=context.confidence,
+                reasoning=reason
+            )
+        
+        # Check if severity should be adjusted (not a false positive, but wrong severity)
+        severity = vuln.get('severity', 'medium')
+        adjusted_severity, adjustment_reason = self.function_context_analyzer.adjust_finding_severity(
+            vuln_type, severity, context
+        )
+        
+        # If severity would be downgraded to 'info', treat as false positive
+        if adjusted_severity == 'info' and severity in ['high', 'critical']:
+            return ValidationStage(
+                stage_name="function_context",
+                is_false_positive=True,
+                confidence=0.85,
+                reasoning=f"Severity downgraded to 'info': {adjustment_reason}"
+            )
+        
+        return None
+    
+    def _check_impact_alignment(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check if claimed impact aligns with actual function capabilities (NEW STAGE).
+        
+        Example: Finding claims fund theft but function is read-only.
+        """
+        if not self.impact_analyzer or not self.function_context_analyzer:
+            return None
+        
+        # Extract function context
+        function_name = vuln.get('function', '') or self._extract_function_name_from_vuln(vuln)
+        if not function_name:
+            return None
+        
+        function_code = self._extract_function_code(function_name)
+        if not function_code:
+            return None
+        
+        context = self.function_context_analyzer.analyze_function(function_code, function_name, self.contract_code)
+        
+        # Analyze impact
+        impact_analysis = self.impact_analyzer.calculate_impact(vuln, context)
+        
+        # If no real impact, it's a false positive
+        if not impact_analysis.should_report:
+            return ValidationStage(
+                stage_name="impact_analysis",
+                is_false_positive=True,
+                confidence=impact_analysis.confidence,
+                reasoning=impact_analysis.reasoning
+            )
+        
+        return None
+    
+    def _extract_function_name_from_vuln(self, vuln: Dict) -> str:
+        """Extract function name from vulnerability description or code snippet."""
+        # Try to extract from description
+        description = vuln.get('description', '')
+        code_snippet = vuln.get('code_snippet', '')
+        
+        # Look for function pattern in description
+        func_match = re.search(r'function\s+(\w+)', description)
+        if func_match:
+            return func_match.group(1)
+        
+        # Look for function name followed by parentheses
+        func_match = re.search(r'`?(\w+)\s*\(', description)
+        if func_match:
+            return func_match.group(1)
+        
+        # Look in code snippet
+        func_match = re.search(r'function\s+(\w+)', code_snippet)
+        if func_match:
+            return func_match.group(1)
+        
+        return ""
+    
+    def _extract_function_code(self, function_name: str) -> str:
+        """Extract function code from contract."""
+        # Find function definition
+        pattern = rf'function\s+{re.escape(function_name)}\s*\([^)]*\)[^{{]*\{{'
+        match = re.search(pattern, self.contract_code)
+        
+        if not match:
+            return ""
+        
+        # Extract function body (simplified - just get next few lines)
+        start = match.start()
+        end = self._find_function_end(match.end(), self.contract_code)
+        
+        return self.contract_code[start:end]
+    
+    def _find_function_end(self, start: int, code: str) -> int:
+        """Find end of function by matching braces."""
+        depth = 1  # Already entered first brace
+        i = start
+        
+        while i < len(code) and depth > 0:
+            if code[i] == '{':
+                depth += 1
+            elif code[i] == '}':
+                depth -= 1
+            i += 1
+        
+        return i
+    
     def get_summary(self) -> Dict:
         """Get summary of available validators."""
         return {
             'has_governance_detector': self.governance_detector is not None,
             'has_deployment_analyzer': self.deployment_analyzer is not None,
             'has_validation_detector': self.validation_detector is not None,
+            'has_function_context_analyzer': self.function_context_analyzer is not None,
+            'has_impact_analyzer': self.impact_analyzer is not None,
+            'has_confidence_scorer': self.confidence_scorer is not None,
             'has_design_assumption_detector': self.design_assumption_detector is not None,
             'has_reentrancy_guard_detector': self.reentrancy_guard_detector is not None,
             'has_scope_classifier': self.scope_classifier is not None,
