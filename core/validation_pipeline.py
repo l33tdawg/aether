@@ -159,6 +159,12 @@ class ValidationPipeline:
         """
         results = []
         
+        # Stage 0: Code-description mismatch check (FAST - catch obvious errors)
+        mismatch_check = self._check_code_description_mismatch(vulnerability)
+        if mismatch_check and mismatch_check.is_false_positive:
+            results.append(mismatch_check)
+            return results  # Early exit
+        
         # Stage 1: Built-in protection check
         builtin_check = self._check_builtin_protection(vulnerability)
         if builtin_check:
@@ -177,7 +183,27 @@ class ValidationPipeline:
             results.append(context_check)
             return results  # Early exit
         
-        # Stage 1.7: Impact analysis check (NEW - fast, deterministic)
+        # Stage 1.65: Exploitability check FIRST (NEW - Phase 2)
+        # This must run before access control check to detect front-running
+        exploit_check = self._check_exploitability(vulnerability)
+        if exploit_check and exploit_check.is_false_positive:
+            results.append(exploit_check)
+            return results  # Early exit
+        
+        # Stage 1.7: Enhanced access control chain check (AFTER exploitability)
+        # Only filter if not front-runnable
+        access_control_check = self._check_enhanced_access_control(vulnerability)
+        if access_control_check and access_control_check.is_false_positive:
+            results.append(access_control_check)
+            return results  # Early exit
+        
+        # Stage 1.8: Parameter origin check (NEW - admin-configured vs user-controlled)
+        param_origin_check = self._check_parameter_origin(vulnerability)
+        if param_origin_check and param_origin_check.is_false_positive:
+            results.append(param_origin_check)
+            return results  # Early exit
+        
+        # Stage 1.9: Impact analysis check (NEW - fast, deterministic)
         impact_check = self._check_impact_alignment(vulnerability)
         if impact_check and impact_check.is_false_positive:
             results.append(impact_check)
@@ -754,6 +780,559 @@ class ValidationPipeline:
             i += 1
         
         return i
+    
+    def _check_code_description_mismatch(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check if vulnerability description matches the actual code.
+        Catches obvious false positives like claiming "decode" on encode operations.
+        """
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        description = vuln.get('description', '').lower()
+        code_snippet = vuln.get('code_snippet', '')
+        
+        # Pattern 1: Claims decoding but only encoding present
+        if ('decoding' in description or 'decode' in vuln_type or 'unvalidated_decoding' in vuln_type):
+            if 'abi.encode(' in code_snippet and 'abi.decode(' not in code_snippet:
+                return ValidationStage(
+                    stage_name="code_description_mismatch",
+                    is_false_positive=True,
+                    confidence=0.98,
+                    reasoning="Vulnerability claims 'decoding' but code only shows abi.encode() - this is encoding, not decoding"
+                )
+        
+        # Pattern 2: Claims overflow but SafeMath/SafeCast present
+        if 'overflow' in vuln_type or 'underflow' in vuln_type:
+            if ('SafeMath' in code_snippet or 'SafeCast' in code_snippet) and 'unchecked' not in code_snippet:
+                return ValidationStage(
+                    stage_name="code_description_mismatch",
+                    is_false_positive=True,
+                    confidence=0.95,
+                    reasoning="Claims overflow/underflow but code uses SafeMath/SafeCast which prevents this"
+                )
+        
+        # Pattern 3: Claims reentrancy but function is view/pure
+        if 'reentr' in vuln_type:
+            # Extract function signature from code
+            if re.search(r'function\s+\w+\([^)]*\)\s+(external|public)\s+view', code_snippet):
+                return ValidationStage(
+                    stage_name="code_description_mismatch",
+                    is_false_positive=True,
+                    confidence=0.99,
+                    reasoning="Claims reentrancy but function is view (read-only) - cannot have reentrancy"
+                )
+            if re.search(r'function\s+\w+\([^)]*\)\s+(external|public)\s+pure', code_snippet):
+                return ValidationStage(
+                    stage_name="code_description_mismatch",
+                    is_false_positive=True,
+                    confidence=0.99,
+                    reasoning="Claims reentrancy but function is pure - cannot have reentrancy"
+                )
+        
+        return None
+    
+    def _check_enhanced_access_control(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Enhanced access control check that traces full modifier chains.
+        Catches cases like onlyTrustedOrRestricted calling _checkCanCall().
+        
+        NOTE: This should only filter if NOT front-runnable AND not a validation/DoS bug.
+        """
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        
+        # Extract function from vulnerability
+        function_name = vuln.get('function', '') or self._extract_function_name_from_vuln(vuln)
+        if not function_name:
+            return None
+        
+        function_code = self._extract_function_code(function_name)
+        if not function_code:
+            return None
+        
+        # Check if front-runnable FIRST - if yes, don't filter on access control alone
+        if self._is_front_runnable(vuln, function_code):
+            # Front-runnable vulnerabilities should NOT be filtered just because they have access control
+            return None
+        
+        # Check if it's a validation/DoS bug in privileged function - these are still real bugs
+        if any(keyword in vuln_type for keyword in ['validation', 'dos', 'overflow', 'underflow', 'parameter']):
+            # Don't filter validation issues even if access controlled
+            return None
+        
+        # Analyze access control chain
+        access_analysis = self._analyze_access_control_chain(function_code, self.contract_code)
+        
+        if access_analysis['has_access_control']:
+            return ValidationStage(
+                stage_name="enhanced_access_control",
+                is_false_positive=True,
+                confidence=access_analysis['confidence'],
+                reasoning=access_analysis['reasoning']
+            )
+        
+        return None
+    
+    def _analyze_access_control_chain(self, function_code: str, contract_code: str) -> Dict:
+        """
+        Trace full access control chain including:
+        1. Direct modifiers (onlyOwner, onlyGovernor, restricted, etc.)
+        2. Inherited modifiers from parent contracts
+        3. Custom access patterns (_checkCanCall, etc.)
+        4. Modifier chains (modifier A calls modifier B)
+        """
+        # Extract modifiers from function signature
+        modifiers = self._extract_modifiers_from_function(function_code)
+        
+        access_info = {
+            'has_access_control': False,
+            'modifiers': [],
+            'custom_checks': [],
+            'confidence': 0.0,
+            'reasoning': ''
+        }
+        
+        # Known access control modifiers
+        known_modifiers = [
+            'onlyOwner', 'onlyGovernor', 'onlyGuardian', 'onlyAdmin',
+            'restricted', 'onlyRole', 'onlyAuthorized', 'onlyManager',
+            'onlyTrusted', 'onlyTrustedOrRestricted', 'onlyGovernance',
+            'requiresAuth', 'auth', 'onlyOwnerOrGuardian'
+        ]
+        
+        for modifier in modifiers:
+            # Check if it's a known access control modifier
+            if modifier in known_modifiers:
+                access_info['has_access_control'] = True
+                access_info['modifiers'].append(modifier)
+                continue
+            
+            # Check if modifier contains access control logic
+            modifier_def = self._find_modifier_definition(modifier, contract_code)
+            if modifier_def:
+                # Look for _checkCanCall or similar patterns
+                if '_checkCanCall' in modifier_def:
+                    access_info['has_access_control'] = True
+                    access_info['custom_checks'].append(f"{modifier} contains _checkCanCall")
+                
+                # Look for require(msg.sender == ...)
+                if re.search(r'require\s*\([^)]*msg\.sender', modifier_def):
+                    access_info['has_access_control'] = True
+                    access_info['custom_checks'].append(f"{modifier} checks msg.sender")
+                
+                # Look for if (!condition) revert pattern
+                if re.search(r'if\s*\([^)]*\)\s*revert', modifier_def):
+                    access_info['has_access_control'] = True
+                    access_info['custom_checks'].append(f"{modifier} has conditional revert")
+        
+        # Build reasoning
+        if access_info['has_access_control']:
+            reasons = []
+            if access_info['modifiers']:
+                reasons.append(f"Protected by {', '.join(access_info['modifiers'])}")
+            if access_info['custom_checks']:
+                reasons.append(f"Custom checks: {'; '.join(access_info['custom_checks'])}")
+            
+            access_info['reasoning'] = ' | '.join(reasons) + " - Not externally exploitable by arbitrary users"
+            access_info['confidence'] = 0.92
+        
+        return access_info
+    
+    def _extract_modifiers_from_function(self, function_code: str) -> List[str]:
+        """Extract modifiers from function signature."""
+        # Match: function name(...) modifier1 modifier2 returns (...)
+        # or: function name(...) modifier1 modifier2 {...
+        pattern = r'function\s+\w+\s*\([^)]*\)\s+((?:(?:public|external|internal|private|view|pure|payable|virtual|override|\w+)\s+)+)'
+        match = re.search(pattern, function_code)
+        
+        if not match:
+            return []
+        
+        modifier_string = match.group(1)
+        
+        # Filter out visibility/mutability keywords
+        keywords_to_ignore = {'public', 'external', 'internal', 'private', 'view', 'pure', 'payable', 'virtual', 'override', 'returns'}
+        
+        modifiers = []
+        for word in modifier_string.split():
+            word = word.strip()
+            if word and word not in keywords_to_ignore:
+                modifiers.append(word)
+        
+        return modifiers
+    
+    def _find_modifier_definition(self, modifier_name: str, contract_code: str) -> str:
+        """Find modifier definition in contract code."""
+        pattern = rf'modifier\s+{re.escape(modifier_name)}\s*\([^)]*\)\s*\{{'
+        match = re.search(pattern, contract_code)
+        
+        if not match:
+            return ""
+        
+        # Extract modifier body (simplified)
+        start = match.start()
+        end = self._find_function_end(match.end(), contract_code)
+        
+        return contract_code[start:end]
+    
+    def _check_parameter_origin(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check if parameters are admin-configured vs user-controlled.
+        Filters false positives where users can't actually pass arbitrary values.
+        """
+        description = vuln.get('description', '').lower()
+        code_snippet = vuln.get('code_snippet', '')
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        
+        # Look for patterns indicating user can pass arbitrary addresses/values
+        if not any(keyword in description for keyword in ['arbitrary', 'user', 'attacker', 'malicious', 'untrusted']):
+            return None
+        
+        # Extract potential parameter names
+        param_candidates = self._extract_parameter_candidates(description, code_snippet)
+        
+        for param_name in param_candidates:
+            origin_info = self._analyze_param_origin(param_name, code_snippet, self.contract_code)
+            
+            if origin_info['origin'] == 'admin_configured':
+                return ValidationStage(
+                    stage_name="parameter_origin",
+                    is_false_positive=True,
+                    confidence=origin_info['confidence'],
+                    reasoning=origin_info['reasoning']
+                )
+        
+        return None
+    
+    def _extract_parameter_candidates(self, description: str, code_snippet: str) -> List[str]:
+        """Extract potential parameter names from description and code."""
+        candidates = []
+        
+        # Look for common parameter names in description
+        param_patterns = [
+            r'\b(\w+Asset)\b',
+            r'\b(\w+Address)\b',
+            r'\b(\w+Token)\b',
+            r'\b(\w+Vault)\b',
+            r'`(\w+)`',
+        ]
+        
+        for pattern in param_patterns:
+            matches = re.findall(pattern, description, re.IGNORECASE)
+            candidates.extend(matches)
+        
+        # Extract from function parameters in code
+        func_param_pattern = r'function\s+\w+\s*\([^)]*address\s+(\w+)'
+        matches = re.findall(func_param_pattern, code_snippet)
+        candidates.extend(matches)
+        
+        return list(set(candidates))  # Deduplicate
+    
+    def _analyze_param_origin(self, param_name: str, code_snippet: str, contract_code: str) -> Dict:
+        """
+        Determine if parameter is admin-configured or user-controlled.
+        """
+        # Check if parameter is used as mapping/array key
+        if re.search(rf'(\w+Data)\[{re.escape(param_name)}\]', code_snippet):
+            # It's looking up data that must be pre-configured
+            mapping_name = re.search(rf'(\w+Data)\[{re.escape(param_name)}\]', code_snippet).group(1)
+            
+            # Find setters for this mapping
+            setter_pattern = rf'function\s+set{mapping_name.replace("Data", "")}\w*\s*\([^)]*\)\s*\w*\s*(restricted|onlyOwner|onlyGovernor|onlyGuardian)'
+            
+            if re.search(setter_pattern, contract_code, re.IGNORECASE):
+                return {
+                    'origin': 'admin_configured',
+                    'confidence': 0.93,
+                    'reasoning': f"Parameter {param_name} must be pre-configured via admin-restricted setter function - users cannot pass arbitrary values"
+                }
+        
+        # Check for yieldBearingData pattern (common in DeFi)
+        if 'yieldBearing' in param_name or 'collateral' in param_name:
+            if re.search(r'yieldBearingData\[', code_snippet) or re.search(r'collateralData\[', code_snippet):
+                return {
+                    'origin': 'admin_configured',
+                    'confidence': 0.95,
+                    'reasoning': f"{param_name} must exist in admin-configured whitelist mapping - arbitrary addresses cannot be used"
+                }
+        
+        # Check if there's validation against a whitelist
+        if re.search(rf'require\s*\([^)]*{re.escape(param_name)}[^)]*!=\s*address\(0\)', code_snippet):
+            # Just a zero-check, not admin configuration
+            return {
+                'origin': 'user_controlled',
+                'confidence': 0.7,
+                'reasoning': 'Only basic validation, appears user-controlled'
+            }
+        
+        return {
+            'origin': 'unknown',
+            'confidence': 0.5,
+            'reasoning': 'Cannot determine parameter origin'
+        }
+    
+    def _check_exploitability(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Phase 2: Check if vulnerability is actually exploitable by external attackers.
+        Filters findings that require privileged access and aren't front-runnable.
+        """
+        # Extract function information
+        function_name = vuln.get('function', '') or self._extract_function_name_from_vuln(vuln)
+        if not function_name:
+            return None
+        
+        function_code = self._extract_function_code(function_name)
+        if not function_code:
+            return None
+        
+        # Calculate exploitability score
+        exploit_analysis = self._calculate_exploitability_score(vuln, function_code, self.contract_code)
+        
+        if not exploit_analysis['exploitable']:
+            return ValidationStage(
+                stage_name="exploitability_check",
+                is_false_positive=True,
+                confidence=exploit_analysis['confidence'],
+                reasoning=exploit_analysis['reasoning']
+            )
+        
+        return None
+    
+    def _calculate_exploitability_score(self, vuln: Dict, function_code: str, contract_code: str) -> Dict:
+        """
+        Determine if vulnerability is ACTUALLY exploitable by external attackers.
+        
+        Returns:
+            - exploitable: bool
+            - attack_type: 'direct' | 'front_run' | 'governance' | 'privileged_bug'
+            - reasoning: str
+            - confidence: float
+        """
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        
+        # Check function access control
+        access_analysis = self._analyze_access_control_chain(function_code, contract_code)
+        
+        # If function has access control, check if it's front-runnable
+        if access_analysis['has_access_control']:
+            # Check if it's front-runnable
+            if self._is_front_runnable(vuln, function_code):
+                return {
+                    'exploitable': True,
+                    'attack_type': 'front_run',
+                    'reasoning': f"Trusted function can be front-run by attackers manipulating external state",
+                    'confidence': 0.85
+                }
+            # Check if it's a validation/DoS issue in privileged function
+            elif any(keyword in vuln_type for keyword in ['validation', 'dos', 'overflow', 'underflow']):
+                # These are real bugs even in privileged functions (can cause DoS)
+                return {
+                    'exploitable': True,
+                    'attack_type': 'privileged_bug',
+                    'reasoning': f"Validation/DoS issue in privileged function - real bug but requires {', '.join(access_analysis['modifiers'])} access",
+                    'confidence': 0.75
+                }
+            else:
+                return {
+                    'exploitable': False,
+                    'attack_type': 'governance',
+                    'reasoning': f"Only accessible to {', '.join(access_analysis['modifiers'])} - not externally exploitable by arbitrary users",
+                    'confidence': 0.93
+                }
+        
+        # No access control - directly exploitable
+        return {
+            'exploitable': True,
+            'attack_type': 'direct',
+            'reasoning': 'Function is public/external with no access control - directly exploitable',
+            'confidence': 0.95
+        }
+    
+    def _is_front_runnable(self, vuln: Dict, function_code: str) -> bool:
+        """
+        Check if vulnerability can be exploited via front-running.
+        
+        Front-runnable patterns:
+        1. Uses balanceOf() that can be manipulated by sending tokens
+        2. Uses getReserves() from AMM  
+        3. Reads external state that attacker can modify before execution
+        """
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        description = vuln.get('description', '').lower()
+        code_snippet = vuln.get('code_snippet', '')
+        
+        # Pattern 1: balanceOf manipulation (like Finding #11)
+        # Check both function code and code snippet
+        balanceof_patterns = [
+            r'\.balanceOf\s*\(\s*address\s*\(\s*this\s*\)\s*\)',
+            r'IERC20\s*\([^)]+\)\s*\.balanceOf',
+            r'\.balanceOf\s*\(',
+        ]
+        
+        has_balanceof = any(re.search(pattern, function_code) or re.search(pattern, code_snippet) 
+                           for pattern in balanceof_patterns)
+        
+        if has_balanceof:
+            # Check if it's used in a security-sensitive context
+            if any(keyword in description for keyword in ['slippage', 'manipulation', 'bypass', 'front-run', 'check']):
+                return True
+            if any(keyword in vuln_type for keyword in ['manipulation', 'slippage', 'oracle']):
+                return True
+        
+        # Pattern 2: AMM reserves manipulation
+        if re.search(r'\.getReserves\s*\(', function_code):
+            if 'oracle' in vuln_type or 'price' in description or 'manipulation' in description:
+                return True
+        
+        # Pattern 3: Check if description explicitly mentions front-running
+        if 'front-run' in description or 'front run' in description or 'frontrun' in description:
+            return True
+        
+        return False
+    
+    def _check_realistic_impact(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Phase 3: Calculate REALISTIC impact, not theoretical maximum.
+        Downgrade severity for low-impact findings.
+        """
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        description = vuln.get('description', '').lower()
+        severity = vuln.get('severity', 'medium').lower()
+        code_snippet = vuln.get('code_snippet', '')
+        
+        # Get function context for better analysis
+        function_name = vuln.get('function', '') or self._extract_function_name_from_vuln(vuln)
+        if function_name:
+            function_code = self._extract_function_code(function_name)
+            if function_code:
+                impact_analysis = self._calculate_realistic_impact_score(
+                    vuln_type, description, severity, function_code, code_snippet
+                )
+                
+                if impact_analysis['should_filter']:
+                    return ValidationStage(
+                        stage_name="realistic_impact",
+                        is_false_positive=True,
+                        confidence=impact_analysis['confidence'],
+                        reasoning=impact_analysis['reasoning']
+                    )
+        
+        return None
+    
+    def _calculate_realistic_impact_score(
+        self, 
+        vuln_type: str, 
+        description: str, 
+        severity: str,
+        function_code: str,
+        code_snippet: str
+    ) -> Dict:
+        """
+        Calculate REALISTIC impact with specific patterns.
+        """
+        # Pattern 1: Precision loss with large divisors
+        if 'precision' in vuln_type or 'rounding' in description:
+            # Extract division values
+            if 'BASE_27' in function_code or '1e27' in function_code or '1e18' in function_code:
+                return {
+                    'should_filter': True,
+                    'impact': 'negligible',
+                    'confidence': 0.88,
+                    'reasoning': 'Precision loss with 1e27/1e18 divisor affects only dust amounts (< 0.000001%) - negligible real-world impact'
+                }
+            elif 'BASE_9' in function_code or '1e9' in function_code:
+                if severity in ['high', 'critical']:
+                    return {
+                        'should_filter': True,
+                        'impact': 'low',
+                        'confidence': 0.82,
+                        'reasoning': 'Precision loss with 1e9 divisor - affects small amounts only, not high/critical severity'
+                    }
+        
+        # Pattern 2: SafeCast "overflow" - actually a revert, not silent overflow
+        if 'SafeCast' in code_snippet and ('overflow' in vuln_type or 'underflow' in vuln_type):
+            return {
+                'should_filter': False,  # Keep it but note it's DoS
+                'impact': 'dos',
+                'confidence': 0.90,
+                'reasoning': 'SafeCast reverts on overflow - this is DoS (denial of service), not fund theft'
+            }
+        
+        # Pattern 3: View/pure function "vulnerabilities"
+        if re.search(r'function\s+\w+\([^)]*\)\s+(external|public)\s+view', function_code):
+            if severity in ['high', 'critical']:
+                return {
+                    'should_filter': True,
+                    'impact': 'info',
+                    'confidence': 0.95,
+                    'reasoning': 'View function (read-only) cannot steal funds or modify state - informational only'
+                }
+        
+        # Pattern 4: Integer overflow in Solidity 0.8+ without unchecked
+        if ('overflow' in vuln_type or 'underflow' in vuln_type) and 'unchecked' not in code_snippet:
+            # Check Solidity version
+            version_match = re.search(r'pragma solidity\s+[\^>=<]*(\d+\.\d+)', self.contract_code)
+            if version_match:
+                version_str = version_match.group(1)
+                if version_str >= '0.8':
+                    return {
+                        'should_filter': True,
+                        'impact': 'none',
+                        'confidence': 0.97,
+                        'reasoning': f'Solidity {version_str} auto-reverts on overflow - not a vulnerability without unchecked{{}}'
+                    }
+        
+        # No filtering needed
+        return {
+            'should_filter': False,
+            'impact': severity,
+            'confidence': 0.5,
+            'reasoning': 'Standard impact analysis'
+        }
+    
+    def _check_impact_alignment(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Enhanced impact alignment check that uses realistic impact calculation.
+        IMPORTANT: Don't filter front-runnable vulnerabilities.
+        """
+        # Check if this is front-runnable first
+        function_name = vuln.get('function', '') or self._extract_function_name_from_vuln(vuln)
+        if function_name:
+            function_code = self._extract_function_code(function_name)
+            if function_code and self._is_front_runnable(vuln, function_code):
+                # Front-runnable = real impact via external manipulation
+                return None
+        
+        # First try realistic impact check
+        realistic_check = self._check_realistic_impact(vuln)
+        if realistic_check:
+            return realistic_check
+        
+        # Fall back to original impact alignment if available
+        if not self.impact_analyzer or not self.function_context_analyzer:
+            return None
+        
+        # Extract function context
+        if not function_name:
+            return None
+        
+        function_code = self._extract_function_code(function_name)
+        if not function_code:
+            return None
+        
+        context = self.function_context_analyzer.analyze_function(function_code, function_name, self.contract_code)
+        
+        # Analyze impact
+        impact_analysis = self.impact_analyzer.calculate_impact(vuln, context)
+        
+        # If no real impact, it's a false positive
+        if not impact_analysis.should_report:
+            return ValidationStage(
+                stage_name="impact_analysis",
+                is_false_positive=True,
+                confidence=impact_analysis.confidence,
+                reasoning=impact_analysis.reasoning
+            )
+        
+        return None
     
     def get_summary(self) -> Dict:
         """Get summary of available validators."""
