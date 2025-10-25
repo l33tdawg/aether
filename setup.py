@@ -678,6 +678,11 @@ Let's get started!
             version = tool_info.get('version', 'N/A')
             required = "Yes" if tool_info.get('required') else "No"
             
+            # Check for version warnings
+            if tool_info.get('installed') and not tool_info.get('version_ok', True):
+                status = "⚠ Old Version"
+                status_style = "yellow"
+            
             table.add_row(
                 tool_name,
                 f"[{status_style}]{status}[/{status_style}]",
@@ -690,6 +695,13 @@ Let's get started!
         # Check if Foundry is installed
         if not tools['forge']['installed']:
             self.console.print("\n[yellow]Foundry (forge/anvil) is required for PoC generation and testing.[/yellow]")
+        
+        # Check for Node.js version warnings
+        if tools.get('node', {}).get('installed') and not tools.get('node', {}).get('version_ok', True):
+            warning = tools['node'].get('warning', 'Node.js version too old')
+            self.console.print(f"\n[yellow]⚠️  {warning}[/yellow]")
+            if tools['node'].get('install_instructions'):
+                self.console.print(f"   {tools['node']['install_instructions']}")
             
             if self.interactive:
                 install_foundry = Confirm.ask("Install Foundry now?", default=True)

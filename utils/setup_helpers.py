@@ -32,6 +32,15 @@ class DependencyDetector:
             'install_instructions': 'Installed with Foundry',
             'required': True
         },
+        'node': {
+            'description': 'Node.js (for Hardhat/npm projects)',
+            'check_cmd': ['node', '--version'],
+            'version_pattern': r'v(\d+\.\d+\.\d+)',
+            'min_version': '22.10.0',
+            'install_instructions': 'Install NVM: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash\nThen: nvm install 22 && nvm use 22',
+            'required': False,
+            'warning': 'Node.js 22+ required for Hardhat projects. Run: ./scripts/setup_node.sh'
+        },
         'slither': {
             'description': 'Slither static analyzer',
             'check_cmd': ['slither', '--version'],
@@ -82,11 +91,23 @@ class DependencyDetector:
                 version_match = re.search(tool_info['version_pattern'], output)
                 version = version_match.group(1) if version_match else 'Unknown'
                 
+                # Check minimum version if specified
+                version_ok = True
+                warning = None
+                if 'min_version' in tool_info and version != 'Unknown':
+                    min_version = tool_info['min_version']
+                    version_ok = self._compare_versions(version, min_version) >= 0
+                    if not version_ok:
+                        warning = tool_info.get('warning', f'Version {min_version}+ required')
+                
                 return {
                     'installed': True,
                     'version': version,
+                    'version_ok': version_ok,
+                    'warning': warning,
                     'description': tool_info['description'],
-                    'required': tool_info['required']
+                    'required': tool_info['required'],
+                    'install_instructions': tool_info.get('install_instructions') if not version_ok else None
                 }
             else:
                 return {
@@ -106,6 +127,31 @@ class DependencyDetector:
                 'install_instructions': tool_info['install_instructions'],
                 'error': str(e)
             }
+    
+    def _compare_versions(self, version1: str, version2: str) -> int:
+        """Compare two version strings.
+        
+        Returns:
+            -1 if version1 < version2
+             0 if version1 == version2
+             1 if version1 > version2
+        """
+        v1_parts = [int(x) for x in version1.split('.')]
+        v2_parts = [int(x) for x in version2.split('.')]
+        
+        # Pad shorter version with zeros
+        while len(v1_parts) < len(v2_parts):
+            v1_parts.append(0)
+        while len(v2_parts) < len(v1_parts):
+            v2_parts.append(0)
+        
+        for p1, p2 in zip(v1_parts, v2_parts):
+            if p1 < p2:
+                return -1
+            elif p1 > p2:
+                return 1
+        
+        return 0
     
     def check_python_version(self) -> Tuple[bool, str]:
         """Check if Python version meets requirements (3.11+)."""

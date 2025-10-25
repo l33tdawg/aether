@@ -1,0 +1,31 @@
+# Quick Fix: Slither Node.js Issue
+
+## TL;DR
+Slither was failing because Node.js v20 doesn't work with Hardhat. Upgrade to Node v22:
+
+```bash
+source ~/.nvm/nvm.sh
+nvm install 22
+nvm use 22
+nvm alias default 22
+```
+
+Or run:
+```bash
+./scripts/setup_node.sh
+```
+
+## What Changed
+✅ Auto-detects and uses Node 22 for Slither analysis
+✅ Better error messages when Node version is wrong
+✅ Setup script now checks Node version
+✅ Helper script for easy Node 22 setup
+✅ Documentation updated with requirements
+
+## Verify Fix
+```bash
+python setup.py  # Should show Node 22 installed
+```
+
+Done! 🎉
+

@@ -90,6 +90,9 @@ python setup.py --non-interactive
 ## Requirements
 
 - **Python 3.11+** (currently tested with Python 3.12.8)
+- **Node.js 22+** (required for Hardhat/npm-based projects)
+  - If using NVM: `nvm install 22 && nvm use 22`
+  - Hardhat projects require Node 22.10.0 or later
 - **Foundry (forge/anvil)** installed and on PATH for Foundry-related features
 - **solc-select** for multiple Solidity compiler versions (supports 0.4.x through 0.8.x)
 - **Optional: Slither** for static analysis integration (v0.10.0 recommended)
