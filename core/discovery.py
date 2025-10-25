@@ -32,7 +32,22 @@ class ContractDiscovery:
     def discover(self, project_id: int, project_path: Union[str, Path]) -> List[ContractInfo]:
         project_path = Path(project_path)
         contracts: List[ContractInfo] = []
-        for root, _, files in os.walk(project_path):
+        
+        # Directories to skip (dependencies, build artifacts, tests)
+        SKIP_DIRS = {
+            'lib', 'libs', 'node_modules', 'out', 'artifacts', 'cache', 
+            'build', 'dist', '.git', 'venv', 'env', 'test', 'tests'
+        }
+        
+        for root, dirs, files in os.walk(project_path):
+            # Skip excluded directories (modifies dirs in-place to prune walk)
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            
+            # Also skip if path contains these patterns
+            root_path = Path(root)
+            if any(skip in root_path.parts for skip in SKIP_DIRS):
+                continue
+            
             for f in files:
                 if f.endswith('.sol'):
                     fp = Path(root) / f
