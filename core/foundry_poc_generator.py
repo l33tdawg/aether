@@ -1197,6 +1197,68 @@ class FoundryPoCGenerator:
         available_funcs = context.get('available_functions', [])[:8]
         func_list = '\n'.join([f"  {i+1}. {func}()" for i, func in enumerate(available_funcs)]) if available_funcs else "  (analyze contract)"
         
+        # Check for deployed address in abi_data
+        abi_data = context.get('abi_data', {})
+        deployed_address = abi_data.get('deployed_address', '')
+        network = abi_data.get('network', 'mainnet')
+        
+        deployment_note = ""
+        if deployed_address:
+            deployment_note = f"""
+⚠️  DEPLOYED CONTRACT INFORMATION:
+This contract is ALREADY DEPLOYED on {network.upper()} at: {deployed_address}
+
+CRITICAL: In your setUp() function, you MUST:
+1. Fork {network} using vm.createSelectFork()
+2. Use the deployed contract at {deployed_address}
+3. DO NOT deploy a new instance with "new {context['contract_name']}()"
+
+Example setUp():
+```solidity
+function setUp() public {{
+    vm.createSelectFork("https://eth.llamarpc.com");
+    target = I{context['contract_name']}({deployed_address});
+    
+    // Setup test accounts
+    attacker = makeAddr("attacker");
+    owner = target.owner();  // Get real owner
+}}
+```
+"""
+        
+        # Add specific guidance for access control bugs
+        vuln_specific_guidance = ""
+        if 'access control' in context.get('vulnerability_type', '').lower() or 'missing' in context.get('vulnerability_type', '').lower():
+            vuln_specific_guidance = f"""
+🎯 ACCESS CONTROL VULNERABILITY TESTING:
+For access control bugs, your test MUST:
+1. Use vm.prank(attackerAddress) to impersonate an unauthorized user
+2. Show that the attacker can call the function when they shouldn't
+3. Get the owner address using target.owner() in setUp
+4. Compare attacker address vs owner to prove unauthorized access
+
+Example test for missing access control:
+```solidity
+function testUnauthorizedWithdraw() public {{
+    address attacker = makeAddr("attacker");
+    address owner = target.owner();
+    
+    // Fund contract
+    vm.deal(address(target), 5 ether);
+    
+    uint256 ownerBefore = owner.balance;
+    
+    // Attacker (not owner) calls withdraw - should fail but succeeds due to bug
+    vm.prank(attacker);
+    target.withdraw();
+    
+    // Owner received funds even though attacker called it
+    assertTrue(owner.balance > ownerBefore, "Owner should receive funds");
+    assertEq(address(target).balance, 0, "Contract should be drained");
+}}
+```
+"""
+        
         attempt_note = ""
         if attempt > 0:
             attempt_note = f"\n\nNote: This is attempt {attempt + 1}. Please ensure the code is complete and well-structured."
@@ -1214,6 +1276,8 @@ Description:
 
 AVAILABLE PUBLIC/EXTERNAL FUNCTIONS:
 {func_list}
+{deployment_note}
+{vuln_specific_guidance}
 
 TASK:
 Create a complete Foundry test demonstrating this vulnerability. Include:
@@ -1229,7 +1293,9 @@ TECHNICAL REQUIREMENTS:
 - Must compile with forge build
 - Must work on mainnet fork
 - Include vm.createSelectFork() in setup
-- Use real contract addresses where possible
+- {"Use deployed contract at " + deployed_address if deployed_address else "Use real contract addresses where possible"}
+- For access control bugs: MUST use vm.prank() to impersonate unauthorized users
+- Include owner() function in contract interface
 - Add assertions to prove the exploit works
 
 RESPONSE FORMAT:
@@ -2049,17 +2115,16 @@ Security Controls: {modifiers[:200] if modifiers != 'No modifiers detected' else
             return {'repaired': False, 'test_code': '', 'exploit_code': ''}
 
         try:
-            # Prepare context for LLM
-            context = {
-                'contract_name': test_result.contract_name,
-                'contract_source': test_result.contract_source or "",
-                'test_code': test_result.test_code,
-                'exploit_code': test_result.exploit_code,
-                'compile_errors': error_analysis['missing_imports'] + error_analysis['syntax_errors']
-            }
+            # Prepare compile errors list
+            compile_errors = error_analysis['missing_imports'] + error_analysis['syntax_errors']
 
-            # Create targeted repair prompt
-            prompt = self._create_repair_prompt(context)
+            # Create targeted repair prompt using correct signature
+            prompt = self._create_repair_prompt(
+                test_result,
+                compile_errors,
+                test_result.test_code,
+                test_result.exploit_code
+            )
 
             # Call LLM for repair
             response = await self.llm_analyzer._call_llm(
@@ -2142,10 +2207,6 @@ contract {contract_name}Exploit {{
         executed = true;
     }}
 }}'''
-
-    def _create_repair_prompt(self, context: Dict[str, Any]) -> str:
-        # Create targeted prompt for compilation error repair.
-        return ""
 
     def _parse_repair_response(self, response: str) -> Dict[str, Any]:
         # Parse LLM repair response.
@@ -2383,14 +2444,24 @@ contract {contract_name}Exploit {{
         await self._write_poc_files(test_result, output_dir)
 
         # Pre-hydrate interface stubs/mocks from audited contract imports
-        try:
-            contract_source = contract_code or test_result.contract_source or ""
-            solc_version = self._detect_solidity_version(contract_source)
-            stubs = self.generate_interface_stubs(contract_source, [], solc_version)
-            if stubs:
-                self._write_interface_stubs(stubs, output_dir, contract_source, solc_version)
-        except Exception as e:
-            logger.warning(f"Pre-hydration of stubs failed: {e}")
+        # SKIP for mainnet fork tests - they don't need mocks!
+        is_mainnet_fork = (
+            "vm.createSelectFork" in test_result.test_code or
+            "vm.createFork" in test_result.test_code or
+            (hasattr(test_result, 'abi_data') and test_result.abi_data and test_result.abi_data.get('deployed_address'))
+        )
+        
+        if not is_mainnet_fork:
+            try:
+                contract_source = contract_code or test_result.contract_source or ""
+                solc_version = self._detect_solidity_version(contract_source)
+                stubs = self.generate_interface_stubs(contract_source, [], solc_version)
+                if stubs:
+                    self._write_interface_stubs(stubs, output_dir, contract_source, solc_version)
+            except Exception as e:
+                logger.warning(f"Pre-hydration of stubs failed: {e}")
+        else:
+            logger.info("⚡ Skipping mock generation for mainnet fork test - not needed!")
 
         # Main compilation loop
         for attempt in range(self.max_compile_attempts):
@@ -2994,8 +3065,38 @@ Return ONLY the corrected Solidity code in a code block."""
     ) -> str:
         # Create repair prompt for LLM.
         errors_text = '\n'.join([f"- {error}" for error in compile_errors[:10]])
+        
+        return f"""You are fixing compilation errors in a Foundry test suite.
 
-        return ""
+CONTRACT: {test_result.contract_name}
+VULNERABILITY: {test_result.vulnerability_type}
+
+COMPILATION ERRORS:
+{errors_text}
+
+CURRENT TEST CODE:
+```solidity
+{current_test_code[:2000]}
+```
+
+CURRENT EXPLOIT CODE:
+```solidity
+{current_exploit_code[:1000]}
+```
+
+TASK:
+Fix the compilation errors while preserving the test logic. Common fixes:
+1. Add missing imports (e.g., "forge-std/Test.sol")
+2. Fix syntax errors
+3. Ensure proper Solidity version
+4. Fix interface definitions
+
+Return ONLY valid JSON:
+{{
+    "test_code": "Fixed complete test file",
+    "exploit_code": "Fixed complete exploit file",
+    "explanation": "Brief explanation of fixes"
+}}"""
 
     def _parse_repair_response(self, response: str) -> Dict[str, Any]:
         # Parse LLM repair response.
