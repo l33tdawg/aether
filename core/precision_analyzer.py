@@ -93,6 +93,21 @@ class PrecisionAnalyzer:
                 'description': 'Fixed-point arithmetic with potential precision loss',
                 'type': PrecisionIssue.INCORRECT_PRECISION,
                 'risk_level': PrecisionRisk.HIGH
+            },
+            {
+                # Pro-rated division pattern - common in vesting/fee accrual
+                # Matches: item.totalValue * int256(lapsed) / int256(uint256(item.duration))
+                'pattern': r'(\w+(?:\.\w+)?)\s*\*\s*int256\s*\(\s*(\w+)\s*\)\s*/\s*int256\s*\((?:uint256\s*\()?\s*(\w+(?:\.\w+)?)',
+                'description': 'Pro-rated division with type casting - high precision loss risk for small values',
+                'type': PrecisionIssue.DIVISION_PRECISION,
+                'risk_level': PrecisionRisk.HIGH
+            },
+            {
+                # Simpler pro-rated pattern
+                'pattern': r'(\w+(?:\.\w+)?)\s*\*\s*\w+\s*\(\s*(\w+)\s*\)\s*/\s*\w+\s*\(\s*(?:\w+\s*\()?\s*(\w+(?:\.\w+)?)',
+                'description': 'Integer division in pro-rated calculation - truncation risk',
+                'type': PrecisionIssue.PRECISION_LOSS,
+                'risk_level': PrecisionRisk.HIGH
             }
         ]
     
@@ -181,16 +196,59 @@ class PrecisionAnalyzer:
         """Detect precision loss in division operations"""
         vulnerabilities = []
         
-        # Simple division pattern for testing
+        # Check for pro-rated division pattern first (more specific)
+        prorated_pattern = r'(\w+(?:\.\w+)?)\s*\*\s*int256\s*\(\s*(\w+)\s*\)\s*/\s*int256\s*\((?:uint256\s*\()?\s*(\w+(?:\.\w+)?)'
+        matches = re.finditer(prorated_pattern, contract_content, re.MULTILINE)
+        
+        for match in matches:
+            line_number = self._get_line_number(match.start(), contract_content)
+            
+            # Verify line number accuracy
+            if not self._verify_line_number(match, lines, line_number):
+                # Recalculate if verification fails
+                line_number = self._get_accurate_line_number(match.start(), contract_content, lines)
+            
+            code_snippet = self._get_code_snippet_from_lines(lines, line_number, context=2)
+            
+            # This is a specific high-risk pattern - pro-rated division
+            vulnerability = PrecisionVulnerability(
+                vulnerability_type='precision_loss_division',
+                severity='high',
+                description=(
+                    'Integer division in pro-rated calculation causes precision loss through truncation. '
+                    'For example, if totalValue=10 and duration=100, the result for lapsed=1 would be 0 '
+                    'instead of 0.1, losing the entire fractional component. This is especially problematic '
+                    'for small values or long durations in vesting/fee accrual calculations.'
+                ),
+                line_number=line_number,
+                code_snippet=code_snippet,
+                confidence=1.0,  # High confidence for this specific pattern
+                swc_id='SWC-101',
+                recommendation=(
+                    'Consider using fixed-point arithmetic libraries (e.g., PRBMath, ABDKMath) or '
+                    'multiply by a scaling factor before division: (totalValue * scalingFactor * lapsed) / duration, '
+                    'then divide by scalingFactor when using the result.'
+                ),
+                operation_type='prorated_division',
+                precision_impact='high'
+            )
+            vulnerabilities.append(vulnerability)
+        
+        # Simple division pattern for general cases
         simple_division_pattern = r'(\w+)\s*/\s*(\w+)'
         matches = re.finditer(simple_division_pattern, contract_content, re.MULTILINE)
         
         for match in matches:
             line_number = self._get_line_number(match.start(), contract_content)
+            
+            # Verify and get accurate code snippet
+            if not self._verify_line_number(match, lines, line_number):
+                line_number = self._get_accurate_line_number(match.start(), contract_content, lines)
+            
             code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
             
-            # Skip import statements
-            if code_snippet.startswith('import '):
+            # Skip import statements and comment-only lines
+            if code_snippet.startswith('import ') or code_snippet.startswith('//') or code_snippet.startswith('/*'):
                 continue
             
             # Check if this is a false positive
@@ -211,7 +269,7 @@ class PrecisionAnalyzer:
                     swc_id='SWC-101',
                     recommendation='Use fixed-point arithmetic or add precision handling',
                     operation_type='division',
-                    precision_impact='high'
+                    precision_impact='medium'
                 )
                 vulnerabilities.append(vulnerability)
         
@@ -465,6 +523,54 @@ class PrecisionAnalyzer:
     def _get_line_number(self, position: int, content: str) -> int:
         """Get line number from character position"""
         return content[:position].count('\n') + 1
+    
+    def _verify_line_number(self, match: re.Match, lines: List[str], line_number: int) -> bool:
+        """
+        Verify that the calculated line number is accurate.
+        Returns True if the match text appears in the calculated line.
+        """
+        if line_number < 1 or line_number > len(lines):
+            return False
+        
+        line_content = lines[line_number - 1]
+        match_text = match.group(0)
+        
+        # Check if match text appears in the line (allowing for whitespace differences)
+        match_text_normalized = ' '.join(match_text.split())
+        line_normalized = ' '.join(line_content.split())
+        
+        return match_text_normalized in line_normalized
+    
+    def _get_accurate_line_number(self, position: int, content: str, lines: List[str]) -> int:
+        """
+        Get accurate line number with verification.
+        This method double-checks the line number calculation.
+        """
+        # Primary calculation
+        line_number = content[:position].count('\n') + 1
+        
+        # Verify it's within bounds
+        if line_number < 1:
+            line_number = 1
+        elif line_number > len(lines):
+            line_number = len(lines)
+        
+        return line_number
+    
+    def _get_code_snippet_from_lines(self, lines: List[str], line_number: int, context: int = 2) -> str:
+        """
+        Get code snippet with context lines around the target line.
+        """
+        start_line = max(0, line_number - context - 1)
+        end_line = min(len(lines), line_number + context)
+        
+        snippet_lines = []
+        for i in range(start_line, end_line):
+            if i < len(lines):
+                marker = ">>> " if i == line_number - 1 else "    "
+                snippet_lines.append(f"{marker}{lines[i].rstrip()}")
+        
+        return '\n'.join(snippet_lines)
     
     def get_precision_summary(self, contract_content: str) -> Dict[str, Any]:
         """Get summary of precision operations in contract"""

@@ -47,6 +47,13 @@ class GitHubAuditReportGenerator:
             self.protocol_patterns = ProtocolPatternLibrary()
         except ImportError:
             self.protocol_patterns = None
+        
+        # Initialize finding deduplicator for post-processing
+        try:
+            from core.finding_deduplicator import FindingDeduplicator
+            self.deduplicator = FindingDeduplicator()
+        except ImportError:
+            self.deduplicator = None
     
     def generate_report(
         self,
@@ -214,6 +221,9 @@ class GitHubAuditReportGenerator:
                 
                 # Apply retroactive false positive filtering to clean up old database results
                 findings_list = self._filter_legacy_false_positives(findings_list, contract)
+                
+                # Apply post-processing: deduplication and severity calibration
+                findings_list = self._post_process_findings(findings_list, contract['file_path'])
                 
                 findings_count = len(findings_list)
                 total_findings += findings_count
@@ -626,6 +636,72 @@ The following {len(clean_contracts)} contracts had no findings:
             print(f"   ✅ Filtered {filtered_count} legacy false positive(s) from {contract.get('file_path', 'unknown')}")
         
         return filtered_findings
+    
+    def _post_process_findings(
+        self,
+        findings: List[Dict[str, Any]],
+        file_path: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Post-process findings: deduplicate and calibrate severity.
+        
+        This is applied after false positive filtering to:
+        1. Merge duplicate findings from multiple detectors
+        2. Calibrate severity levels based on context
+        3. Enhance descriptions and add impact statements
+        """
+        if not self.deduplicator or not findings:
+            return findings
+        
+        # Convert dict findings to Finding objects
+        from core.finding_deduplicator import Finding
+        
+        finding_objects = []
+        original_count = len(findings)
+        
+        for f in findings:
+            finding_obj = Finding(
+                vulnerability_type=f.get('vulnerability_type', f.get('type', 'unknown')),
+                severity=f.get('severity', 'low'),
+                description=f.get('description', ''),
+                line_number=f.get('line_number', f.get('line', 0)),
+                file_path=file_path,
+                confidence=f.get('confidence', 0.5),
+                code_snippet=f.get('code_snippet', ''),
+                recommendation=f.get('recommendation', ''),
+                swc_id=f.get('swc_id', ''),
+                category=f.get('category', ''),
+                context=f.get('context', {})
+            )
+            finding_objects.append(finding_obj)
+        
+        # Apply post-processing
+        processed = self.deduplicator.process_findings(finding_objects)
+        
+        # Convert back to dict format
+        processed_dicts = []
+        for finding in processed:
+            finding_dict = {
+                'vulnerability_type': finding.vulnerability_type,
+                'severity': finding.severity,
+                'description': finding.description,
+                'line_number': finding.line_number,
+                'confidence': finding.confidence,
+                'code_snippet': finding.code_snippet,
+                'recommendation': finding.recommendation,
+                'swc_id': finding.swc_id,
+                'category': finding.category,
+                'context': finding.context
+            }
+            processed_dicts.append(finding_dict)
+        
+        # Report deduplication statistics
+        deduplicated_count = len(processed_dicts)
+        if deduplicated_count < original_count:
+            removed = original_count - deduplicated_count
+            print(f"   🔄 Deduplicated {removed} duplicate finding(s) in {Path(file_path).name}")
+        
+        return processed_dicts
 
 
 if __name__ == "__main__":
