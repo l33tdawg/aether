@@ -26,7 +26,7 @@ from core.etherscan_fetcher import EtherscanFetcher
 from core.basescan_fetcher import BasescanFetcher
 from core.config_manager import ConfigManager
 from utils.file_handler import FileHandler
-from core.llm_foundry_generator import LLMFoundryGenerator
+from core.foundry_poc_generator import FoundryPoCGenerator
 from core.github_auditor import GitHubAuditor, AuditOptions as GitHubAuditOptions
 from core.audit_result_formatter import AuditResultFormatter
 from core.graceful_shutdown import register_database
@@ -532,10 +532,10 @@ class AetherCLI:
                 gen_root = out_dir
             else:
                 ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-                gen_root = os.path.join(base_dir or 'output', f'foundry_gen_{ts}')
-                os.makedirs(gen_root, exist_ok=True)
+            gen_root = os.path.join(base_dir or 'output', f'foundry_gen_{ts}')
+            os.makedirs(gen_root, exist_ok=True)
 
-            generator = LLMFoundryGenerator()
+            generator = FoundryPoCGenerator()
             context_overrides = {}
             # Global DB-derived context (e.g., solc) if available
             try:

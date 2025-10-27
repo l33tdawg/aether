@@ -24,7 +24,7 @@ from core.ai_ensemble import EnhancedAIEnsemble, ConsensusResult
 # Learning system removed - was simulated, not real
 # Formal verification removed - was simulated, not real
 from core.llm_false_positive_filter import LLMFalsePositiveFilter
-from core.llm_foundry_generator import LLMFoundryGenerator
+from core.foundry_poc_generator import FoundryPoCGenerator
 from core.database_manager import DatabaseManager, AuditResult, VulnerabilityFinding, LearningPattern, AuditMetrics
 from core.enhanced_report_generator import EnhancedReportGenerator
 
@@ -49,7 +49,7 @@ class EnhancedAetherAuditEngine:
         # Learning system removed - was simulated
         # Formal verification removed - was simulated
         self.llm_false_positive_filter = LLMFalsePositiveFilter(self.llm_analyzer)
-        self.llm_foundry_generator = LLMFoundryGenerator(self.llm_analyzer)
+        self.foundry_poc_generator = FoundryPoCGenerator()
 
         # Enhanced report generation
         self.enhanced_report_generator = EnhancedReportGenerator()
@@ -734,20 +734,19 @@ class EnhancedAetherAuditEngine:
             triaged_vulnerabilities, contract_code, contract_name
         )
         
-        # Step 6: Generate Foundry tests using LLM
+        # Step 6: Generate Foundry tests using FoundryPoCGenerator
+        # NOTE: LLM-based test generation is now handled by FoundryPoCGenerator
+        # which has a different API. For now, this section is disabled.
+        # To use FoundryPoCGenerator, call generate_comprehensive_poc_suite() separately
         foundry_test_suites = []
-        if enable_foundry_tests and validated_vulnerabilities:
-            logger.info("🧪 Generating Foundry tests with LLM...")
-            try:
-                # Ensure output directory exists
-                output_path = Path(output_dir or "output")
-                output_path.mkdir(exist_ok=True)
-                
-                foundry_test_suites = await self.llm_foundry_generator.generate_multiple_tests(
-                    validated_vulnerabilities, contract_code, contract_name, str(output_path)
-                )
-            except Exception as e:
-                logger.error(f"Failed to generate Foundry tests: {e}")
+        # if enable_foundry_tests and validated_vulnerabilities:
+        #     logger.info("🧪 Generating Foundry tests with FoundryPoCGenerator...")
+        #     try:
+        #         # TODO: Integrate FoundryPoCGenerator.generate_comprehensive_poc_suite()
+        #         # This requires a different API than the old LLMFoundryGenerator
+        #         pass
+        #     except Exception as e:
+        #         logger.error(f"Failed to generate Foundry tests: {e}")
         
         # Step 7: Update results with validated findings
         updated_results = initial_results.copy()
@@ -762,21 +761,12 @@ class EnhancedAetherAuditEngine:
             'details': self.llm_false_positive_filter.get_last_validation_details()
         }
         
-        if foundry_test_suites:
-            updated_results['foundry_tests'] = {
-                'test_suites': len(foundry_test_suites),
-                'validation_results': self.llm_foundry_generator.validate_generated_tests(foundry_test_suites)
-            }
-            # Execute forge tests per suite and collect summaries
-            try:
-                forge_runs = []
-                for ts in foundry_test_suites:
-                    suite_dir = str(Path(ts.test_file).parent)
-                    run = self.llm_foundry_generator.run_forge_tests(suite_dir)
-                    forge_runs.append(run)
-                updated_results['foundry_tests']['forge_runs'] = forge_runs
-            except Exception as e:
-                logger.warning(f"Failed running forge tests: {e}")
+        # Foundry test results (disabled - API changed)
+        # if foundry_test_suites:
+        #     updated_results['foundry_tests'] = {
+        #         'test_suites': len(foundry_test_suites),
+        #         'validation_results': []
+        #     }
         
         # Step 8: Update summary
         updated_results['summary']['total_vulnerabilities'] = len(validated_vulnerabilities)
