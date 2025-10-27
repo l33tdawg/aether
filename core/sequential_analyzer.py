@@ -38,22 +38,48 @@ class SequentialAnalyzer:
         """Check if a contract is a pure abstract interface (no implementation)."""
         try:
             content = file_path.read_text(encoding='utf-8', errors='ignore')
-            # Only skip pure Solidity interfaces (interface keyword defines a pure interface)
-            # Do NOT skip abstract contracts - they may have implementation code
-            if 'interface ' in content and '{' in content:
-                # Check if it's a true Solidity interface
-                # Interfaces only have function signatures, no implementation
-                # If it has 'function' with ';' (signature only), it's likely an interface
-                lines = content.split('\n')
-                for line in lines:
-                    stripped = line.strip()
-                    # If we find 'interface' keyword at top level
-                    if stripped.startswith('interface ') and not stripped.startswith('interface I'):
-                        # This is declaring an interface, not implementing
-                        return True
-                    # More specific: interface declarations followed by opening brace
-                    if stripped.startswith('interface '):
-                        return True
+            
+            # Get the expected name from filename (e.g., "StablePriceOracle.sol" -> "StablePriceOracle")
+            expected_name = file_path.stem  # filename without extension
+            
+            # Find the definition that matches the filename
+            lines = content.split('\n')
+            main_definition = None
+            in_multiline_comment = False
+            
+            for line in lines:
+                stripped = line.strip()
+                
+                # Skip multiline comments
+                if '/*' in stripped:
+                    in_multiline_comment = True
+                if '*/' in stripped:
+                    in_multiline_comment = False
+                    continue
+                if in_multiline_comment or stripped.startswith('//'):
+                    continue
+                
+                # Look for contract/interface/library declarations that match filename
+                # Match: "interface Name", "contract Name", "abstract contract Name", "library Name"
+                for keyword in ['interface ', 'contract ', 'abstract contract ', 'library ']:
+                    if stripped.startswith(keyword):
+                        # Extract the name after the keyword (before 'is', '{', or whitespace)
+                        rest = stripped[len(keyword):].strip()
+                        # Get the name (first word)
+                        name = rest.split()[0] if rest.split() else ''
+                        
+                        # If this definition matches the filename, it's the main one
+                        if name == expected_name:
+                            main_definition = stripped
+                            break
+                
+                if main_definition:
+                    break
+            
+            # If the main definition (matching filename) is an interface, skip it
+            if main_definition and main_definition.startswith('interface '):
+                return True
+                
             return False
         except Exception:
             return False
