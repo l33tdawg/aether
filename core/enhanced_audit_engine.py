@@ -193,6 +193,21 @@ class EnhancedAetherAuditEngine:
         print("   🔗 Building call graph for cross-contract analysis...", flush=True)
         self.vulnerability_detector.build_call_graph_from_contracts(contract_files)
         
+        # NEW: Analyze proxy delegation patterns to prevent false positives
+        print("   🔗 Analyzing proxy delegation patterns...", flush=True)
+        from core.delegation_analyzer import DelegationFlowAnalyzer
+        delegation_analyzer = DelegationFlowAnalyzer()
+        delegation_flow = delegation_analyzer.analyze_delegation_flow(contract_files)
+        
+        if delegation_flow.has_proxy_pattern:
+            print(delegation_analyzer.get_summary(delegation_flow))
+        else:
+            print("   ℹ️  No proxy pattern detected")
+        
+        # Store delegation flow for later use
+        self.context = getattr(self, 'context', {})
+        self.context['delegation_flow'] = delegation_flow
+        
         for contract_file in contract_files:
             content = contract_file['content']
             total_lines += len(content.split('\n'))
@@ -563,6 +578,25 @@ class EnhancedAetherAuditEngine:
                 validated_vulnerabilities = validated_vulnerabilities[:foundry_max_items]
         except Exception:
             pass
+        
+        # NEW: Apply proxy pattern filter to remove false positives
+        print("   🔍 Applying proxy pattern filter...", flush=True)
+        from core.proxy_pattern_filter import ProxyPatternFilter
+        proxy_filter = ProxyPatternFilter(verbose=self.verbose)
+        
+        delegation_flow = self.context.get('delegation_flow')
+        if delegation_flow:
+            filtered_vulnerabilities = proxy_filter.filter_findings(
+                validated_vulnerabilities,
+                delegation_flow,
+                contract_files
+            )
+            
+            filter_stats = proxy_filter.get_filter_stats()
+            if filter_stats.filtered_findings > 0:
+                print(f"   ✂️  Filtered {filter_stats.filtered_findings} proxy pattern false positives")
+            
+            validated_vulnerabilities = filtered_vulnerabilities
 
         print(f"✅ Collected {len(validated_vulnerabilities)} findings for Foundry verification")
         

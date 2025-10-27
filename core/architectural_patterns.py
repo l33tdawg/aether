@@ -263,8 +263,10 @@ class ArchitecturalPatternDetector:
         return finding
     
     def _adjust_for_uups_pattern(self, finding: Dict, pattern: ArchitecturalPattern) -> Dict:
-        """Adjust findings for UUPS proxy pattern."""
-        vuln_type = finding.get('vulnerability_type', '')
+        """Adjust findings for UUPS proxy pattern (enhanced for delegation)."""
+        vuln_type = finding.get('vulnerability_type', '').lower()
+        contract_name = finding.get('contract_name', '')
+        file_path = finding.get('file_path', '')
         
         # Check for upgrade authorization
         if vuln_type == 'upgrade_authorization':
@@ -278,7 +280,53 @@ class ArchitecturalPatternDetector:
                         "UUPS Pattern: _authorizeUpgrade is properly protected with access control modifier"
                     )
         
+        # NEW: Check if this is an implementation/module contract
+        is_implementation = self._is_implementation_contract(contract_name, file_path, pattern)
+        
+        # NEW: Access control findings in implementation contracts
+        if is_implementation and any(keyword in vuln_type for keyword in ['access', 'authorization', 'unprotected']):
+            # Note: This is a basic check. The DelegationFlowAnalyzer will do a more thorough job
+            # We mark it as potentially false positive for manual review
+            finding['context'] = finding.get('context', {})
+            finding['context']['architectural_note'] = (
+                "UUPS Pattern: This appears to be an implementation contract. "
+                "Access control may be enforced at the proxy level via delegation. "
+                "Verify proxy contract for protection."
+            )
+            
+            if self.verbose_mode():
+                print(f"   🏗️  Note: {contract_name} appears to be UUPS implementation - check proxy for access control")
+        
+        # NEW: Constructor warnings in proxy contracts
+        if 'constructor' in finding.get('description', '').lower():
+            code_snippet = finding.get('code_snippet', '')
+            if 'disableInitializers' in code_snippet or '_disableInitializers' in code_snippet:
+                finding['is_false_positive'] = True
+                finding['false_positive_reason'] = (
+                    "UUPS Pattern: _disableInitializers() in constructor is correct pattern "
+                    "to prevent initialization of implementation contract"
+                )
+        
         return finding
+    
+    def _is_implementation_contract(self, contract_name: str, file_path: str, 
+                                   pattern: ArchitecturalPattern) -> bool:
+        """Check if contract is an implementation/module contract in UUPS pattern."""
+        # Check for implementation in components
+        impl_components = pattern.components.get('implementation', [])
+        if any(impl in contract_name or contract_name in impl for impl in impl_components):
+            return True
+        
+        # Check for common implementation path patterns
+        impl_indicators = ['/implementations/', '/modules/', '/contracts/']
+        if file_path and any(indicator in file_path for indicator in impl_indicators):
+            # But not if it's the main proxy file
+            if 'proxy' not in contract_name.lower() and 'network' in contract_name.lower():
+                return False
+            if 'proxy' not in file_path.lower():
+                return True
+        
+        return False
     
     def _adjust_for_transparent_proxy(self, finding: Dict, pattern: ArchitecturalPattern) -> Dict:
         """Adjust findings for Transparent proxy pattern."""
