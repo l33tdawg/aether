@@ -221,7 +221,7 @@ class DataDecodingAnalyzer:
                 code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
                 
                 # Check if this is a false positive
-                if self._is_false_positive_unsafe(match, code_snippet):
+                if self._is_false_positive_unsafe(match, code_snippet, contract_content, line_number):
                     continue
                 
                 # Analyze the operation
@@ -253,6 +253,24 @@ class DataDecodingAnalyzer:
         
         for operation in decoding_operations:
             if not operation.has_error_handling:
+                # Skip false positives
+                # Skip if in view/pure function
+                if self._is_in_view_function(contract_content, operation.line_number):
+                    continue
+                
+                # Skip CCIP-Read patterns
+                if any(pattern in operation.code_snippet for pattern in ['extraData', 'response', 'resolveCallback', 'returnData']):
+                    continue
+                
+                # Skip callbacks
+                if 'callback' in operation.code_snippet.lower():
+                    continue
+                
+                # Skip if in callback function
+                function_context = self._get_function_context(contract_content, operation.line_number)
+                if 'callback' in function_context.lower():
+                    continue
+                
                 vulnerability = DecodingVulnerability(
                     vulnerability_type='missing_error_handling',
                     severity='medium',
@@ -456,9 +474,33 @@ class DataDecodingAnalyzer:
             if self._is_governance_controlled(code_snippet, contract_content, line_number):
                 return True
         
+        # NEW: Skip if in a view/pure function (can't modify state, low impact)
+        if contract_content and line_number:
+            if self._is_in_view_function(contract_content, line_number):
+                return True
+        
+        # NEW: Skip if decoding external call results (expected to revert on bad data)
+        if 'abi.decode(' in code_snippet and any(pattern in code_snippet for pattern in ['returnData', 'response', 'result', 'data']):
+            if any(call in code_snippet for call in ['.call(', '.staticcall(', '.delegatecall(']):
+                return True
+        
+        # NEW: Skip CCIP-Read / EIP-3668 patterns (off-chain data decoding is expected)
+        if any(pattern in code_snippet for pattern in ['extraData', 'OffchainLookup', 'resolveCallback', 'response']):
+            return True
+        
+        # NEW: Skip if decoding callback data (EIP-3668, CCIP-Read, etc.)
+        if 'callback' in code_snippet.lower():
+            return True
+        
+        # NEW: Skip if in a callback function
+        if contract_content and line_number:
+            function_context = self._get_function_context(contract_content, line_number)
+            if 'callback' in function_context.lower():
+                return True
+        
         return False
     
-    def _is_false_positive_unsafe(self, match: re.Match, code_snippet: str) -> bool:
+    def _is_false_positive_unsafe(self, match: re.Match, code_snippet: str, contract_content: str = "", line_number: int = 0) -> bool:
         """Check if unsafe detection is a false positive"""
         # Skip if there's explicit validation
         if 'require(' in code_snippet or 'assert(' in code_snippet:
@@ -471,6 +513,29 @@ class DataDecodingAnalyzer:
         # Skip if in a try-catch block
         if 'try' in code_snippet and 'catch' in code_snippet:
             return True
+        
+        # NEW: Skip if in a view/pure function
+        if contract_content and line_number:
+            if self._is_in_view_function(contract_content, line_number):
+                return True
+        
+        # NEW: Skip if decoding external call results
+        if 'abi.decode(' in code_snippet and any(pattern in code_snippet for pattern in ['returnData', 'response', 'result', 'data']):
+            return True
+        
+        # NEW: Skip CCIP-Read patterns
+        if any(pattern in code_snippet for pattern in ['extraData', 'OffchainLookup', 'resolveCallback', 'response']):
+            return True
+        
+        # NEW: Skip callback patterns
+        if 'callback' in code_snippet.lower():
+            return True
+        
+        # NEW: Skip if in a callback function
+        if contract_content and line_number:
+            function_context = self._get_function_context(contract_content, line_number)
+            if 'callback' in function_context.lower():
+                return True
         
         return False
     
@@ -564,6 +629,22 @@ class DataDecodingAnalyzer:
     def _get_line_number(self, position: int, content: str) -> int:
         """Get line number from character position"""
         return content[:position].count('\n') + 1
+    
+    def _is_in_view_function(self, contract_content: str, line_number: int) -> bool:
+        """Check if code is inside a view or pure function (read-only, can't steal funds)"""
+        function_context = self._get_function_context(contract_content, line_number)
+        
+        # Check for view or pure modifiers
+        if any(modifier in function_context for modifier in ['view', 'pure']):
+            return True
+        
+        # Check for external/public view functions
+        if re.search(r'function\s+\w+\s*\([^)]*\)\s+(external|public)\s+view', function_context):
+            return True
+        if re.search(r'function\s+\w+\s*\([^)]*\)\s+view\s+(external|public)', function_context):
+            return True
+        
+        return False
     
     def _is_governance_controlled(self, code_snippet: str, contract_content: str, line_number: int) -> bool:
         """Check if the decoded data comes from governance/trusted source"""
