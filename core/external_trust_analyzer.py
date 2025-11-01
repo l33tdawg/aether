@@ -9,6 +9,7 @@ import re
 from typing import List, Dict, Any, Optional, Set, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from collections import defaultdict
 
 
 class TrustLevel(Enum):
@@ -306,6 +307,14 @@ class ExternalTrustAnalyzer:
             if self._has_reentrancy_guard(contract_content, line_number):
                 continue
             
+            # FIX 3: Check if function has access control protection (onlyOwner, etc.)
+            # Reentrancy in access-controlled functions is less critical (requires privileged access)
+            if self._has_access_control_protection(contract_content, line_number):
+                # Only flag if it's a critical issue or can be exploited via front-running
+                # Otherwise, skip since it requires privileged access
+                if not self._is_critical_reentrancy_context(contract_content, line_number, code_snippet):
+                    continue
+            
             # Check if there are state changes after this call
             has_state_changes_after = self._has_state_changes_after(contract_content, line_number)
             
@@ -341,6 +350,19 @@ class ExternalTrustAnalyzer:
         
         # Skip if using OpenZeppelin or other trusted libraries
         if 'OpenZeppelin' in code_snippet or 'SafeMath' in code_snippet:
+            return True
+        
+        # FIX 1: Skip read-only ERC20 functions (balanceOf, allowance, totalSupply, etc.)
+        # These are view functions that cannot manipulate state or cause trust issues
+        read_only_erc20_functions = [
+            'balanceOf', 'allowance', 'totalSupply', 'name', 'symbol', 
+            'decimals', 'balance', 'nonce', 'DOMAIN_SEPARATOR', 'PERMIT_TYPEHASH'
+        ]
+        if any(func in code_snippet for func in read_only_erc20_functions):
+            return True  # These are view functions, not trust issues
+        
+        # FIX 2: Skip if this is an IERC20 interface cast (view-only operations)
+        if re.search(r'IERC20\s*\([^)]+\)\.(balanceOf|allowance|totalSupply|name|symbol|decimals)', code_snippet):
             return True
         
         return False
@@ -482,6 +504,64 @@ class ExternalTrustAnalyzer:
                 break
         
         return '\n'.join(lines[function_start:function_end])
+    
+    def _has_access_control_protection(self, contract_content: str, line_number: int) -> bool:
+        """Check if function has access control (onlyOwner, onlyRole, etc.)"""
+        function_context = self._get_function_context_for_line(contract_content, line_number)
+        
+        if not function_context:
+            return False
+        
+        # Check for access control modifiers
+        access_modifiers = [
+            'onlyOwner', 'onlyRole', 'onlyAdmin', 'onlyGovernance', 
+            'onlyAuthorized', 'onlyManager', 'onlyKeeper', 'onlyOperator'
+        ]
+        
+        # Check modifiers on function declaration
+        for modifier in access_modifiers:
+            if re.search(rf'\b{modifier}\b', function_context):
+                return True
+        
+        # Check for internal authorization calls
+        auth_patterns = [
+            r'_authorizeUpgrade\s*\(',
+            r'_checkRole\s*\(',
+            r'_onlyOwner\s*\(',
+            r'require\s*\(\s*msg\.sender\s*==\s*\w+\.owner\s*\(\s*\)',
+            r'require\s*\(\s*owner\s*==\s*msg\.sender',
+        ]
+        
+        for pattern in auth_patterns:
+            if re.search(pattern, function_context):
+                return True
+        
+        return False
+    
+    def _is_critical_reentrancy_context(self, contract_content: str, line_number: int, code_snippet: str) -> bool:
+        """Check if reentrancy is in a critical context that should still be flagged even with access control"""
+        function_context = self._get_function_context_for_line(contract_content, line_number)
+        
+        if not function_context:
+            return True  # Default to flagging if we can't determine context
+        
+        # Critical contexts that should still be flagged:
+        # 1. Flash loan operations
+        critical_keywords = ['flashLoan', 'flashBorrow', 'onFlashLoan', 'arbitrage']
+        if any(keyword in function_context.lower() or keyword in code_snippet.lower() for keyword in critical_keywords):
+            return True
+        
+        # 2. Functions that handle user funds
+        fund_keywords = ['withdraw', 'transfer', 'liquidation', 'liquidate']
+        if any(keyword in function_context.lower() for keyword in fund_keywords):
+            return True
+        
+        # 3. Functions that modify critical state
+        critical_state = ['balance', 'totalSupply', 'reserves', 'collateral']
+        if any(keyword in function_context.lower() for keyword in critical_state):
+            return True
+        
+        return False
     
     def _calculate_external_call_confidence(self, match: re.Match, code_snippet: str, target_contract: str) -> float:
         """Calculate confidence score for external call detection"""

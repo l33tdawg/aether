@@ -615,6 +615,43 @@ Before marking any vulnerability as real, check these common false positive patt
     - VERDICT: If gateway is designed to manage ownership → NOT A VULNERABILITY
     - Real vulnerability would require: Unauthorized gateway access OR malicious gateway that wasn't compromised through proper channels
 
+11. **Read-Only ERC20 Calls (FALSE POSITIVE)**
+    - Pattern: Finding flags IERC20(...).balanceOf(), .allowance(), .totalSupply() as external trust issues
+    - Why it's safe: These are view functions that CANNOT modify state - pure read operations
+    - balanceOf(), allowance(), totalSupply(), name(), symbol(), decimals() are all view functions
+    - Check: Does the finding mention "balanceOf", "allowance", "totalSupply"?
+    - VERDICT: If it's a read-only ERC20 function → FALSE POSITIVE
+    - Real vulnerability would require: State-modifying call OR manipulation of return values in critical calculations
+
+12. **Access-Controlled Reentrancy (FALSE POSITIVE)**
+    - Pattern: Finding flags reentrancy in function with onlyOwner/onlyRole modifier
+    - Why it's less critical: Attack requires privileged access (attacker must BE the owner/role)
+    - Check:
+      * Does function have onlyOwner, onlyRole, onlyAdmin, or similar modifier?
+      * Does finding acknowledge that attacker needs to be privileged user?
+    - VERDICT: If function is access-controlled AND not handling critical flash loans/user funds → FALSE POSITIVE
+    - Real vulnerability would require: Function without access control OR critical operation that can be front-run
+
+13. **Intentional Error Suppression (FALSE POSITIVE)**
+    - Pattern: Finding flags try/catch blocks that suppress errors
+    - Why it's intentional: Secondary operations may intentionally fail without reverting primary operations
+    - Check:
+      * Are there comments explaining intent? ("if X fails, we don't want to revert Y")
+      * Is suppressed operation secondary to a primary operation?
+      * Does comment mention "graceful failure", "don't want to revert", "intentionally"?
+    - Example: "// if liquidation fails, we don't want to revert the made challenge"
+    - VERDICT: If there's documented intent explaining why errors should be suppressed → LIKELY FALSE POSITIVE
+    - Real vulnerability would require: Suppression of critical errors without documented intent OR actual fund loss risk
+
+14. **Flash Loan Configuration (FALSE POSITIVE)**
+    - Pattern: Finding flags flash loan "vulnerability" on variable assignment
+    - Why it's not vulnerable: Setting configuration (_config.flashLender = flashLender) is not executing a flash loan
+    - Check:
+      * Is it actual flashLoan() call or just assignment?
+      * Pattern: _config.flashLender = ... vs flashLoan(...)
+    - VERDICT: If it's just variable assignment/configuration → FALSE POSITIVE
+    - Real vulnerability would require: Actual flash loan execution with exploitable logic
+
 **OUTPUT FORMAT (JSON):**
 
 Respond ONLY in valid JSON format with these fields:

@@ -242,6 +242,34 @@ IMPORTANT: Before flagging a vulnerability, check these secure-by-design pattern
    Pattern: OpenZeppelin, @thesis, or other battle-tested package functionality flagged
    Why it's secure: Widely audited by professional auditors, used in 1000s of projects
    Action: Unless concrete evidence of misconfiguration, DO NOT flag
+   
+5. **Read-Only ERC20 Function Calls (External Trust FALSE POSITIVE)**
+   Pattern: IERC20(...).balanceOf(), IERC20(...).allowance(), IERC20(...).totalSupply(), etc.
+   Why it's secure: These are view functions that cannot modify state or cause trust issues
+   How to identify: balanceOf, allowance, totalSupply, name, symbol, decimals in code
+   Action: DO NOT flag as external trust issue - these are pure read operations
+   Reality check: If function is view/pure and only reads data, it's not a vulnerability
+   
+6. **Access-Controlled Reentrancy (Reentrancy FALSE POSITIVE)**
+   Pattern: External call in function with onlyOwner/onlyRole modifier followed by state changes
+   Why it's less critical: Requires privileged access (owner/role) to exploit - not externally exploitable
+   How to identify: Function has onlyOwner, onlyRole, or similar access control modifier
+   Action: Only flag if function handles critical operations (flash loans, user funds) OR if it can be front-run
+   Reality check: If function requires owner/role access, reentrancy attack requires attacker to BE the owner/role
+   
+7. **Intentional Error Suppression (Error Handling FALSE POSITIVE)**
+   Pattern: try/catch blocks that suppress errors with comments like "don't want to revert", "if X fails, we don't want to revert Y"
+   Why it's intentional: Sometimes you want secondary operations to fail gracefully without reverting primary operations
+   How to identify: Comments explaining intent ("if liquidation fails, we don't want to revert the made challenge")
+   Action: DO NOT flag if there's documented intent explaining why errors should be suppressed
+   Reality check: Check if the suppressed operation is secondary to a primary operation that should succeed independently
+   
+8. **Flash Loan Configuration vs Execution (Flash Loan FALSE POSITIVE)**
+   Pattern: Code sets flash loan configuration (e.g., _config.flashLender = flashLender) vs actual flash loan execution
+   Why it's not a vulnerability: Setting default values is not executing a flash loan
+   How to identify: Look for assignment patterns (_config.flashLender = ...) vs actual calls (flashLoan(...))
+   Action: Only flag actual flashLoan() calls, not configuration/setup code
+   Reality check: If it's just variable assignment or configuration, not actual execution
 
 **OUTPUT FORMAT:**
 IMPORTANT: Return ONLY a valid JSON object. Do not include any text before or after the JSON. Quote all keys/values. If unsure, return an empty array for vulnerabilities.
@@ -282,12 +310,16 @@ CRITICAL: Your response must be valid JSON that can be parsed directly. Ensure:
 **VALIDATION CHECKLIST:**
 Before reporting any vulnerability, verify:
 - [ ] The issue actually exists in the code
-- [ ] The issue can be exploited in practice
+- [ ] The issue can be exploited in practice (by external attackers, not just privileged users)
 - [ ] The issue is not a standard, secure pattern
 - [ ] The issue has concrete code evidence
-- [ ] The issue is not already mitigated by other mechanisms
+- [ ] The issue is not already mitigated by other mechanisms (access control, guards, etc.)
 - [ ] If inheritance is involved, parent class protections were verified
 - [ ] If SafeCast is used, revert-on-overflow is considered intentional
+- [ ] If function has onlyOwner/onlyRole, verify it's actually exploitable by non-privileged users
+- [ ] If try/catch suppresses errors, check for documented intent explaining why
+- [ ] If external call is balanceOf/allowance/totalSupply, it's a read-only operation (not a trust issue)
+- [ ] If flash loan is mentioned, verify it's actual execution not just configuration
 
 **IMPORTANT**: If no real vulnerabilities are found, return an empty vulnerabilities array. It's better to miss a vulnerability than to report a false positive.
 """
@@ -375,16 +407,35 @@ Before reporting any vulnerability, verify:
         try:
             if not self.client:
                 return None
-                
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=[
+            
+            # GPT-5 models require max_completion_tokens instead of max_tokens
+            # GPT-5-mini only supports temperature=1.0 (default)
+            is_gpt5 = model.startswith('gpt-5')
+            is_gpt5_mini = 'gpt-5-mini' in model
+            
+            api_params = {
+                "model": model,
+                "messages": [
                     {"role": "system", "content": "You are an expert smart contract security auditor. Provide accurate, validated analysis."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.1,  # Low temperature for more consistent results
-                max_tokens=max_tokens
-            )
+            }
+            
+            # Set temperature - GPT-5-mini only supports default (1.0)
+            if is_gpt5_mini:
+                # Don't set temperature for mini models - they only support default
+                pass
+            elif is_gpt5:
+                api_params["temperature"] = 0.1  # Low temperature for more consistent results
+            else:
+                api_params["temperature"] = 0.1  # Low temperature for more consistent results
+            
+            if is_gpt5:
+                api_params["max_completion_tokens"] = max_tokens
+            else:
+                api_params["max_tokens"] = max_tokens
+                
+            response = self.client.chat.completions.create(**api_params)
             
             return response.choices[0].message.content
             
