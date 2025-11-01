@@ -139,14 +139,14 @@ class FoundryPoCGenerator:
         # Get generation model from config (supports mixed OpenAI/Gemini)
         try:
             from core.config_manager import get_model_for_task
-            generation_model = get_model_for_task('generation')
+            self.generation_model = get_model_for_task('generation')
         except Exception:
-            generation_model = 'gpt-5-mini'  # Fallback
+            self.generation_model = 'gpt-5-mini'  # Fallback
         
         # Initialize LLM analyzer (be compatible with implementations that take no args)
         try:
             # Preferred: specify model when supported
-            self.llm_analyzer = EnhancedLLMAnalyzer(model=generation_model)
+            self.llm_analyzer = EnhancedLLMAnalyzer(model=self.generation_model)
         except TypeError:
             # Fallback: older/newer versions without parameters
             self.llm_analyzer = EnhancedLLMAnalyzer()
@@ -1043,10 +1043,10 @@ class FoundryPoCGenerator:
             prompt = self._create_professional_exploit_prompt(context, finding, attempt)
             
             try:
-                # Generate with gpt-4o-mini only
+                # Generate using config-driven model (defaults to gpt-5-mini)
                 response = await self.llm_analyzer._call_llm(
                     prompt,
-                    model="gpt-4o-mini"
+                    model=self.generation_model
                 )
                 
                 if not response:
@@ -2126,10 +2126,10 @@ Security Controls: {modifiers[:200] if modifiers != 'No modifiers detected' else
                 test_result.exploit_code
             )
 
-            # Call LLM for repair
+            # Call LLM for repair using config-driven model
             response = await self.llm_analyzer._call_llm(
                 prompt,
-                model="gpt-4o-mini"  # Fast and reliable for repairs
+                model=self.generation_model
             )
 
             # Parse repair response
@@ -3021,10 +3021,10 @@ Return ONLY the corrected Solidity code in a code block."""
                 test_result, compile_errors, current_test_code, current_exploit_code
             )
 
-            # Get LLM repair suggestion
+            # Get LLM repair suggestion using config-driven model
             response = await self.llm_analyzer._call_llm(
                 repair_prompt,
-                model="gpt-4o-mini"
+                model=self.generation_model
             )
 
             # Parse repair response
@@ -5886,10 +5886,10 @@ Generate the COMPLETE, WORKING exploit now:
             logger.info(f"🔄 LLM generation attempt {attempt + 1}/{max_retries}")
             
             try:
-                # Generate exploit code
+                # Generate exploit code using config-driven model
                 response = await self.llm_analyzer._call_llm(
                     initial_prompt,
-                    model="gpt-4o-mini"
+                    model=self.generation_model
                 )
                 
                 logger.info(f"Response received: {len(response)} characters")

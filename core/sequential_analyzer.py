@@ -90,58 +90,143 @@ class SequentialAnalyzer:
             file_name = file_path.name.lower()
             file_path_str = str(file_path).lower()
             
-            # Check file path patterns
+            # PRIORITY 1: Check file path patterns (most reliable indicator)
+            # If contract is in test/mock directory, it's definitely a test/mock
             test_dirs = ['test', 'tests', 'mocks', 'mock', 'spec', 'specs', '__tests__', '.test', '.spec']
             for test_dir in test_dirs:
                 if f'/{test_dir}/' in file_path_str or file_path_str.startswith(f'{test_dir}/'):
                     return True
             
-            # Check file name patterns
-            mock_patterns = [
-                'mock.sol', 'mock_', '_mock.sol',
-                'test.sol', 'test_', '_test.sol',
-                'stub.sol', 'stub_', '_stub.sol',
-                'fake.sol', 'fake_', '_fake.sol',
-                '.test.sol', '.spec.sol', '.mock.sol',
+            # PRIORITY 2: Check file name patterns (reliable if matches common patterns)
+            # Only match complete patterns, not substrings
+            mock_filename_patterns = [
+                'mock.sol',           # exact: mock.sol
+                '.mock.sol',          # exact: something.mock.sol
+                '_mock.sol',          # exact: something_mock.sol
+                'mock_',              # prefix: mock_something.sol
+                'test.sol',           # exact: test.sol
+                '.test.sol',          # exact: something.test.sol
+                '_test.sol',          # exact: something_test.sol
+                'test_',              # prefix: test_something.sol
+                'stub.sol',
+                '_stub.sol',
+                'stub_',
+                'fake.sol',
+                '_fake.sol',
+                'fake_',
             ]
-            for pattern in mock_patterns:
+            for pattern in mock_filename_patterns:
                 if pattern in file_name:
                     return True
             
-            # Check contract-level patterns in content
+            # PRIORITY 3: Check contract-level patterns in content (less reliable)
+            # This is a secondary check - file path and filename are more reliable
             content = file_path.read_text(encoding='utf-8', errors='ignore').lower()
             
-            # Common mock/test contract names and patterns
-            mock_names = [
-                'mock',
-                'test',
-                'stub',
-                'fake',
-                'dummy',
-                'scaffold',
-                'example',
+            # More specific patterns - look for contracts that START with mock/test or end with Mock/Test
+            mock_name_patterns = [
+                'mock',      # appears anywhere (common in mocks like ERC20Mock, UniswapV2PairMock)
+                'test',      # appears anywhere (common in test contracts)
+                'stub',      # appears anywhere
+                'fake',      # appears anywhere
+                'dummy',     # appears anywhere
+                'scaffold',  # appears anywhere
+                'example',   # appears anywhere
             ]
             
             # Check if contract name contains mock indicators
             lines = content.split('\n')
             for line in lines:
                 stripped = line.strip()
+                # Skip comments
+                if stripped.startswith('//') or stripped.startswith('*') or stripped.startswith('/*'):
+                    continue
+                
                 # Look for contract declarations with mock indicators
-                if stripped.startswith('contract '):
+                if stripped.startswith('contract ') and not stripped.startswith('contract interface'):
                     # Extract contract name
                     parts = stripped.split()
                     if len(parts) >= 2:
-                        contract_name = parts[1].split('{')[0].split('(')[0]
+                        contract_name = parts[1].split('{')[0].split('(')[0].split('is')[0].strip()
                         contract_name_lower = contract_name.lower()
                         
-                        # Check against mock patterns
-                        for mock_pattern in mock_names:
-                            if mock_pattern in contract_name_lower:
+                        # Check against mock patterns - but be more conservative
+                        # Only flag if the pattern appears as a distinct word or at start/end
+                        for mock_pattern in mock_name_patterns:
+                            # Check if pattern is at start, end, or as whole word
+                            if (contract_name_lower.startswith(mock_pattern) or
+                                contract_name_lower.endswith(mock_pattern) or
+                                f'{mock_pattern}' in contract_name_lower):
                                 return True
             
             return False
         except Exception:
             return False
+
+    def _get_mock_or_test_reason(self, file_path: Path) -> Optional[str]:
+        """Get the reason why a contract is considered a mock/test (returns None if not a mock/test)."""
+        try:
+            file_name = file_path.name.lower()
+            file_path_str = str(file_path).lower()
+            
+            # PRIORITY 1: Check file path patterns (most reliable indicator)
+            test_dirs = ['test', 'tests', 'mocks', 'mock', 'spec', 'specs', '__tests__', '.test', '.spec']
+            for test_dir in test_dirs:
+                if f'/{test_dir}/' in file_path_str or file_path_str.startswith(f'{test_dir}/'):
+                    return f"path contains '{test_dir}/'"
+            
+            # PRIORITY 2: Check file name patterns
+            mock_filename_patterns = [
+                ('mock.sol', 'filename is mock.sol'),
+                ('.mock.sol', 'filename contains .mock.sol'),
+                ('_mock.sol', 'filename ends with _mock.sol'),
+                ('mock_', 'filename starts with mock_'),
+                ('test.sol', 'filename is test.sol'),
+                ('.test.sol', 'filename contains .test.sol'),
+                ('_test.sol', 'filename ends with _test.sol'),
+                ('test_', 'filename starts with test_'),
+                ('stub.sol', 'filename is stub.sol'),
+                ('_stub.sol', 'filename ends with _stub.sol'),
+                ('stub_', 'filename starts with stub_'),
+                ('fake.sol', 'filename is fake.sol'),
+                ('_fake.sol', 'filename ends with _fake.sol'),
+                ('fake_', 'filename starts with fake_'),
+            ]
+            for pattern, reason in mock_filename_patterns:
+                if pattern in file_name:
+                    return reason
+            
+            # PRIORITY 3: Check contract-level patterns in content
+            content = file_path.read_text(encoding='utf-8', errors='ignore').lower()
+            
+            mock_name_patterns = ['mock', 'test', 'stub', 'fake', 'dummy', 'scaffold', 'example']
+            
+            # Check if contract name contains mock indicators
+            lines = content.split('\n')
+            for line in lines:
+                stripped = line.strip()
+                # Skip comments
+                if stripped.startswith('//') or stripped.startswith('*') or stripped.startswith('/*'):
+                    continue
+                
+                # Look for contract declarations with mock indicators
+                if stripped.startswith('contract ') and not stripped.startswith('contract interface'):
+                    # Extract contract name
+                    parts = stripped.split()
+                    if len(parts) >= 2:
+                        contract_name = parts[1].split('{')[0].split('(')[0].split('is')[0].strip()
+                        contract_name_lower = contract_name.lower()
+                        
+                        # Check against mock patterns
+                        for mock_pattern in mock_name_patterns:
+                            if (contract_name_lower.startswith(mock_pattern) or
+                                contract_name_lower.endswith(mock_pattern) or
+                                f'{mock_pattern}' in contract_name_lower):
+                                return f"contract name contains '{mock_pattern}'"
+            
+            return None
+        except Exception:
+            return None
 
     def analyze_contracts(self, project_id: int, project_path: Union[str, Path], contract_relative_paths: List[str], force: bool = False) -> List[AnalysisOutcome]:
         outcomes: List[AnalysisOutcome] = []
@@ -250,7 +335,8 @@ class SequentialAnalyzer:
                 continue
 
             # Check if this is a mock or test contract (skip analysis)
-            if self._is_mock_or_test_contract(contract_path):
+            mock_reason = self._get_mock_or_test_reason(contract_path)
+            if mock_reason:
                 duration_ms = int((time.time() - start) * 1000)
                 # Save as skipped with empty findings
                 empty_findings = {'total_findings': 0, 'severity_counts': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}, 'vulnerabilities': [], 'analysis_types': ['skipped_mock_test']}
@@ -261,7 +347,7 @@ class SequentialAnalyzer:
                     status='skipped',
                     analysis_duration_ms=duration_ms,
                 )
-                self.console.print(f"[yellow]⏭️  {idx}/{len(contract_relative_paths)}: {contract_name} (skipped - mock/test)[/yellow]")
+                self.console.print(f"[yellow]⏭️  {idx}/{len(contract_relative_paths)}: {contract_name} (skipped - {mock_reason})[/yellow]")
                 outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=empty_findings, status='skipped', duration_ms=duration_ms))
                 continue
 
