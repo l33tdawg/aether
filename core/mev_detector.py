@@ -29,6 +29,8 @@ class MEVVulnerabilityType(Enum):
     FLASHBOT_BYPASS = "flashbot_bypass"
     PRIVATE_MEMPOOL_BYPASS = "private_mempool_bypass"
     GAS_PRICE_MANIPULATION = "gas_price_manipulation"
+    TOCTOU_PRICE_MANIPULATION = "toctou_price_manipulation"  # NEW
+    MEMPOOL_TIMING_ATTACK = "mempool_timing_attack"  # NEW
 
 
 @dataclass
@@ -882,3 +884,185 @@ contract MEVGovernanceFrontRun {{
         report["protocol_analysis"] = protocol_analysis
         
         return report
+    
+    def detect_toctou_pattern(self, contract_code: str, vuln: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Detect Time-Of-Check-Time-Of-Use vulnerabilities in price/reserve calculations.
+        
+        This identifies the pattern where:
+        1. View/pure function calculates prices off-chain (Time-of-Check)
+        2. State-changing function uses those prices on-chain (Time-of-Use)
+        3. Gap allows MEV/front-running attacks
+        
+        Example: Liquidator bot calls maxSlippageToMinPrices() off-chain, then submits
+                 runArbitrage() with those params - attacker can front-run between calls.
+        
+        Returns:
+            Dict with TOCTOU classification or None if not TOCTOU
+        """
+        vuln_desc = vuln.get('description', '').lower()
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        code_snippet = vuln.get('code_snippet', '') or vuln.get('code', '')
+        
+        # Check if this is mislabeled as "flash loan" but is actually TOCTOU
+        if 'flash loan' in vuln_type or 'flash loan' in vuln_desc:
+            # Look for TOCTOU indicators
+            toctou_indicators = {
+                'off_chain_calculation': False,
+                'on_chain_usage': False,
+                'view_function': False,
+                'public_mempool': False,
+                'reserves_based': False
+            }
+            
+            # Check for view/pure functions (off-chain calculation)
+            if re.search(r'\b(view|pure)\s+returns.*\b(price|reserves|min|max)', contract_code, re.IGNORECASE):
+                toctou_indicators['off_chain_calculation'] = True
+                toctou_indicators['view_function'] = True
+            
+            # Check for getReserves pattern (spot price vulnerability)
+            if re.search(r'getReserves\s*\(', code_snippet, re.IGNORECASE) or 'getReserves' in vuln_desc:
+                toctou_indicators['reserves_based'] = True
+                toctou_indicators['on_chain_usage'] = True
+            
+            # Check for state-changing execution functions
+            if re.search(r'\b(run|execute|perform).*\b(arbitrage|swap|liquidate)', contract_code, re.IGNORECASE):
+                toctou_indicators['on_chain_usage'] = True
+            
+            # Check for mempool exposure (external/public functions)
+            if re.search(r'\b(external|public)\s+(virtual\s+)?returns', code_snippet):
+                toctou_indicators['public_mempool'] = True
+            
+            # Check description for TOCTOU keywords
+            toctou_keywords = [
+                'same block', 'manipulate.*block', 'mempool', 'front-run',
+                'spot.*reserve', 'current.*reserve', 'reads.*manipulated'
+            ]
+            for keyword in toctou_keywords:
+                if re.search(keyword, vuln_desc, re.IGNORECASE):
+                    toctou_indicators['public_mempool'] = True
+                    break
+            
+            # If multiple TOCTOU indicators present, it's likely TOCTOU not atomic flash loan
+            toctou_score = sum(toctou_indicators.values())
+            
+            if toctou_score >= 3:
+                return {
+                    'is_toctou': True,
+                    'attack_type': 'TOCTOU/MEV Price Manipulation',
+                    'severity_adjustment': 'MEDIUM',  # Downgrade from HIGH
+                    'description_update': self._generate_toctou_description(vuln, toctou_indicators),
+                    'toctou_indicators': toctou_indicators,
+                    'confidence': 0.8,
+                    'reasoning': f"""This is a Time-Of-Check-Time-Of-Use (TOCTOU) vulnerability, NOT a pure flash loan attack.
+                    
+TOCTOU Pattern Detected:
+- Off-chain calculation: {toctou_indicators['off_chain_calculation']}
+- On-chain usage: {toctou_indicators['on_chain_usage']}
+- View function: {toctou_indicators['view_function']}  
+- Public mempool: {toctou_indicators['public_mempool']}
+- Reserves-based: {toctou_indicators['reserves_based']}
+
+Attack Vector: Front-running (not atomic flash loan)
+- Bot calls view function off-chain at Time T0
+- Bot submits transaction with T0 parameters
+- Attacker sees pending tx in mempool
+- Attacker front-runs with DEX manipulation
+- Bot's tx executes with stale params at Time T1
+- Attacker back-runs to profit
+
+Impact: MEDIUM (profit reduction, not fund drain)
+Exploitability: Requires public mempool + MEV infrastructure"""
+                }
+        
+        return None
+    
+    def _generate_toctou_description(self, vuln: Dict, indicators: Dict[str, bool]) -> str:
+        """Generate accurate TOCTOU vulnerability description."""
+        base_desc = vuln.get('description', '')
+        
+        toctou_addendum = """
+
+CLASSIFICATION: TOCTOU/MEV Price Manipulation (NOT atomic flash loan attack)
+
+ATTACK MECHANISM:
+1. Victim calls view function off-chain to calculate parameters (Time T0)
+2. Victim submits transaction to public mempool with T0 parameters  
+3. Attacker monitors mempool and sees pending transaction
+4. Attacker front-runs with large DEX swap to manipulate reserves
+5. Victim's transaction executes using T0 params but T1 reserves (stale data)
+6. Victim accepts unfavorable trade due to parameter-reserve mismatch
+7. Attacker back-runs to reverse manipulation and capture profit
+
+KEY DIFFERENCES FROM FLASH LOAN:
+- NOT atomic (requires 3 separate transactions: front-run, victim, back-run)
+- Requires mempool visibility (not possible with private mempools)
+- Requires MEV infrastructure (limited on some networks)
+- Impact is profit reduction, not complete fund drain
+
+REALISTIC IMPACT: Medium severity
+- Reduces victim profits by 10-30%
+- Requires specific network conditions
+- Mitigated by private mempool/flashbots
+"""
+        
+        return base_desc + toctou_addendum
+    
+    def classify_price_manipulation_type(self, vuln: Dict[str, Any], contract_code: str) -> str:
+        """
+        Classify price manipulation as either:
+        - ATOMIC_FLASH_LOAN: Single transaction flash loan attack
+        - TOCTOU_MEV: Time-gap attack via mempool observation
+        - ORACLE_MANIPULATION: Persistent oracle price manipulation
+        
+        Returns classification string.
+        """
+        desc = vuln.get('description', '').lower()
+        code = vuln.get('code_snippet', '') or vuln.get('code', '')
+        
+        # Check for atomic flash loan indicators
+        atomic_indicators = [
+            'onFlashLoan' in contract_code,
+            'flashLoan(' in contract_code,
+            'executeOperation' in contract_code,
+            'within.*same.*transaction' in desc,
+            'atomic' in desc
+        ]
+        
+        # Check for TOCTOU indicators
+        toctou_indicators = [
+            'mempool' in desc,
+            'front.*run' in desc or 'front-run' in desc,
+            'pending.*transaction' in desc,
+            'time.*gap' in desc or 'time gap' in desc,
+            re.search(r'\b(view|pure)\s+.*returns', contract_code),
+            'getReserves' in code and not 'flashLoan' in contract_code,
+            'same block' in desc and not 'same transaction' in desc
+        ]
+        
+        # Check for oracle manipulation indicators  
+        oracle_indicators = [
+            'oracle' in desc,
+            'chainlink' in desc.lower(),
+            'price.*feed' in desc,
+            'external.*price' in desc
+        ]
+        
+        atomic_score = sum(1 for ind in atomic_indicators if ind)
+        toctou_score = sum(1 for ind in toctou_indicators if ind)
+        oracle_score = sum(1 for ind in oracle_indicators if ind)
+        
+        # Classify based on highest score
+        scores = {
+            'ATOMIC_FLASH_LOAN': atomic_score,
+            'TOCTOU_MEV': toctou_score,
+            'ORACLE_MANIPULATION': oracle_score
+        }
+        
+        classification = max(scores, key=scores.get)
+        
+        # Require minimum score threshold
+        if scores[classification] < 2:
+            return 'UNCERTAIN'
+        
+        return classification

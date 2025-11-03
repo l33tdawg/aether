@@ -98,6 +98,41 @@ ONLY REPORT if:
 - state_impact matches claimed severity
 - Finding would qualify for bug bounty submission
 
+**EXPLOITABILITY ASSESSMENT:**
+
+Before assigning severity, evaluate real-world exploitability:
+
+NETWORK CHARACTERISTICS:
+- Block time: Fast blocks (< 3 sec) make MEV harder; Slow blocks (> 12 sec) make it easier
+- Mempool visibility: Private mempool = not exploitable via front-running
+- MEV infrastructure: Flashbots/MEV-Boost presence affects front-running feasibility
+- Gas costs: High gas chains reduce profitability threshold
+
+ATTACK PREREQUISITES:
+- Required capital: How much capital does attacker need? (Flash loan = low barrier, millions = high barrier)
+- Transaction ordering: Atomic (1 tx) = easier; Multi-step (3+ tx) = harder
+- External dependencies: Needs flash loan provider? Specific DEX? Oracle access?
+- Profitability check: Attack profit > (gas cost + manipulation cost + flash loan fees)?
+
+IMPACT CLASSIFICATION:
+- FUND_DRAIN (direct theft/loss) → CRITICAL/HIGH severity
+- PROFIT_REDUCTION (MEV/slippage reduces expected gains) → MEDIUM severity  
+- UNFAVORABLE_RATE (bad price but recoverable) → MEDIUM severity
+- GAS_WASTE (failed tx costs gas only) → LOW severity
+- DOS (blocks function but no fund loss) → LOW-MEDIUM severity
+
+ATTACK TYPE CLASSIFICATION:
+- ATOMIC_FLASH_LOAN: Single transaction, borrower callback, same-block execution → HIGH exploitability
+- TOCTOU/MEV: Off-chain calc + on-chain use, requires mempool visibility → MEDIUM exploitability
+- FRONT_RUNNING: Requires tx observation, ordering control → MEDIUM exploitability (network-dependent)
+- ORACLE_MANIPULATION: Requires persistent price control → LOW exploitability (capital intensive)
+
+SEVERITY MULTIPLIERS:
+- Fund drain on critical function = 1.0x (keep severity)
+- Profit reduction (not drain) = 0.6x (downgrade HIGH → MEDIUM)
+- Requires admin/governance = 0.5x (downgrade or mark as admin-only)
+- Needs unrealistic conditions = 0.3x (likely false positive)
+
 **CONTRACT TO ANALYZE:**
 
 ```solidity

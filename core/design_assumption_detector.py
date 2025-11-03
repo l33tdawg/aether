@@ -59,6 +59,13 @@ class DesignAssumptionDetector:
             r'by design',
             r'intentional(?:ly)?.*(?:not|lacks)',
             r'does not (?:support|handle)',
+        ],
+        'personal_deployment': [  # NEW: Personal bot/tool patterns
+            r'(?:each person|every user|individuals?).*deploy.*own',
+            r'recommended.*(?:deploy|use).*own.*(?:instance|copy)',
+            r'personal.*(?:liquidator|bot|arbitrage)',
+            r'(?:to|should).*avoid.*(?:flashbot|mev|steal)',
+            r'ownable.*(?:liquidator|bot|arbitrage|challenger)',
         ]
     }
     
@@ -72,6 +79,9 @@ class DesignAssumptionDetector:
         'oracle': 'trusted_oracle',
         'governance_control': 'trusted_admin',
         'parameter_validation': 'trusted_admin',
+        'centralization': 'personal_deployment',  # NEW
+        'privileged_functions': 'personal_deployment',  # NEW
+        'access_control': 'personal_deployment',  # NEW (context-dependent)
     }
     
     def __init__(self):
@@ -247,4 +257,121 @@ class DesignAssumptionDetector:
                 }
         
         return None
+    
+    def detect_personal_deployment_pattern(self, contract_code: str, contract_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Detect contracts designed for personal deployment (not protocol contracts).
+        
+        Personal deployment contracts (like liquidator bots, arbitrage bots) are
+        intentionally Ownable without timelocks or governance. This is BY DESIGN,
+        not a centralization vulnerability.
+        
+        Indicators:
+        - Comment says "each person should deploy their own"
+        - Contract is a bot/liquidator/challenger/arbitrage tool
+        - Ownable pattern with no governance/timelock (intentional for personal use)
+        - Comments mention avoiding MEV/flashbots stealing profits
+        
+        Args:
+            contract_code: Solidity source code
+            contract_name: Name of the contract
+            
+        Returns:
+            Dict with pattern detection info or None
+        """
+        # Check for personal deployment patterns in comments
+        personal_deployment_indicators = {
+            'explicit_comment': False,
+            'bot_naming': False,
+            'mev_protection_mention': False,
+            'ownable_without_governance': False,
+            'personal_profit_mention': False
+        }
+        
+        # Pattern 1: Explicit comments about personal deployment
+        explicit_patterns = [
+            r'(?:each person|every user|individuals?).*deploy.*(?:own|their)',
+            r'recommended.*(?:deploy|use).*(?:own|personal).*(?:instance|copy|contract)',
+            r'(?:to|should).*deploy.*own.*(?:ownable|liquidator|bot)',
+        ]
+        
+        for pattern in explicit_patterns:
+            if re.search(pattern, contract_code, re.IGNORECASE):
+                personal_deployment_indicators['explicit_comment'] = True
+                break
+        
+        # Pattern 2: Bot/tool naming conventions
+        bot_patterns = [
+            'liquidator', 'challenger', 'arbitrage', 'bot', 'keeper',
+            'executor', 'flashloan', 'mev', 'searcher'
+        ]
+        
+        contract_lower = contract_name.lower()
+        if any(bot_name in contract_lower for bot_name in bot_patterns):
+            personal_deployment_indicators['bot_naming'] = True
+        
+        # Pattern 3: MEV/profit protection mentions
+        mev_protection_patterns = [
+            r'avoid.*(?:flash.*bot|mev).*steal.*profit',
+            r'prevent.*(?:frontrun|sandwich).*attack',
+            r'personal.*profit.*protection',
+        ]
+        
+        for pattern in mev_protection_patterns:
+            if re.search(pattern, contract_code, re.IGNORECASE):
+                personal_deployment_indicators['mev_protection_mention'] = True
+                break
+        
+        # Pattern 4: Ownable without governance infrastructure
+        has_ownable = re.search(r'\bOwnable\b', contract_code)
+        has_governance = re.search(r'\b(?:timelock|governance|multisig|dao)\b', contract_code, re.IGNORECASE)
+        
+        if has_ownable and not has_governance:
+            personal_deployment_indicators['ownable_without_governance'] = True
+        
+        # Pattern 5: Personal profit mentions (vs protocol fees)
+        if re.search(r'(?:owner|deployer|user).*(?:profit|reward|fee)', contract_code, re.IGNORECASE):
+            personal_deployment_indicators['personal_profit_mention'] = True
+        
+        # Calculate confidence score
+        indicator_score = sum(personal_deployment_indicators.values())
+        
+        # Require at least 2 indicators for high confidence
+        if indicator_score >= 2:
+            return {
+                'is_personal_deployment': True,
+                'confidence': min(0.9, 0.5 + (indicator_score * 0.15)),  # 0.65-0.9 confidence
+                'indicators': personal_deployment_indicators,
+                'indicator_count': indicator_score,
+                'reasoning': self._generate_personal_deployment_reasoning(personal_deployment_indicators, contract_name),
+                'implication': 'Centralization/access control is BY DESIGN for personal tools',
+                'severity_override': 'INFORMATIONAL',  # Not a vulnerability
+            }
+        
+        return None
+    
+    def _generate_personal_deployment_reasoning(self, indicators: Dict[str, bool], contract_name: str) -> str:
+        """Generate reasoning for personal deployment classification."""
+        active_indicators = [key for key, value in indicators.items() if value]
+        
+        reasoning = f"Contract '{contract_name}' is a PERSONAL DEPLOYMENT tool, not a protocol contract.\n\n"
+        reasoning += "Evidence:\n"
+        
+        if indicators['explicit_comment']:
+            reasoning += "- Explicit documentation recommending personal deployment\n"
+        if indicators['bot_naming']:
+            reasoning += f"- Bot/tool naming convention ('{contract_name}')\n"
+        if indicators['mev_protection_mention']:
+            reasoning += "- Comments about protecting personal profits from MEV\n"
+        if indicators['ownable_without_governance']:
+            reasoning += "- Ownable pattern without governance (intentional for personal control)\n"
+        if indicators['personal_profit_mention']:
+            reasoning += "- References to individual owner profits (not protocol fees)\n"
+        
+        reasoning += "\nIMPLICATION:\n"
+        reasoning += "Centralization/privileged functions are BY DESIGN.\n"
+        reasoning += "Each user deploys their own instance and controls it directly.\n"
+        reasoning += "This is NOT a protocol vulnerability - it's intended architecture.\n"
+        
+        return reasoning
 

@@ -511,11 +511,13 @@ Before reporting any vulnerability, verify:
             # Optional: strict schema validation
             # Already validated in parse_llm_json when schema='analyzer'
             
-            # Validate each vulnerability
+            # Validate each vulnerability and apply severity calibration
             validated_vulnerabilities = []
             for vuln in analysis_data.get('vulnerabilities', []):
                 if self._validate_vulnerability(vuln, contract_content):
-                    validated_vulnerabilities.append(vuln)
+                    # NEW: Apply automatic severity adjustment based on impact type
+                    adjusted_vuln = self._apply_severity_calibration(vuln, contract_content)
+                    validated_vulnerabilities.append(adjusted_vuln)
                 else:
                     print(f"⚠️  Filtered out unvalidated vulnerability: {vuln.get('title', 'Unknown')}")
             
@@ -691,6 +693,85 @@ Before reporting any vulnerability, verify:
             return False
         
         return True
+    
+    def _apply_severity_calibration(self, vuln: Dict[str, Any], contract_content: str) -> Dict[str, Any]:
+        """
+        Apply automatic severity adjustment based on impact type and exploitability.
+        
+        Uses the financial impact classifier and TOCTOU detector to adjust severity:
+        - Fund drain → Keep HIGH/CRITICAL
+        - Profit reduction → Downgrade to MEDIUM
+        - Flash loan (atomic) → Keep HIGH
+        - TOCTOU/MEV → Downgrade to MEDIUM
+        
+        Returns:
+            Vulnerability dict with adjusted severity
+        """
+        try:
+            # Import impact analyzer
+            from core.impact_analyzer import ImpactAnalyzer, FinancialImpactType
+            from core.mev_detector import MEVDetector
+            
+            impact_analyzer = ImpactAnalyzer()
+            mev_detector = MEVDetector()
+            
+            # Classify financial impact
+            financial_impact, severity_multiplier = impact_analyzer.classify_financial_impact(vuln)
+            
+            # Check for TOCTOU pattern (misclassified flash loan)
+            toctou_result = mev_detector.detect_toctou_pattern(contract_content, vuln)
+            
+            original_severity = vuln.get('severity', 'medium').lower()
+            adjusted_severity = original_severity
+            adjustment_reason = []
+            
+            # Apply TOCTOU adjustment (highest priority)
+            if toctou_result and toctou_result['is_toctou']:
+                adjusted_severity = toctou_result['severity_adjustment'].lower()
+                adjustment_reason.append(f"TOCTOU pattern detected (not atomic flash loan): {original_severity} → {adjusted_severity}")
+                vuln['attack_type'] = toctou_result['attack_type']
+                vuln['toctou_classification'] = toctou_result
+            
+            # Apply financial impact adjustment
+            elif financial_impact != FinancialImpactType.NONE:
+                severity_map = {
+                    'critical': 4,
+                    'high': 3,
+                    'medium': 2,
+                    'low': 1
+                }
+                
+                reverse_map = {4: 'critical', 3: 'high', 2: 'medium', 1: 'low'}
+                
+                original_level = severity_map.get(original_severity, 2)
+                adjusted_level = round(original_level * severity_multiplier)  # Use round for proper rounding
+                adjusted_level = max(1, min(4, adjusted_level))  # Clamp to 1-4
+                
+                adjusted_severity = reverse_map[adjusted_level]
+                
+                if adjusted_severity != original_severity:
+                    impact_name = financial_impact.value.replace('_', ' ').title()
+                    adjustment_reason.append(
+                        f"Financial impact classification ({impact_name}): {original_severity} → {adjusted_severity}"
+                    )
+                    vuln['financial_impact_type'] = financial_impact.value
+                    vuln['severity_multiplier'] = severity_multiplier
+            
+            # Update vulnerability if adjusted
+            if adjusted_severity != original_severity:
+                vuln['original_severity'] = original_severity
+                vuln['severity'] = adjusted_severity
+                vuln['severity_adjustment_reason'] = '; '.join(adjustment_reason)
+                
+                print(f"📊 Severity adjusted: {original_severity.upper()} → {adjusted_severity.upper()}")
+                print(f"   Reason: {adjustment_reason[0]}")
+            
+            return vuln
+            
+        except Exception as e:
+            # If calibration fails, return original vulnerability
+            print(f"⚠️  Severity calibration failed: {e}")
+            return vuln
 
     def _verify_vulnerability_in_code(self, vuln: Dict[str, Any], contract_content: str) -> bool:
         """Verify that the vulnerability actually exists in the code."""

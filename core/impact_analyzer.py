@@ -28,6 +28,16 @@ class ImpactType(Enum):
     NONE = "none"  # No real impact
 
 
+class FinancialImpactType(Enum):
+    """Specific types of financial impact for accurate severity assessment."""
+    FUND_DRAIN = "fund_drain"  # Complete or partial fund loss (CRITICAL/HIGH)
+    PROFIT_REDUCTION = "profit_reduction"  # MEV/slippage reduces expected profits (MEDIUM)
+    UNFAVORABLE_RATE = "unfavorable_rate"  # Bad exchange rate but not complete loss (MEDIUM)
+    GAS_WASTE = "gas_waste"  # Failed transactions waste gas (LOW)
+    DOS_FINANCIAL = "dos_financial"  # DoS prevents earning (LOW-MEDIUM)
+    NONE = "none"  # No financial impact
+
+
 @dataclass
 class ImpactAnalysis:
     """Result of impact analysis."""
@@ -135,6 +145,100 @@ class ImpactAnalyzer:
             reasoning=reasoning,
             attack_scenario_plausible=attack_scenario_plausible
         )
+    
+    def classify_financial_impact(self, vuln: Dict) -> Tuple[FinancialImpactType, float]:
+        """
+        Classify specific type of financial impact for accurate severity assessment.
+        
+        Distinguishes between:
+        - FUND_DRAIN: Direct loss/theft of user/protocol funds (CRITICAL/HIGH)
+        - PROFIT_REDUCTION: MEV/slippage reduces expected profits (MEDIUM)
+        - UNFAVORABLE_RATE: Bad exchange rate but not complete loss (MEDIUM)
+        - GAS_WASTE: Failed transactions waste gas fees (LOW)
+        - DOS_FINANCIAL: DoS prevents earning but no direct loss (LOW-MEDIUM)
+        
+        Args:
+            vuln: Vulnerability dictionary
+            
+        Returns:
+            (FinancialImpactType, severity_multiplier)
+        """
+        desc = vuln.get('description', '').lower()
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        combined_text = desc + ' ' + vuln_type
+        
+        # Pattern 1: FUND_DRAIN (most severe)
+        fund_drain_patterns = [
+            r'(?:drain|steal|theft).*(?:fund|token|balance)',
+            r'unauthorized.*(?:withdraw|transfer)',
+            r'(?:complete|total).*loss',
+            r'attacker.*(?:steal|drain|extract).*fund',
+            r'(?:victim|user|protocol).*lose.*(?:all|entire|complete)',
+        ]
+        
+        for pattern in fund_drain_patterns:
+            if re.search(pattern, combined_text):
+                return (FinancialImpactType.FUND_DRAIN, 1.0)  # No adjustment (critical)
+        
+        # Pattern 2: PROFIT_REDUCTION (medium severity)
+        profit_reduction_patterns = [
+            r'(?:reduce|decrease|lower).*profit',
+            r'(?:unfavorable|bad|poor).*(?:rate|price|swap)',
+            r'mev.*(?:extract|profit|steal)',
+            r'(?:sandwich|frontrun).*attack',
+            r'profit.*(?:loss|reduced)',
+            r'accept.*unfavorable',
+            r'slippage.*manipulation',
+        ]
+        
+        for pattern in profit_reduction_patterns:
+            if re.search(pattern, combined_text):
+                return (FinancialImpactType.PROFIT_REDUCTION, 0.6)  # Downgrade to MEDIUM
+        
+        # Pattern 3: UNFAVORABLE_RATE (medium severity)
+        unfavorable_rate_patterns = [
+            r'manipulat.*(?:price|rate|exchange)',
+            r'(?:incorrect|wrong).*(?:price|valuation)',
+            r'price.*(?:manipulation|distortion)',
+            r'exchange.*rate.*(?:manipulation|exploit)',
+        ]
+        
+        for pattern in unfavorable_rate_patterns:
+            if re.search(pattern, combined_text):
+                # Check if it's actual drain or just rate issue
+                if not re.search(r'(?:complete|total|all).*loss', combined_text):
+                    return (FinancialImpactType.UNFAVORABLE_RATE, 0.65)  # MEDIUM
+        
+        # Pattern 4: GAS_WASTE (low severity)
+        gas_waste_patterns = [
+            r'(?:wast|spend).*gas',
+            r'failed.*(?:liquidation|arbitrage|transaction)',
+            r'gas.*fee.*(?:loss|wasted)',
+            r'revert.*(?:cost|expense)',
+        ]
+        
+        for pattern in gas_waste_patterns:
+            if re.search(pattern, combined_text):
+                # Check if there's actual fund loss beyond gas
+                if not re.search(r'(?:fund|token|balance).*(?:loss|stolen)', combined_text):
+                    return (FinancialImpactType.GAS_WASTE, 0.3)  # LOW
+        
+        # Pattern 5: DOS_FINANCIAL (low-medium severity)
+        dos_financial_patterns = [
+            r'dos.*(?:prevent|block).*(?:earn|profit|liquidat)',
+            r'(?:lock|freeze|stuck).*fund',
+            r'unavailable.*(?:withdraw|claim)',
+        ]
+        
+        for pattern in dos_financial_patterns:
+            if re.search(pattern, combined_text):
+                return (FinancialImpactType.DOS_FINANCIAL, 0.4)  # LOW-MEDIUM
+        
+        # Default: check if there's any financial impact mentioned
+        if 'fund' in combined_text or 'loss' in combined_text or 'token' in combined_text:
+            return (FinancialImpactType.FUND_DRAIN, 0.8)  # Conservative assumption
+        
+        return (FinancialImpactType.NONE, 0.0)
     
     def _detect_claimed_impacts(self, text: str) -> List[ImpactType]:
         """Detect what impacts the finding claims to have."""

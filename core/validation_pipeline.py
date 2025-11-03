@@ -496,28 +496,164 @@ class ValidationPipeline:
         return None
     
     def _check_local_validation(self, vuln: Dict) -> Optional[ValidationStage]:
-        """Check for local validation (require statements, etc.)."""
+        """Check for local validation (require statements, etc.) with enhanced context awareness."""
         vuln_type = vuln.get('vulnerability_type', '').lower()
         
-        # Only check validation for arithmetic vulnerabilities
-        # Reentrancy, access control, etc. need different checks
-        if not any(keyword in vuln_type for keyword in ['overflow', 'underflow', 'division', 'arithmetic']):
-            return None
-        
-        if not self.validation_detector:
-            # Fallback to simple pattern matching
-            return self._simple_validation_check(vuln)
+        # ENHANCED: Check validation for ALL vulnerability types, not just arithmetic
+        # This catches cases like token validation before cast, balance checks before calls, etc.
         
         line_number = vuln.get('line', 0) or vuln.get('line_number', 0)
-        if self.validation_detector.check_if_validated(line_number, self.contract_code):
+        if line_number == 0:
+            return None
+        
+        # NEW: Context-aware validation detection
+        nearby_validations = self._check_nearby_validations(vuln, window=10)
+        if nearby_validations:
+            validation_list = '\n'.join(nearby_validations[:3])  # Show top 3
             return ValidationStage(
                 stage_name="local_validation",
                 is_false_positive=True,
-                confidence=0.8,
-                reasoning="Validation found before vulnerable operation"
+                confidence=0.85,
+                reasoning=f"Validation found near vulnerable line:\n{validation_list}"
             )
         
+        # Legacy checks for backward compatibility
+        if any(keyword in vuln_type for keyword in ['overflow', 'underflow', 'division', 'arithmetic']):
+            if not self.validation_detector:
+                # Fallback to simple pattern matching
+                return self._simple_validation_check(vuln)
+            
+            if self.validation_detector.check_if_validated(line_number, self.contract_code):
+                return ValidationStage(
+                    stage_name="local_validation",
+                    is_false_positive=True,
+                    confidence=0.8,
+                    reasoning="Validation found before vulnerable operation"
+                )
+        
         return None
+    
+    def _check_nearby_validations(self, vuln: Dict, window: int = 10) -> List[str]:
+        """
+        Check for require/revert/if statements within N lines of vulnerability.
+        
+        This catches cases like:
+        - Line 213: require(_token == expected, "Invalid token");
+        - Line 216: IERC20(_token).approve(...);  // Flagged but protected
+        
+        Args:
+            vuln: Vulnerability dictionary
+            window: Number of lines to check before/after (default 10)
+            
+        Returns:
+            List of validation statements found (e.g., ["Line 213: require(_token == ...)"])
+        """
+        line_number = vuln.get('line', 0) or vuln.get('line_number', 0)
+        if line_number == 0:
+            return []
+        
+        lines = self.contract_code.split('\n')
+        if line_number > len(lines):
+            return []
+        
+        # Extract suspect variables from vulnerability description or code snippet
+        suspect_vars = self._extract_suspect_variables(vuln)
+        if not suspect_vars:
+            # No specific variables to validate, use generic patterns
+            suspect_vars = ['']  # Empty string will match all validations
+        
+        validations = []
+        
+        # Check window BEFORE the vulnerable line (where validations usually are)
+        context_start = max(0, line_number - window - 1)  # -1 for 0-based indexing
+        context_end = line_number - 1
+        
+        for i in range(context_start, context_end):
+            if i >= len(lines):
+                break
+            
+            line_text = lines[i].strip()
+            
+            # Skip empty lines and comments
+            if not line_text or line_text.startswith('//'):
+                continue
+            
+            # Check for validation patterns
+            for var in suspect_vars:
+                # Require statements
+                if var:
+                    # Look for require with the specific variable
+                    if re.search(rf'\brequire\s*\([^)]*\b{re.escape(var)}\b', line_text, re.IGNORECASE):
+                        validations.append(f"Line {i+1}: {line_text[:80]}")
+                        continue
+                    # Look for if + revert with the variable
+                    if re.search(rf'\bif\s*\([^)]*\b{re.escape(var)}\b', line_text, re.IGNORECASE):
+                        # Check if next few lines have revert
+                        for j in range(i+1, min(i+3, len(lines))):
+                            if 'revert' in lines[j].lower():
+                                validations.append(f"Line {i+1}-{j+1}: if({var}...) revert")
+                                break
+                else:
+                    # Generic validation patterns (when no specific variable)
+                    if re.search(r'\brequire\s*\(', line_text):
+                        validations.append(f"Line {i+1}: {line_text[:80]}")
+        
+        # Also check a few lines AFTER for post-condition checks
+        context_after_start = line_number
+        context_after_end = min(len(lines), line_number + 5)
+        
+        for i in range(context_after_start, context_after_end):
+            if i >= len(lines):
+                break
+            
+            line_text = lines[i].strip()
+            
+            # Check for balance assertions (common protection pattern)
+            if re.search(r'\brequire\s*\([^)]*balance.*>=', line_text, re.IGNORECASE):
+                validations.append(f"Line {i+1} (post-check): {line_text[:80]}")
+        
+        return validations
+    
+    def _extract_suspect_variables(self, vuln: Dict) -> List[str]:
+        """
+        Extract variable names that might be validated from vulnerability context.
+        
+        For example:
+        - Description: "Token contract cast without validation"
+        - Code snippet: "IERC20(_token).approve(...)"
+        - Extract: ["_token"]
+        """
+        variables = []
+        
+        # Try to extract from code snippet
+        code_snippet = vuln.get('code_snippet', '') or vuln.get('code', '')
+        
+        # Look for parameter-like variables (_token, _amount, etc.)
+        param_pattern = r'\b(_\w+)\b'
+        params = re.findall(param_pattern, code_snippet)
+        variables.extend(params)
+        
+        # Look for cast patterns like IERC20(someVar)
+        cast_pattern = r'\b(?:IERC20|IERC721|IUniswap\w+|I\w+)\s*\(\s*(\w+)\s*\)'
+        casts = re.findall(cast_pattern, code_snippet)
+        variables.extend(casts)
+        
+        # Look for common parameter names in description
+        description = vuln.get('description', '').lower()
+        if 'token' in description and 'token' not in variables:
+            # Search for token-related variables in code
+            token_vars = re.findall(r'\b(_?token\w*)\b', code_snippet, re.IGNORECASE)
+            variables.extend(token_vars)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_vars = []
+        for var in variables:
+            if var and var not in seen:
+                seen.add(var)
+                unique_vars.append(var)
+        
+        return unique_vars[:5]  # Limit to top 5 most relevant
     
     def _simple_validation_check(self, vuln: Dict) -> Optional[ValidationStage]:
         """Simple validation check using pattern matching (only for arithmetic)."""
@@ -564,6 +700,22 @@ class ValidationPipeline:
             return None
         
         contract_name = vuln.get('contract_name', '')
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        
+        # NEW: Check for personal deployment pattern (centralization by design)
+        if any(keyword in vuln_type for keyword in ['centralization', 'privileged', 'access control']):
+            personal_deployment = self.design_assumption_detector.detect_personal_deployment_pattern(
+                self.contract_code,
+                contract_name
+            )
+            
+            if personal_deployment and personal_deployment['is_personal_deployment']:
+                return ValidationStage(
+                    stage_name="personal_deployment_by_design",
+                    is_false_positive=True,
+                    confidence=personal_deployment['confidence'],
+                    reasoning=personal_deployment['reasoning']
+                )
         
         # Detect all design assumptions in contract
         assumptions = self.design_assumption_detector.detect_assumptions(
