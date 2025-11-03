@@ -54,6 +54,15 @@ node_configs:
     severity_threshold: low
     output_format: structured
     enhanced_mode: true
+    # Move-inspired detectors (from Move Vulnerability Database)
+    move_detectors:
+      enabled: true
+      detectors:
+        - business_logic
+        - state_management
+        - data_inconsistency
+        - centralization
+        - looping
 
   LLMAnalysisNode:
     analysis_types: 
@@ -62,6 +71,8 @@ node_configs:
       - access_control
       - state_management
       - economic_design
+      - business_logic  # Move-inspired
+      - data_inconsistency  # Move-inspired
     confidence_threshold: 0.75
     llm_confirm_threshold: 0.75
     use_consensus: true
@@ -83,6 +94,9 @@ node_configs:
       - access_control
       - arithmetic
       - governance
+      - business_logic  # Move-inspired
+      - state_management  # Move-inspired
+      - centralization  # Move-inspired
 
   FixGeneratorNode:
     fix_types: [security, gas_optimization]

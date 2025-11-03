@@ -47,6 +47,10 @@ class ArithmeticAnalyzer:
         self.underflow_patterns = self._initialize_underflow_patterns()
         self.division_patterns = self._initialize_division_patterns()
         self.arithmetic_operations = ['+', '-', '*', '/', '%', '**']
+        # Move-inspired patterns
+        self.precision_loss_patterns = self._initialize_precision_loss_patterns()
+        self.decimal_conversion_patterns = self._initialize_decimal_conversion_patterns()
+        self.formula_correctness_patterns = self._initialize_formula_correctness_patterns()
         
         # Initialize protocol pattern library for smart false positive filtering
         try:
@@ -123,6 +127,70 @@ class ArithmeticAnalyzer:
             }
         ]
     
+    def _initialize_precision_loss_patterns(self) -> List[Dict[str, Any]]:
+        """Initialize patterns for precision loss detection (Move-inspired)"""
+        return [
+            {
+                'pattern': r'(\w+)\s*/\s*(\w+)\s*\*\s*(\w+)',
+                'description': 'Division before multiplication causes precision loss',
+                'severity': 'high',
+                'swc_id': 'SWC-101',
+                'recommendation': 'Multiply before dividing to preserve precision'
+            },
+            {
+                'pattern': r'for\s*\([^)]+\).*?(\w+)\s*/=\s*(\w+)',
+                'description': 'Accumulated precision loss in loop',
+                'severity': 'medium',
+                'swc_id': 'SWC-101',
+                'recommendation': 'Track cumulative error or use higher precision'
+            },
+            {
+                'pattern': r'reward\s*\+=.*?\/.*?total',
+                'description': 'Reward accumulation may have precision loss',
+                'severity': 'medium',
+                'swc_id': 'SWC-101',
+                'recommendation': 'Use scaled math or accumulate before dividing'
+            }
+        ]
+    
+    def _initialize_decimal_conversion_patterns(self) -> List[Dict[str, Any]]:
+        """Initialize patterns for decimal conversion issues (Move-inspired)"""
+        return [
+            {
+                'pattern': r'(\w+)\s*\*\s*10\s*\*\*\s*(\d+)(?!.*?\/\s*10\s*\*\*)',
+                'description': 'Decimal scaling without corresponding descale',
+                'severity': 'high',
+                'swc_id': 'SWC-101',
+                'recommendation': 'Ensure scaled values are descaled appropriately'
+            },
+            {
+                'pattern': r'\.transfer\s*\(\s*\w+\s*,\s*\w+\s*\)',
+                'description': 'Token transfer may not handle decimal precision',
+                'severity': 'medium',
+                'swc_id': 'SWC-101',
+                'recommendation': 'Verify decimal precision is handled correctly'
+            }
+        ]
+    
+    def _initialize_formula_correctness_patterns(self) -> List[Dict[str, Any]]:
+        """Initialize patterns for formula correctness (Move-inspired)"""
+        return [
+            {
+                'pattern': r'(\w+)\s*=\s*(\w+)\s*\*\s*(\w+)\s*\/\s*\2',
+                'description': 'Formula simplifies to identity - likely error',
+                'severity': 'high',
+                'swc_id': 'SWC-123',
+                'recommendation': 'Review formula logic - appears to cancel out'
+            },
+            {
+                'pattern': r'liquidity\s*=.*?amount[XY]\s*\*\s*reserve[YX]',
+                'description': 'Liquidity calculation may use wrong reserves',
+                'severity': 'critical',
+                'swc_id': 'SWC-123',
+                'recommendation': 'Verify reserve pairing in liquidity formula'
+            }
+        ]
+    
     def analyze_arithmetic_operations(self, contract_content: str) -> List[VulnerabilityMatch]:
         """Analyze all arithmetic operations for vulnerabilities"""
         vulnerabilities = []
@@ -141,6 +209,11 @@ class ArithmeticAnalyzer:
         
         # Detect complex arithmetic expressions
         vulnerabilities.extend(self._detect_complex_arithmetic_expressions(contract_content, lines))
+        
+        # Move-inspired detections
+        vulnerabilities.extend(self._detect_precision_loss(contract_content, lines))
+        vulnerabilities.extend(self._detect_decimal_conversion_issues(contract_content, lines))
+        vulnerabilities.extend(self._detect_formula_errors(contract_content, lines))
         
         return vulnerabilities
     
@@ -534,6 +607,88 @@ class ArithmeticAnalyzer:
                 break
         
         return '\n'.join(lines[function_start:function_end])
+    
+    def _detect_precision_loss(self, contract_content: str, lines: List[str]) -> List[VulnerabilityMatch]:
+        """Detect precision loss patterns (Move-inspired)"""
+        vulnerabilities = []
+        
+        for pattern_info in self.precision_loss_patterns:
+            pattern = pattern_info['pattern']
+            matches = re.finditer(pattern, contract_content, re.MULTILINE | re.DOTALL)
+            
+            for match in matches:
+                line_number = self._get_line_number(match.start(), contract_content)
+                code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
+                
+                # Skip if using SafeMath or checked arithmetic
+                if 'SafeMath' in code_snippet or 'using' in code_snippet:
+                    continue
+                
+                vulnerability = VulnerabilityMatch(
+                    vulnerability_type=VulnerabilityType.ARITHMETIC_OVERFLOW,
+                    severity=pattern_info['severity'],
+                    description=pattern_info['description'],
+                    line_number=line_number,
+                    code_snippet=code_snippet,
+                    confidence=0.75,
+                    swc_id=pattern_info['swc_id'],
+                    recommendation=pattern_info['recommendation']
+                )
+                vulnerabilities.append(vulnerability)
+        
+        return vulnerabilities
+    
+    def _detect_decimal_conversion_issues(self, contract_content: str, lines: List[str]) -> List[VulnerabilityMatch]:
+        """Detect decimal conversion issues (Move-inspired)"""
+        vulnerabilities = []
+        
+        for pattern_info in self.decimal_conversion_patterns:
+            pattern = pattern_info['pattern']
+            matches = re.finditer(pattern, contract_content, re.MULTILINE)
+            
+            for match in matches:
+                line_number = self._get_line_number(match.start(), contract_content)
+                code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
+                
+                vulnerability = VulnerabilityMatch(
+                    vulnerability_type=VulnerabilityType.ARITHMETIC_OVERFLOW,
+                    severity=pattern_info['severity'],
+                    description=pattern_info['description'],
+                    line_number=line_number,
+                    code_snippet=code_snippet,
+                    confidence=0.65,
+                    swc_id=pattern_info['swc_id'],
+                    recommendation=pattern_info['recommendation']
+                )
+                vulnerabilities.append(vulnerability)
+        
+        return vulnerabilities
+    
+    def _detect_formula_errors(self, contract_content: str, lines: List[str]) -> List[VulnerabilityMatch]:
+        """Detect formula correctness errors (Move-inspired)"""
+        vulnerabilities = []
+        
+        for pattern_info in self.formula_correctness_patterns:
+            pattern = pattern_info['pattern']
+            matches = re.finditer(pattern, contract_content, re.MULTILINE)
+            
+            for match in matches:
+                line_number = self._get_line_number(match.start(), contract_content)
+                code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
+                
+                vulnerability = VulnerabilityMatch(
+                    vulnerability_type=VulnerabilityType.ARITHMETIC_OVERFLOW,
+                    severity=pattern_info['severity'],
+                    description=pattern_info['description'],
+                    line_number=line_number,
+                    code_snippet=code_snippet,
+                    confidence=0.8,
+                    swc_id=pattern_info['swc_id'],
+                    recommendation=pattern_info['recommendation']
+                )
+                vulnerabilities.append(vulnerability)
+        
+        return vulnerabilities
     
     def _extract_solidity_version(self, contract_content: str) -> Optional[str]:
         """Extract Solidity version from pragma statement."""

@@ -84,6 +84,11 @@ class InputValidationDetector:
         self.decoding_patterns = self._initialize_decoding_patterns()
         self.bounds_patterns = self._initialize_bounds_patterns()
         self.sensitive_parameters = self._initialize_sensitive_parameters()
+        # Move-inspired patterns
+        self.token_validation_patterns = self._initialize_token_validation_patterns()
+        self.identifier_validation_patterns = self._initialize_identifier_validation_patterns()
+        self.signature_validation_patterns = self._initialize_signature_validation_patterns()
+        self.zero_value_patterns = self._initialize_zero_value_patterns()
         
     def _initialize_validation_patterns(self) -> List[Dict[str, Any]]:
         """Initialize patterns for validation detection"""
@@ -175,8 +180,85 @@ class InputValidationDetector:
         return {
             'amount', 'value', 'balance', 'price', 'rate', 'fee', 'cost', 'total',
             'sender', 'recipient', 'to', 'from', 'owner', 'admin', 'user', 'account',
-            'token', 'contract', 'address', 'id', 'index', 'key', 'data', 'input'
+            'token', 'contract', 'address', 'id', 'index', 'key', 'data', 'input',
+            # Move-inspired additions
+            'tokenA', 'tokenB', 'coinType', 'assetType', 'poolId', 'vaultId',
+            'orderId', 'positionId', 'signature', 'nonce', 'deadline'
         }
+    
+    def _initialize_token_validation_patterns(self) -> List[Dict[str, Any]]:
+        """Initialize patterns for token address validation (Move-inspired)"""
+        return [
+            {
+                'pattern': r'function\s+\w+\s*\([^)]*address\s+(\w*[Tt]oken\w*)[^)]*\)',
+                'description': 'Token address parameter without validation',
+                'risk_level': 'critical',
+                'recommendation': 'Validate token address is not zero and matches expected token type'
+            },
+            {
+                'pattern': r'function\s+\w+\s*\([^)]*address\s+(\w*[Aa]sset\w*)[^)]*\)',
+                'description': 'Asset address parameter without validation',
+                'risk_level': 'critical',
+                'recommendation': 'Validate asset address matches pool configuration'
+            },
+            {
+                'pattern': r'IERC20\s*\(\s*(\w+)\s*\)',
+                'description': 'Token contract cast without validation',
+                'risk_level': 'high',
+                'recommendation': 'Validate token address before casting to IERC20'
+            }
+        ]
+    
+    def _initialize_identifier_validation_patterns(self) -> List[Dict[str, Any]]:
+        """Initialize patterns for identifier validation (Move UID-inspired)"""
+        return [
+            {
+                'pattern': r'function\s+\w+\s*\([^)]*uint256\s+(\w*[Ii]d\w*)[^)]*\)',
+                'description': 'ID parameter without validation',
+                'risk_level': 'high',
+                'recommendation': 'Validate ID matches expected resource/entity'
+            },
+            {
+                'pattern': r'mapping\s*\([^)]+\)\s+public\s+\w+;\s*.*?function\s+\w+\([^)]*uint256\s+id[^)]*\)',
+                'description': 'Function uses ID to access mapping without existence check',
+                'risk_level': 'high',
+                'recommendation': 'Add require(mapping[id] exists) before access'
+            }
+        ]
+    
+    def _initialize_signature_validation_patterns(self) -> List[Dict[str, Any]]:
+        """Initialize patterns for signature validation (Move-inspired)"""
+        return [
+            {
+                'pattern': r'function\s+\w+\s*\([^)]*bytes\s+(memory\s+)?signature[^)]*\)',
+                'description': 'Signature parameter without length validation',
+                'risk_level': 'high',
+                'recommendation': 'Validate signature.length == 65 for ECDSA signatures'
+            },
+            {
+                'pattern': r'ecrecover\s*\([^)]*signature',
+                'description': 'ecrecover usage without signature length check',
+                'risk_level': 'high',
+                'recommendation': 'Validate signature length before ecrecover to prevent malleability'
+            }
+        ]
+    
+    def _initialize_zero_value_patterns(self) -> List[Dict[str, Any]]:
+        """Initialize patterns for zero value checks in critical operations"""
+        return [
+            {
+                'pattern': r'function\s+(mint|deposit|stake|lock)\s*\([^)]*uint256\s+amount[^)]*\)',
+                'description': 'Critical deposit/mint function without zero amount check',
+                'risk_level': 'medium',
+                'recommendation': 'Add require(amount > 0) to prevent zero-value operations'
+            },
+            {
+                'pattern': r'\.transfer\s*\(\s*\w+\s*,\s*(\w+)\s*\)',
+                'description': 'Token transfer without zero amount validation',
+                'risk_level': 'medium',
+                'recommendation': 'Validate transfer amount > 0 to prevent wasted gas'
+            }
+        ]
     
     def analyze_input_validation(self, contract_content: str) -> List[InputValidationVulnerability]:
         """Analyze input validation patterns"""
@@ -196,6 +278,12 @@ class InputValidationDetector:
         
         # Detect parameter validation issues
         vulnerabilities.extend(self._detect_parameter_validation_issues(contract_content, lines))
+        
+        # Move-inspired detections
+        vulnerabilities.extend(self._detect_token_validation_issues(contract_content, lines))
+        vulnerabilities.extend(self._detect_identifier_validation_issues(contract_content, lines))
+        vulnerabilities.extend(self._detect_signature_validation_issues(contract_content, lines))
+        vulnerabilities.extend(self._detect_zero_value_issues(contract_content, lines))
         
         return vulnerabilities
     
@@ -653,6 +741,166 @@ class InputValidationDetector:
             return f'Add length validation: require({parameter.name}.length > 0)'
         else:
             return f'Add validation for parameter {parameter.name}'
+    
+    def _detect_token_validation_issues(self, contract_content: str, lines: List[str]) -> List[InputValidationVulnerability]:
+        """Detect missing token address validation (Move-inspired)"""
+        vulnerabilities = []
+        
+        for pattern_info in self.token_validation_patterns:
+            pattern = pattern_info['pattern']
+            matches = re.finditer(pattern, contract_content, re.MULTILINE)
+            
+            for match in matches:
+                line_number = self._get_line_number(match.start(), contract_content)
+                code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
+                
+                # Get function content to check for validation
+                function_content = self._get_function_content(contract_content, line_number)
+                if not function_content:
+                    continue
+                
+                # Check if token validation exists
+                has_validation = (
+                    'require(' in function_content and 
+                    ('!= address(0)' in function_content or 'token' in function_content.lower())
+                )
+                
+                if not has_validation:
+                    vulnerability = InputValidationVulnerability(
+                        vulnerability_type='missing_token_validation',
+                        severity=pattern_info['risk_level'],
+                        description=pattern_info['description'],
+                        line_number=line_number,
+                        code_snippet=code_snippet,
+                        confidence=0.75,
+                        swc_id='SWC-120',
+                        recommendation=pattern_info['recommendation'],
+                        parameter_name=match.group(1) if len(match.groups()) > 0 else 'token',
+                        parameter_type='address'
+                    )
+                    vulnerabilities.append(vulnerability)
+        
+        return vulnerabilities
+    
+    def _detect_identifier_validation_issues(self, contract_content: str, lines: List[str]) -> List[InputValidationVulnerability]:
+        """Detect missing identifier/ID validation (Move UID-inspired)"""
+        vulnerabilities = []
+        
+        for pattern_info in self.identifier_validation_patterns:
+            pattern = pattern_info['pattern']
+            matches = re.finditer(pattern, contract_content, re.MULTILINE)
+            
+            for match in matches:
+                line_number = self._get_line_number(match.start(), contract_content)
+                code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
+                
+                # Get function content to check for validation
+                function_content = self._get_function_content(contract_content, line_number)
+                if not function_content:
+                    continue
+                
+                # Check if ID validation exists (e.g., require(id < maxId) or require(exists[id]))
+                has_validation = (
+                    'require(' in function_content and 
+                    ('id' in function_content.lower() or 'exists' in function_content.lower())
+                )
+                
+                if not has_validation:
+                    vulnerability = InputValidationVulnerability(
+                        vulnerability_type='missing_identifier_validation',
+                        severity=pattern_info['risk_level'],
+                        description=pattern_info['description'],
+                        line_number=line_number,
+                        code_snippet=code_snippet,
+                        confidence=0.7,
+                        swc_id='SWC-120',
+                        recommendation=pattern_info['recommendation'],
+                        parameter_name=match.group(1) if len(match.groups()) > 0 else 'id',
+                        parameter_type='uint256'
+                    )
+                    vulnerabilities.append(vulnerability)
+        
+        return vulnerabilities
+    
+    def _detect_signature_validation_issues(self, contract_content: str, lines: List[str]) -> List[InputValidationVulnerability]:
+        """Detect missing signature validation (Move-inspired)"""
+        vulnerabilities = []
+        
+        for pattern_info in self.signature_validation_patterns:
+            pattern = pattern_info['pattern']
+            matches = re.finditer(pattern, contract_content, re.MULTILINE)
+            
+            for match in matches:
+                line_number = self._get_line_number(match.start(), contract_content)
+                code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
+                
+                # Get function content to check for signature length validation
+                function_content = self._get_function_content(contract_content, line_number)
+                if not function_content:
+                    continue
+                
+                # Check if signature length validation exists
+                has_validation = (
+                    'require(' in function_content and 
+                    ('signature.length' in function_content or '.length == 65' in function_content)
+                )
+                
+                if not has_validation:
+                    vulnerability = InputValidationVulnerability(
+                        vulnerability_type='missing_signature_validation',
+                        severity=pattern_info['risk_level'],
+                        description=pattern_info['description'],
+                        line_number=line_number,
+                        code_snippet=code_snippet,
+                        confidence=0.8,
+                        swc_id='SWC-117',
+                        recommendation=pattern_info['recommendation'],
+                        parameter_name='signature',
+                        parameter_type='bytes'
+                    )
+                    vulnerabilities.append(vulnerability)
+        
+        return vulnerabilities
+    
+    def _detect_zero_value_issues(self, contract_content: str, lines: List[str]) -> List[InputValidationVulnerability]:
+        """Detect missing zero value checks for critical operations"""
+        vulnerabilities = []
+        
+        for pattern_info in self.zero_value_patterns:
+            pattern = pattern_info['pattern']
+            matches = re.finditer(pattern, contract_content, re.MULTILINE)
+            
+            for match in matches:
+                line_number = self._get_line_number(match.start(), contract_content)
+                code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
+                
+                # Get function content to check for zero value validation
+                function_content = self._get_function_content(contract_content, line_number)
+                if not function_content:
+                    continue
+                
+                # Check if zero value check exists
+                has_validation = (
+                    'require(' in function_content and 
+                    ('> 0' in function_content or '!= 0' in function_content or 'amount' in function_content)
+                )
+                
+                if not has_validation:
+                    vulnerability = InputValidationVulnerability(
+                        vulnerability_type='missing_zero_value_check',
+                        severity=pattern_info['risk_level'],
+                        description=pattern_info['description'],
+                        line_number=line_number,
+                        code_snippet=code_snippet,
+                        confidence=0.65,
+                        swc_id='SWC-120',
+                        recommendation=pattern_info['recommendation'],
+                        parameter_name='amount',
+                        parameter_type='uint256'
+                    )
+                    vulnerabilities.append(vulnerability)
+        
+        return vulnerabilities
     
     def _get_line_number(self, position: int, content: str) -> int:
         """Get line number from character position"""

@@ -13,6 +13,14 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
 - **Accuracy Tracking**: Monitors submission outcomes and bounty earnings
 - **Smart Caching**: 2x faster analysis with intelligent result caching
 
+**Move Vulnerability Database Integration** 🔄: Aether now incorporates patterns from the [Move Vulnerability Database](https://github.com/MoveMaverick/move-vulnerability-database) (128 Critical/High findings from 77 audits), adapted for Solidity/EVM analysis:
+- **Business Logic Detection**: Backwards validation, self-comparison bugs, reward calculation errors
+- **State Management**: Missing state updates, inconsistent tracking, desynchronization issues
+- **Data Inconsistency**: Loop variables not updated, sorting violations, array length mismatches
+- **Centralization Risks**: Excessive permissions, unlimited minting/burning, missing multisig
+- **Looping Issues**: Infinite loops, termination errors, unbounded iterations
+- **Enhanced Input Validation**: Token address validation, identifier checks, signature validation
+
 ## Scope and Capabilities
 
 - Static analysis
@@ -381,6 +389,13 @@ See `examples/use_validation_system.py` for more examples.
     - `tests/test_accuracy_tracker.py` - Metrics tracking (18 tests)
     - `tests/test_analysis_cache.py` - Caching system (25 tests)
     - `tests/test_false_positive_reduction_integration.py` - End-to-end integration (9 tests)
+  - **Move integration tests** 🔄 (46 tests):
+    - `tests/test_move_detector_integration.py` - Integration validation (15 tests)
+    - `tests/test_business_logic_detector.py` - Business logic detection (8 tests)
+    - `tests/test_state_management_detector.py` - State management (5 tests)
+    - `tests/test_centralization_detector.py` - Centralization risks (7 tests)
+    - `tests/test_looping_detector.py` - Looping issues (6 tests)
+    - `tests/test_data_inconsistency_detector.py` - Data inconsistency (5 tests)
 
 - Known inconsistencies and caveats:
   - AI ensemble is experimental and subject to change.
