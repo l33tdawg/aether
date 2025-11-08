@@ -167,6 +167,11 @@ class ExternalTrustAnalyzer:
                 code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
                 target_contract = match.group(1)
                 
+            # Skip language-reserved dispatch (internal base call) like super.<fn>()
+            # This is not an external call and does not require existence checks/validation
+            if target_contract == 'super':
+                continue
+            
                 # Check if this is a false positive
                 if self._is_false_positive_external_call(match, code_snippet, target_contract):
                     continue
@@ -202,6 +207,11 @@ class ExternalTrustAnalyzer:
             line_number = self._get_line_number(match.start(), contract_content)
             code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
             target_contract = match.group(1)
+            
+            # Skip language-reserved dispatch (internal base call) like super.<fn>()
+            # This is not an external call and does not require existence checks
+            if target_contract == 'super':
+                continue
             
             # Check if there's an existence check
             has_existence_check = self._has_existence_check(contract_content, line_number, target_contract)
@@ -244,6 +254,9 @@ class ExternalTrustAnalyzer:
                 external_calls = re.findall(r'(\w+)\.(call|delegatecall|staticcall|transfer|send)', func_content)
                 
                 for target_contract, call_type in external_calls:
+                    # Skip internal base calls via super
+                    if target_contract == 'super':
+                        continue
                     # Check if this is a user-controlled contract
                     if self._is_user_controlled_contract(target_contract, func_content):
                         vulnerability = TrustVulnerability(
