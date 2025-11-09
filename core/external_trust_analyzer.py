@@ -167,11 +167,11 @@ class ExternalTrustAnalyzer:
                 code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
                 target_contract = match.group(1)
                 
-            # Skip language-reserved dispatch (internal base call) like super.<fn>()
-            # This is not an external call and does not require existence checks/validation
-            if target_contract == 'super':
-                continue
-            
+                # Skip language-reserved dispatch (internal base call) like super.<fn>()
+                # This is not an external call and does not require existence checks/validation
+                if target_contract == 'super':
+                    continue
+                
                 # Check if this is a false positive
                 if self._is_false_positive_external_call(match, code_snippet, target_contract):
                     continue

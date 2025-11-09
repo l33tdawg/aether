@@ -29,109 +29,173 @@ class ReportGenerator:
             f.write(report_content)
 
     def _generate_markdown_content(self, results: Dict[str, Any]) -> str:
-        """Generate basic Markdown report content."""
+        """Generate Markdown report content matching GitHub audit format."""
+        # Extract metadata
+        contract_name = results.get('contract_name', 'Unknown Contract')
+        contract_address = results.get('contract_address', results.get('address', ''))
+        network = results.get('network', 'Ethereum Mainnet')
+        
+        vulnerabilities = results.get('vulnerabilities', [])
+        total_findings = len(vulnerabilities)
+        
+        # Count by severity
+        from collections import defaultdict
+        severity_counts = defaultdict(int)
+        for vuln in vulnerabilities:
+            if hasattr(vuln, 'severity'):
+                severity = str(vuln.severity).lower()
+            else:
+                severity = str(vuln.get('severity', 'unknown')).lower()
+            severity_counts[severity] += 1
+        
+        high_critical_count = severity_counts.get('critical', 0) + severity_counts.get('high', 0)
+        
         content = f"""# AetherAudit Report
 
-**Generated on:** {self.timestamp}
+**Contract:** {contract_name}
+**Address:** {contract_address}
+**Network:** {network}
+**Generated:** {self.timestamp}
 
-## Summary
+## Executive Summary
 
-### Overview
-- **Total Vulnerabilities:** {results.get('total_vulnerabilities', 0)}
-- **High Severity Issues:** {results.get('high_severity_count', 0)}
+- **Total Findings:** {total_findings}
+- **High/Critical Severity Findings:** {high_critical_count}
 - **Execution Time:** {results.get('execution_time', 0):.2f}s
-
-### Tools Used
-- Slither: Static analysis for Solidity vulnerabilities
-- Mythril: Symbolic execution and formal verification
-- GPT-5: AI-powered vulnerability analysis
-
-## Vulnerabilities Found
+- **Status:** {'✅ Clean' if total_findings == 0 else '⚠️ Issues Found'}
 
 """
+        
+        # Add tools used section
+        content += """### Analysis Tools
+- **Slither:** Static analysis for Solidity vulnerabilities
+- **Enhanced Detectors:** Pattern-based vulnerability detection
+- **AI Ensemble:** Multi-model AI-powered analysis
+- **LLM Validation:** False positive filtering
+- **Formal Verification:** Mathematical proof of correctness
+
+"""
+        
+        # Findings by severity section
+        if total_findings > 0:
+            content += "## Findings by Severity\n\n"
+            for severity in ['critical', 'high', 'medium', 'low', 'info']:
+                if severity in severity_counts:
+                    content += f"- **{severity.title()}:** {severity_counts[severity]}\n"
+            content += "\n"
+        
+        content += "## Detailed Findings\n\n"
 
         # Add vulnerability details
         vulnerabilities = results.get('vulnerabilities', [])
         if vulnerabilities:
-            for i, vuln in enumerate(vulnerabilities, 1):
-                # Handle both dict and VulnerabilityMatch objects
-                if hasattr(vuln, 'vulnerability_type'):
-                    # VulnerabilityMatch object
-                    title = vuln.vulnerability_type.replace('_', ' ').title()
-                    severity = vuln.severity
-                    confidence = vuln.confidence
-                    tool = 'Enhanced Detector'
-                    description = vuln.description
-                    category = getattr(vuln, 'category', '') or 'Unknown'
-                    # Extract SWC ID
-                    swc_id = getattr(vuln, 'swc_id', '') or ''
-                    if swc_id and swc_id != 'Unknown':
-                        category = f"{category} ({swc_id})"
-                    # Location mapping (prefer file path if available)
-                    file_path = ''
-                    try:
-                        if getattr(vuln, 'context', None):
-                            file_path = vuln.context.get('file_path') or vuln.context.get('file_location', '')
-                    except Exception:
-                        pass
-                    line_num = getattr(vuln, 'line_number', 'Unknown')
-                    location = f"{file_path}:{line_num}" if file_path else f"Line {line_num}"
+            # Group findings by severity
+            from collections import defaultdict
+            by_severity = defaultdict(list)
+            for vuln in vulnerabilities:
+                if hasattr(vuln, 'severity'):
+                    severity = str(vuln.severity).lower()
                 else:
-                    # Dict object - map fields from common keys
-                    raw_title = vuln.get('title') or vuln.get('vulnerability_type') or vuln.get('type') or 'Unknown Vulnerability'
-                    title = str(raw_title).replace('_', ' ').title()
-                    severity = vuln.get('severity', 'Unknown')
-                    confidence = vuln.get('confidence', vuln.get('validation_confidence', 0.0)) or 0.0
-                    # Tool/source mapping
-                    source = (vuln.get('source') or vuln.get('tool') or '').lower()
-                    tool_map = {
-                        'ai_ensemble': 'AI Ensemble',
-                        'enhanced_llm': 'LLM',
-                        'enhanced_detector': 'Enhanced Detector',
-                        'formal_verification': 'Formal Verification'
-                    }
-                    tool = tool_map.get(source, vuln.get('tool') or 'AetherAudit')
-                    description = vuln.get('description', 'No description available')
-                    # Category/SWC mapping
-                    category = vuln.get('category') or vuln.get('vulnerability_type') or vuln.get('type') or 'Unknown'
-                    swc_id = vuln.get('swc_id') or ''
-                    if swc_id and swc_id != 'Unknown':
-                        category = f"{category} ({swc_id})"
-                    # Location mapping
-                    file_path = vuln.get('file') or ''
-                    ctx = vuln.get('context') or {}
-                    if isinstance(ctx, dict):
-                        file_path = ctx.get('file_path') or ctx.get('file_location', file_path)
-                    line_num = vuln.get('line') or vuln.get('line_number') or 'Unknown'
-                    # If file_location like "path:line" provided, split
-                    if isinstance(file_path, str) and ':' in file_path and (not isinstance(line_num, int)):
+                    severity = str(vuln.get('severity', 'unknown')).lower()
+                by_severity[severity].append(vuln)
+            
+            # Display findings by severity
+            for severity in ['critical', 'high', 'medium', 'low', 'info']:
+                if severity not in by_severity:
+                    continue
+                
+                content += f"### {severity.title()} Severity\n\n"
+                
+                for i, vuln in enumerate(by_severity[severity], 1):
+                    # Handle both dict and VulnerabilityMatch objects
+                    if hasattr(vuln, 'vulnerability_type'):
+                        # VulnerabilityMatch object
+                        title = vuln.vulnerability_type.replace('_', ' ').title()
+                        severity = vuln.severity
+                        confidence = vuln.confidence
+                        tool = 'Enhanced Detector'
+                        description = vuln.description
+                        category = getattr(vuln, 'category', '') or 'Unknown'
+                        # Extract SWC ID
+                        swc_id = getattr(vuln, 'swc_id', '') or ''
+                        if swc_id and swc_id != 'Unknown':
+                            category = f"{category} ({swc_id})"
+                        # Location mapping (prefer file path if available)
+                        file_path = ''
                         try:
-                            fpath, lnum = file_path.split(':', 1)
-                            file_path = fpath
-                            line_num = lnum
+                            if getattr(vuln, 'context', None):
+                                file_path = vuln.context.get('file_path') or vuln.context.get('file_location', '')
                         except Exception:
                             pass
-                    location = f"{file_path}:{line_num}" if file_path else f"Line {line_num}"
-                
-                content += f"""### {i}. {title}
-
-**Severity:** {str(severity).title()}
-**Confidence:** {float(confidence):.1f}
-**Tool:** {str(tool).title()}
-**Location:** {location}
-
-**Description:**
-{description}
-
-**Category:** {category}
-
----
+                        line_num = getattr(vuln, 'line_number', 'Unknown')
+                        location = f"{file_path}:{line_num}" if file_path else f"Line {line_num}"
+                    else:
+                        # Dict object - map fields from common keys
+                        raw_title = vuln.get('title') or vuln.get('vulnerability_type') or vuln.get('type') or 'Unknown Vulnerability'
+                        title = str(raw_title).replace('_', ' ').title()
+                        severity = vuln.get('severity', 'Unknown')
+                        confidence = vuln.get('confidence', vuln.get('validation_confidence', 0.0)) or 0.0
+                        # Tool/source mapping
+                        source = (vuln.get('source') or vuln.get('tool') or '').lower()
+                        tool_map = {
+                            'ai_ensemble': 'AI Ensemble',
+                            'enhanced_llm': 'LLM',
+                            'enhanced_detector': 'Enhanced Detector',
+                            'formal_verification': 'Formal Verification'
+                        }
+                        tool = tool_map.get(source, vuln.get('tool') or 'AetherAudit')
+                        description = vuln.get('description', 'No description available')
+                        # Category/SWC mapping
+                        category = vuln.get('category') or vuln.get('vulnerability_type') or vuln.get('type') or 'Unknown'
+                        swc_id = vuln.get('swc_id') or ''
+                        if swc_id and swc_id != 'Unknown':
+                            category = f"{category} ({swc_id})"
+                        # Location mapping
+                        file_path = vuln.get('file') or ''
+                        ctx = vuln.get('context') or {}
+                        if isinstance(ctx, dict):
+                            file_path = ctx.get('file_path') or ctx.get('file_location', file_path)
+                        line_num = vuln.get('line') or vuln.get('line_number') or 'Unknown'
+                        # If file_location like "path:line" provided, split
+                        if isinstance(file_path, str) and ':' in file_path and (not isinstance(line_num, int)):
+                            try:
+                                fpath, lnum = file_path.split(':', 1)
+                                file_path = fpath
+                                line_num = lnum
+                            except Exception:
+                                pass
+                        location = f"{file_path}:{line_num}" if file_path else f"Line {line_num}"
+                    
+                    # Format in GitHub audit style - more concise
+                    content += f"""**{title}**
+- **Line:** {line_num}
+- **Confidence:** {float(confidence):.1%}
+- **Description:** {description}
+- **Category:** {category}
+- **Tool:** {tool}
 
 """
         else:
             content += "✅ No vulnerabilities found!\n\n"
+            content += f"""## Clean Contract
 
+The contract **{contract_name}** passed all security checks with no findings.
+
+"""
+        
+        # Add footer
+        content += """---
+
+*Report generated by AetherAudit*
+*For security research and bug bounty purposes*
+"""
+        
+        return content
+
+    def _generate_markdown_content_old(self, results: Dict[str, Any]) -> str:
+        """Old basic format - kept for backward compatibility."""
         # Add LLM validation section if available
+        content = ""
         llm_validation = results.get('llm_validation') or results.get('validation_results') or {}
         details = llm_validation.get('details', {}) if isinstance(llm_validation, dict) else {}
         validated = details.get('validated', []) if isinstance(details, dict) else []
@@ -203,8 +267,16 @@ class ReportGenerator:
 
     def _generate_comprehensive_markdown(self, results: Dict[str, Any]) -> str:
         """Generate comprehensive Markdown report including fuzz results."""
+        # Extract metadata
+        contract_name = results.get('contract_name', 'Unknown Contract')
+        contract_address = results.get('contract_address', results.get('address', ''))
+        network = results.get('network', 'Ethereum Mainnet')
+        
         content = f"""# AetherAudit + AetherFuzz Comprehensive Report
 
+**Contract:** {contract_name}
+**Address:** {contract_address}
+**Network:** {network}
 **Generated on:** {self.timestamp}
 
 ## Executive Summary

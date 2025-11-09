@@ -310,10 +310,31 @@ Examples:
 
     try:
         if args.command == 'audit':
+            # Parse Etherscan URL if provided
+            contract_input = args.contract
+            if isinstance(contract_input, str) and ('etherscan.io/' in contract_input.lower() or 
+                                                     'polygonscan.com/' in contract_input.lower() or
+                                                     'arbiscan.io/' in contract_input.lower() or
+                                                     'bscscan.com/' in contract_input.lower() or
+                                                     'basescan.org/' in contract_input.lower() or
+                                                     'optimistic.etherscan.io/' in contract_input.lower() or
+                                                     'snowtrace.io/' in contract_input.lower() or
+                                                     'ftmscan.com/' in contract_input.lower()):
+                network, address = cli.etherscan_fetcher.parse_explorer_url(contract_input)
+                if network and address:
+                    print(f"🔍 Detected {network} contract: {address}")
+                    # Set the network in the fetcher
+                    cli.etherscan_fetcher.set_network(network)
+                    # Update contract_input to just the address
+                    contract_input = address
+                else:
+                    print(f"❌ Failed to parse Etherscan URL: {contract_input}")
+                    return 1
+            
             # Route to GitHub auditor when a GitHub URL is provided
-            if isinstance(args.contract, str) and ('github.com/' in args.contract or args.contract.startswith('http')):
+            if isinstance(contract_input, str) and ('github.com/' in contract_input or contract_input.startswith('http')):
                 return cli.run_github_audit_command(
-                    github_url=args.contract,
+                    github_url=contract_input,
                     scope=args.scope,
                     min_severity=args.min_severity,
                     output=args.output,
@@ -332,7 +353,7 @@ Examples:
                 )
 
             result = asyncio.run(cli.run_audit(
-                contract_path=args.contract,
+                contract_path=contract_input,
                 flow_config=args.flow,
                 output_dir=args.output,
                 verbose=args.verbose,
@@ -493,7 +514,22 @@ Examples:
                     print("❌ Contract address is required for fetch operations")
                     return 1
 
-                address = args.address
+                # Parse URL if provided
+                address_input = args.address
+                detected_network = args.network  # User-specified network takes precedence
+                
+                if '/' in address_input:  # Likely a URL
+                    network, address = cli.etherscan_fetcher.parse_explorer_url(address_input)
+                    if network and address:
+                        print(f"🔍 Detected {network} contract: {address}")
+                        if not detected_network:  # Only use detected network if not explicitly specified
+                            detected_network = network
+                        address_input = address
+                    else:
+                        print(f"❌ Failed to parse URL: {address_input}")
+                        return 1
+                
+                address = address_input
 
                 # Test network connection if requested
                 if args.test_network:
@@ -512,9 +548,9 @@ Examples:
                         print(f"❌ Network connection test failed for {network}")
                         return 1
 
-                # Set network if specified
-                if args.network:
-                    if not cli.etherscan_fetcher.set_network(args.network):
+                # Set network if specified or detected
+                if detected_network:
+                    if not cli.etherscan_fetcher.set_network(detected_network):
                         return 1
 
                 # Parse expected functions if provided

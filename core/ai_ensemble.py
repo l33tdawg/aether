@@ -180,6 +180,28 @@ For EVERY potential finding, you MUST complete this reasoning chain:
 - Reporting intentional design features as vulnerabilities (check code comments)
 - Theoretical issues with no practical exploit path
 - Gas optimizations (these are NOT security vulnerabilities)
+- **Standard OpenZeppelin proxy patterns (ERC1967Proxy, TransparentUpgradeableProxy, BeaconProxy) → These are AUDITED, BATTLE-TESTED patterns**
+- **Proxy upgrade controls via ProxyAdmin → This is INTENTIONAL design, not a vulnerability**
+- **Constructor initialization with delegatecall in proxies → Standard proxy initialization pattern, executes ONLY ONCE during deployment**
+- **Admin/owner controls on upgradeable contracts → These are GOVERNANCE decisions, not code vulnerabilities**
+- **Deployment-time configuration → If it only happens in constructor, it's deployer-controlled by design**
+- **Trust assumptions in proxy patterns → Inherent to upgradeable architecture, not exploitable bugs**
+
+**CRITICAL: PROXY PATTERN DETECTION**
+Before reporting ANY finding related to:
+- upgradeability_admin_key_risk
+- delegatecall_initialization_payload_risk  
+- storage_slot_conflict_risk
+- admin/owner privilege concerns
+- proxy upgrade mechanisms
+
+CHECK IF:
+1. Is this standard OpenZeppelin code? (Check imports for @openzeppelin)
+2. Does the issue exist in deployed contract or just in library code?
+3. Is this a deployment decision (who becomes owner) vs actual code bug?
+4. Can this be exploited AFTER deployment without compromising the admin?
+
+If it's standard OpenZeppelin proxy code working as designed → DO NOT REPORT IT.
 
 **OUTPUT FORMAT:** JSON array with reasoning chain"""
 

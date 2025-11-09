@@ -126,6 +126,8 @@ class EtherscanFetcher:
 
         # Set default network
         self.current_network = 'ethereum'
+        # Initialize base_url with default network
+        self.base_url = self.SUPPORTED_NETWORKS['ethereum']['api_url']
 
     def is_etherscan_address(self, address: str) -> bool:
         """Check if the input is a valid Ethereum-style address."""
@@ -134,6 +136,66 @@ class EtherscanFetcher:
             len(address) == 42 and
             all(c in '0123456789abcdefABCDEF' for c in address[2:])
         )
+
+    def parse_explorer_url(self, url_or_address: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Parse an explorer URL or address and return (network, address).
+        
+        Supports URLs like:
+        - https://etherscan.io/address/0x123...#code
+        - https://polygonscan.com/address/0x123...
+        - https://arbiscan.io/address/0x123...
+        - Or just the address: 0x123...
+        
+        Returns:
+            (network, address): Network name and contract address, or (None, None) if invalid
+        """
+        import re
+        from urllib.parse import urlparse
+        
+        # First, check if it's already just an address
+        if self.is_etherscan_address(url_or_address):
+            return ('ethereum', url_or_address)  # Default to ethereum
+        
+        # Try to parse as URL
+        try:
+            # Handle URLs with or without protocol
+            url = url_or_address
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+            path = parsed.path
+            
+            # Extract address from path (format: /address/0x123...)
+            address_match = re.search(r'/address/(0x[a-fA-F0-9]{40})', path)
+            if not address_match:
+                return (None, None)
+            
+            address = address_match.group(1)
+            
+            # Map domain to network
+            network_map = {
+                'etherscan.io': 'ethereum',
+                'goerli.etherscan.io': 'goerli',
+                'sepolia.etherscan.io': 'sepolia',
+                'polygonscan.com': 'polygon',
+                'arbiscan.io': 'arbitrum',
+                'optimistic.etherscan.io': 'optimism',
+                'bscscan.com': 'bsc',
+                'basescan.org': 'base',
+                'zkevm.polygonscan.com': 'polygon_zkevm',
+                'snowtrace.io': 'avalanche',
+                'ftmscan.com': 'fantom'
+            }
+            
+            network = network_map.get(domain, 'ethereum')  # Default to ethereum
+            return (network, address)
+            
+        except Exception as e:
+            self.console.print(f"[yellow]⚠️ Failed to parse URL: {e}[/yellow]")
+            return (None, None)
 
     def set_network(self, network: str) -> bool:
         """Set the current network for API calls."""

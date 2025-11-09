@@ -861,8 +861,12 @@ Before reporting any vulnerability, verify:
 
     def _is_likely_false_positive(self, vuln: Dict[str, Any], contract_content: str) -> bool:
         """Check if the vulnerability is likely a false positive."""
+        import re
+        
         title = vuln.get('title', '').lower()
         description = vuln.get('description', '').lower()
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        code_snippet = vuln.get('code_snippet', '')
         
         # Common false positive patterns
         false_positive_patterns = [
@@ -874,9 +878,61 @@ Before reporting any vulnerability, verify:
             'false positive'
         ]
         
+        # Check text-based patterns
         for pattern in false_positive_patterns:
             if pattern in description:
                 return True
+        
+        # NEW: Check for OpenZeppelin proxy false positives
+        if any(vuln_type in vt for vt in ['upgradeability', 'delegatecall_initialization', 'storage_slot_conflict']):
+            # Check if this is OpenZeppelin proxy code
+            if re.search(r'@openzeppelin/contracts/proxy', contract_content):
+                # Check if vulnerability is in standard proxy patterns
+                if any(proxy_type in contract_content for proxy_type in [
+                    'ERC1967Proxy', 'TransparentUpgradeableProxy', 
+                    'BeaconProxy', 'ProxyAdmin'
+                ]):
+                    # Check if description mentions standard proxy behavior
+                    proxy_false_positive_keywords = [
+                        'admin can upgrade',
+                        'initialowner',
+                        'delegatecall.*data.*constructor',
+                        'storage slot.*implementation',
+                        'eoa.*private key',
+                        'malicious deployer',
+                        'arbitrary.*initialization'
+                    ]
+                    
+                    for keyword in proxy_false_positive_keywords:
+                        if re.search(keyword, description, re.IGNORECASE):
+                            return True
+        
+        # NEW: Check for deployment-time only issues
+        deployment_time_keywords = [
+            'constructor.*accept',
+            'during deployment',
+            'at deployment time',
+            'malicious deployer',
+            'compromised factory'
+        ]
+        
+        if any(re.search(kw, description, re.IGNORECASE) for kw in deployment_time_keywords):
+            # Check if code is actually in constructor
+            if 'constructor' in code_snippet.lower() or 'constructor' in title:
+                return True
+        
+        # NEW: Check for centralization concerns disguised as vulnerabilities
+        centralization_keywords = [
+            'eoa.*private key.*compromised',
+            'without multisig',
+            'time-delayed administrative',
+            'governance.*not implemented',
+            'owner.*not.*multisig'
+        ]
+        
+        if any(re.search(kw, description, re.IGNORECASE) for kw in centralization_keywords):
+            # This is a governance/centralization concern, not a code vulnerability
+            return True
         
         return False
 

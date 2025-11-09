@@ -105,6 +105,15 @@ class AetherCLI:
             print(f"❌ Error fetching contract source: {result}")
             return None
 
+        # Store contract metadata for later use in report generation
+        self._etherscan_contract_metadata = {
+            'contract_name': contract_data.get('contract_name', 'Unknown Contract'),
+            'contract_address': contract_data.get('address', address),
+            'network': self.etherscan_fetcher.SUPPORTED_NETWORKS[contract_data.get('network', 'ethereum')]['name']
+        }
+        
+        print(f"📝 Stored contract metadata: {self._etherscan_contract_metadata['contract_name']} at {self._etherscan_contract_metadata['contract_address']}")
+
         print(f"✅ Contract source saved to: {result}")
         return result
 
@@ -342,11 +351,21 @@ class AetherCLI:
         # Extract validation data if available
         validation_data = results.get('validation', {})
 
-        return {
+        # Build final result dictionary with Etherscan contract metadata if available
+        result_dict = {
             'audit': audit_data,
             'fuzz': fuzz_data,
             'validation': validation_data
         }
+        
+        # Add Etherscan contract metadata at root level for report generation
+        if hasattr(self, '_etherscan_contract_metadata'):
+            result_dict['contract_name'] = self._etherscan_contract_metadata.get('contract_name', 'Unknown Contract')
+            result_dict['contract_address'] = self._etherscan_contract_metadata.get('contract_address', '')
+            result_dict['network'] = self._etherscan_contract_metadata.get('network', 'Ethereum Mainnet')
+            print(f"📊 Added contract metadata to report: {result_dict['contract_name']} at {result_dict['contract_address']}")
+            
+        return result_dict
 
     async def run_generate_foundry(
         self,

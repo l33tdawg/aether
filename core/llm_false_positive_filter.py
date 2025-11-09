@@ -652,6 +652,48 @@ Before marking any vulnerability as real, check these common false positive patt
     - VERDICT: If it's just variable assignment/configuration → FALSE POSITIVE
     - Real vulnerability would require: Actual flash loan execution with exploitable logic
 
+15. **Standard OpenZeppelin Proxy Patterns (FALSE POSITIVE)**
+    - Pattern: Finding flags upgradeability, admin controls, or delegatecall in proxy constructors
+    - Why it's safe: OpenZeppelin proxies (ERC1967Proxy, TransparentUpgradeableProxy, BeaconProxy) are battle-tested standards
+    - Check:
+      * Does contract import from @openzeppelin/contracts/proxy/?
+      * Is it ERC1967Proxy, TransparentUpgradeableProxy, or BeaconProxy?
+      * Is the "vulnerability" in the proxy library itself or in contract using it?
+      * Does finding reference line numbers in OpenZeppelin library code?
+    - Common false positive descriptions:
+      * "admin can upgrade the proxy" → That's the DESIGN of upgradeable proxies
+      * "delegatecall in constructor with arbitrary data" → Standard proxy initialization, only runs ONCE
+      * "EOA controls ProxyAdmin" → Deployment decision, not code bug
+      * "implementation could overwrite storage slots" → Trust assumption of upgrade pattern
+    - VERDICT: If it's standard OpenZeppelin proxy code → FALSE POSITIVE
+    - Real vulnerability would require: Actual bug in how proxy is USED, not in proxy pattern itself
+
+16. **Deployment-Time Configuration vs Runtime Exploit (FALSE POSITIVE)**
+    - Pattern: Finding claims vulnerability in constructor or initialization that accepts parameters
+    - Why it's not exploitable: Constructor runs ONCE during deployment under deployer control
+    - Check:
+      * Is the flagged code in a constructor or initialize() function?
+      * Can this code path be called after deployment?
+      * Does exploit require malicious deployer?
+    - Examples:
+      * "Constructor accepts arbitrary data for delegatecall" → Deployer controls this
+      * "initialOwner can be set to malicious address" → Deployer decision
+    - VERDICT: If it only executes during deployment → FALSE POSITIVE (governance concern, not exploit)
+    - Real vulnerability would require: Post-deployment exploit path
+
+17. **Centralization vs Vulnerability (FALSE POSITIVE)**  
+    - Pattern: Finding claims "admin/owner can do X" as a vulnerability
+    - Why it's not a vulnerability: Centralization is a DESIGN CHOICE, not a code bug
+    - Check:
+      * Is the concern about WHO has power (EOA vs multisig)?
+      * Is the code functioning correctly for its design?
+      * Would using a multisig address as owner "fix" the issue?
+    - Examples:
+      * "Admin key held by EOA could be compromised" → Deployment choice
+      * "Owner can upgrade to malicious implementation" → Inherent to upgradeable design
+    - VERDICT: If it's about deployment parameters or governance model → FALSE POSITIVE (centralization risk)
+    - Real vulnerability would require: Code that allows unauthorized escalation or bypass of admin
+
 **OUTPUT FORMAT (JSON):**
 
 Respond ONLY in valid JSON format with these fields:
@@ -675,6 +717,9 @@ Respond ONLY in valid JSON format with these fields:
 - If SafeCast with intentional revert: Mark as FALSE POSITIVE
 - If Chainlink oracle + flash loan claim: Mark as FALSE POSITIVE
 - If gateway-controlled architecture + centralized control claim: Mark as FALSE POSITIVE
+- If standard OpenZeppelin proxy pattern: Mark as FALSE POSITIVE
+- If deployment-time only issue (constructor/initialize): Mark as FALSE POSITIVE
+- If centralization concern (EOA vs multisig choice): Mark as FALSE POSITIVE
 
 **CONTEXT TO USE:**
 |- Oracle type detected: {context.get('oracle_type', 'N/A')}
