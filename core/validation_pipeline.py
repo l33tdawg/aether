@@ -43,6 +43,7 @@ class ValidationPipeline:
         self._function_context_analyzer = None
         self._impact_analyzer = None
         self._confidence_scorer = None
+        self._dos_feasibility_validator = None
     
     @property
     def governance_detector(self):
@@ -146,6 +147,17 @@ class ValidationPipeline:
                 self._confidence_scorer = None
         return self._confidence_scorer
     
+    @property
+    def dos_feasibility_validator(self):
+        """Lazy load DoS feasibility validator."""
+        if self._dos_feasibility_validator is None:
+            try:
+                from core.dos_feasibility_validator import DoSFeasibilityValidator
+                self._dos_feasibility_validator = DoSFeasibilityValidator()
+            except ImportError:
+                self._dos_feasibility_validator = None
+        return self._dos_feasibility_validator
+    
     def validate(self, vulnerability: Dict) -> List[ValidationStage]:
         """
         Run vulnerability through all validation stages.
@@ -169,6 +181,12 @@ class ValidationPipeline:
         builtin_check = self._check_builtin_protection(vulnerability)
         if builtin_check:
             results.append(builtin_check)
+            return results  # Early exit
+        
+        # Stage 1.4: DoS feasibility check (NEW - prevents false positives like Snowbridge)
+        dos_check = self._check_dos_feasibility(vulnerability)
+        if dos_check and dos_check.is_false_positive:
+            results.append(dos_check)
             return results  # Early exit
         
         # Stage 1.5: Constructor context check
@@ -313,6 +331,49 @@ class ValidationPipeline:
                 return True
         
         return False
+    
+    def _check_dos_feasibility(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check if DoS vulnerability is actually exploitable.
+        
+        Validates DoS-related vulnerabilities to prevent false positives like:
+        - Unbounded loops over cryptographically validated data
+        - View functions with high gas costs (attacker pays)
+        - Operations with economic barriers
+        """
+        if not self.dos_feasibility_validator:
+            return None
+        
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        
+        # Only validate DoS-related vulnerabilities
+        dos_keywords = ['dos', 'denial', 'gas', 'unbounded', 'loop', 'block_gas_limit']
+        if not any(keyword in vuln_type for keyword in dos_keywords):
+            return None
+        
+        line_number = vuln.get('line_number', vuln.get('line', 0))
+        
+        validation_result = self.dos_feasibility_validator.validate_dos_vulnerability(
+            vuln,
+            self.contract_code,
+            function_context=None
+        )
+        
+        if not validation_result.is_exploitable:
+            return ValidationStage(
+                stage_name='dos_feasibility',
+                is_false_positive=True,
+                confidence=validation_result.confidence,
+                reasoning=f"{validation_result.feasibility.value}: {validation_result.reasoning}"
+            )
+        
+        # If exploitable but severity should be downgraded
+        if validation_result.recommended_severity and validation_result.recommended_severity != vuln.get('severity', ''):
+            # Update severity in the vuln dict (in-place modification)
+            vuln['severity'] = validation_result.recommended_severity
+            vuln['dos_validation_note'] = validation_result.reasoning
+        
+        return None
     
     def _check_constructor_context(self, vuln: Dict) -> Optional[ValidationStage]:
         """
