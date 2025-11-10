@@ -378,11 +378,16 @@ class ImpactAnalyzer:
         
         # Privileged-only issues (requires admin/governance role) - downgrade
         # These are operational risks, not external exploits
-        if context.access_control and original_severity in ['high', 'critical']:
-            # Check if function requires privileged role
-            if any(role in str(context.modifiers) for role in ['onlyRole', 'onlyOwner', 'onlyAdmin', 'onlyGovernance']):
-                # Downgrade: privileged mistake != external exploit
-                return -1  # HIGH → MEDIUM, CRITICAL → HIGH
+        try:
+            if context.access_control and original_severity in ['high', 'critical']:
+                # Check if function requires privileged role
+                modifiers_str = str(getattr(context, 'modifiers', ''))
+                if any(role in modifiers_str for role in ['onlyRole', 'onlyOwner', 'onlyAdmin', 'onlyGovernance']):
+                    # Downgrade: privileged mistake != external exploit
+                    return -1  # HIGH → MEDIUM, CRITICAL → HIGH
+        except Exception:
+            # If there's any issue with the check, just skip it
+            pass
         
         # Access control on critical functions - upgrade
         if actual_impact == ImpactType.ACCESS and context.state_impact == StateImpact.CRITICAL:
