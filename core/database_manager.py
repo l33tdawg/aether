@@ -32,7 +32,7 @@ class AuditResult:
     execution_time: float
     created_at: float
     metadata: Dict[str, Any]
-    status: str  # 'completed', 'failed', 'in_progress'
+    status: str  # 'completed', 'error', 'in_progress'
 
 
 @dataclass
@@ -798,7 +798,7 @@ class AetherDatabase:
             high = 0
             medium = 0
             low = 0
-            failed = conn.execute('SELECT COUNT(*) FROM analysis_results WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = ?) AND status = "failed"', (project_id,)).fetchone()[0]
+            failed = conn.execute('SELECT COUNT(*) FROM analysis_results WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = ?) AND status = "error"', (project_id,)).fetchone()[0]
             fallback = conn.execute('SELECT COUNT(*) FROM analysis_results WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = ?) AND status = "fallback"', (project_id,)).fetchone()[0]
 
             # Attempt to aggregate severities if findings JSON contains a standard structure

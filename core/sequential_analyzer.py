@@ -397,8 +397,8 @@ class SequentialAnalyzer:
 
             except Exception as e:
                 duration_ms = int((time.time() - start) * 1000)
-                status = 'failed'
-                findings = {'error': str(e), 'error_type': 'analysis_failed'}
+                status = 'error'
+                findings = {'error': str(e), 'error_type': 'analysis_error'}
 
                 self.db.save_analysis_result(
                     contract_id=self._get_contract_id(project_id, rel),
@@ -410,7 +410,7 @@ class SequentialAnalyzer:
                 )
 
                 duration_sec = duration_ms / 1000
-                self.console.print(f" [red]❌ failed ({duration_sec:.1f}s)[/red]")
+                self.console.print(f" [red]❌ error ({duration_sec:.1f}s)[/red]")
                 outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status=status, duration_ms=duration_ms))
 
         return outcomes
