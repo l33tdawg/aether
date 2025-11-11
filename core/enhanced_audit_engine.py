@@ -229,14 +229,89 @@ class EnhancedAetherAuditEngine:
             
             all_vulnerabilities.extend(vulnerabilities)
         
+        # NEW: Deduplicate vulnerabilities before filtering
+        print("   🔄 Deduplicating vulnerabilities...", flush=True)
+        from core.vulnerability_deduplicator import VulnerabilityDeduplicator
+        deduplicator = VulnerabilityDeduplicator()
+        
+        # Convert to dicts for deduplication
+        vuln_dicts = []
+        for vuln in all_vulnerabilities:
+            if isinstance(vuln, dict):
+                vuln_dicts.append(vuln)
+            else:
+                vuln_dicts.append({
+                    'vulnerability_type': getattr(vuln, 'vulnerability_type', 'Unknown'),
+                    'severity': getattr(vuln, 'severity', 'medium'),
+                    'confidence': getattr(vuln, 'confidence', 0.5),
+                    'line': getattr(vuln, 'line_number', 0),
+                    'line_number': getattr(vuln, 'line_number', 0),
+                    'description': getattr(vuln, 'description', ''),
+                    'code_snippet': getattr(vuln, 'code_snippet', ''),
+                    'validation_status': getattr(vuln, 'validation_status', 'pending'),
+                    'context': getattr(vuln, 'context', {}),
+                })
+        
+        # Remove subsumed vulnerabilities
+        vuln_dicts = deduplicator.remove_subsumed_vulnerabilities(vuln_dicts)
+        
+        # Deduplicate
+        deduplicated_vulns = deduplicator.deduplicate(vuln_dicts)
+        print(f"   📉 Reduced from {len(all_vulnerabilities)} to {len(deduplicated_vulns)} vulnerabilities after deduplication", flush=True)
+        
+        # NEW: Apply access control context analysis
+        print("   🔐 Analyzing access control context...", flush=True)
+        from core.access_control_context_analyzer import AccessControlContextAnalyzer
+        ac_analyzer = AccessControlContextAnalyzer()
+        
+        access_adjusted_vulns = []
+        for vuln in deduplicated_vulns:
+            # Extract function name and code from context
+            function_name = vuln.get('context', {}).get('function_name', '')
+            if not function_name:
+                # Try to extract from description
+                import re
+                func_match = re.search(r'function\s+(\w+)', vuln.get('description', ''))
+                if func_match:
+                    function_name = func_match.group(1)
+            
+            # Get contract content for analysis
+            file_path = vuln.get('context', {}).get('file_path', '')
+            contract_content = ''
+            for cf in contract_files:
+                if cf['path'] == file_path:
+                    contract_content = cf['content']
+                    break
+            
+            # Analyze access control if we have function name and content
+            if function_name and contract_content:
+                function_code = ac_analyzer.extract_function_code(
+                    contract_content,
+                    function_name,
+                    vuln.get('line_number', vuln.get('line', 0))
+                )
+                
+                access_info = ac_analyzer.analyze_function_access_control(
+                    function_code,
+                    function_name,
+                    contract_content
+                )
+                
+                # Adjust severity if access control is present
+                if access_info['has_access_control']:
+                    vuln = ac_analyzer.adjust_vulnerability_severity(vuln, access_info)
+                    print(f"   ↓  Downgraded {function_name}() severity due to {access_info['access_control_type']} protection", flush=True)
+            
+            access_adjusted_vulns.append(vuln)
+        
         # Filter out false positives
         validated_vulnerabilities = []
-        for vuln in all_vulnerabilities:
+        for vuln in access_adjusted_vulns:
             # Handle both VulnerabilityMatch objects and dicts
             if isinstance(vuln, dict):
                 validation_status = vuln.get('validation_status', 'pending')
                 vuln_type = vuln.get('vulnerability_type', 'Unknown')
-                line_num = vuln.get('line_number', 0)
+                line_num = vuln.get('line_number', vuln.get('line', 0))
             else:
                 validation_status = getattr(vuln, 'validation_status', 'pending')
                 vuln_type = getattr(vuln, 'vulnerability_type', 'Unknown')
@@ -249,6 +324,7 @@ class EnhancedAetherAuditEngine:
         
         # Calculate statistics
         self.stats['total_findings'] = len(all_vulnerabilities)
+        self.stats['deduplicated_findings'] = len(deduplicated_vulns)
         self.stats['validated_findings'] = len(validated_vulnerabilities)
         self.stats['false_positives'] = len(all_vulnerabilities) - len(validated_vulnerabilities)
         self.stats['accuracy_rate'] = (len(validated_vulnerabilities) / len(all_vulnerabilities) * 100) if all_vulnerabilities else 0
