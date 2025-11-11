@@ -44,6 +44,10 @@ class ValidationPipeline:
         self._impact_analyzer = None
         self._confidence_scorer = None
         self._dos_feasibility_validator = None
+        
+        # ENHANCED: Multi-strategy false positive filter (Nov 2025 improvements)
+        self._enhanced_fp_filter = None
+        self._enhanced_fp_analyzed = False
     
     @property
     def governance_detector(self):
@@ -158,6 +162,31 @@ class ValidationPipeline:
                 self._dos_feasibility_validator = None
         return self._dos_feasibility_validator
     
+    @property
+    def enhanced_fp_filter(self):
+        """Lazy load enhanced false positive filter."""
+        if self._enhanced_fp_filter is None:
+            try:
+                from core.enhanced_false_positive_filter import EnhancedFalsePositiveFilter
+                self._enhanced_fp_filter = EnhancedFalsePositiveFilter()
+                # Analyze contract context once
+                if not self._enhanced_fp_analyzed and self.contract_code:
+                    contract_name = self._extract_contract_name()
+                    self._enhanced_fp_filter.analyze_contract_context(
+                        self.contract_code, 
+                        contract_name
+                    )
+                    self._enhanced_fp_analyzed = True
+            except ImportError:
+                self._enhanced_fp_filter = None
+        return self._enhanced_fp_filter
+    
+    def _extract_contract_name(self) -> str:
+        """Extract primary contract name from code."""
+        import re
+        match = re.search(r'contract\s+(\w+)', self.contract_code)
+        return match.group(1) if match else "Unknown"
+    
     def validate(self, vulnerability: Dict) -> List[ValidationStage]:
         """
         Run vulnerability through all validation stages.
@@ -176,6 +205,16 @@ class ValidationPipeline:
         if mismatch_check and mismatch_check.is_false_positive:
             results.append(mismatch_check)
             return results  # Early exit
+        
+        # Stage 0.5: Enhanced multi-strategy false positive filter (NEW - Nov 2025)
+        # This runs comprehensive checks: guards, inheritance, patterns, severity calibration
+        enhanced_check = self._check_enhanced_false_positive(vulnerability)
+        if enhanced_check and enhanced_check.is_false_positive:
+            results.append(enhanced_check)
+            return results  # Early exit
+        elif enhanced_check:
+            # Not a false positive but may have adjusted severity/confidence
+            results.append(enhanced_check)
         
         # Stage 1: Built-in protection check
         builtin_check = self._check_builtin_protection(vulnerability)
@@ -272,6 +311,72 @@ class ValidationPipeline:
         ))
         
         return results
+    
+    def _check_enhanced_false_positive(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Enhanced multi-strategy false positive check (Nov 2025 improvements).
+        
+        Checks:
+        1. Control flow guards (timing constraints, access controls)
+        2. Inheritance verification (catches false claims)
+        3. DeFi pattern recognition (vesting, ERC4626, etc.)
+        4. Severity calibration (adjusts based on pattern)
+        5. Impact quantification (checks for real exploit paths)
+        """
+        if not self.enhanced_fp_filter:
+            return None
+        
+        try:
+            result = self.enhanced_fp_filter.validate_finding(vuln)
+            
+            # If false positive, return immediately
+            if result.is_false_positive:
+                reasoning_text = "\n".join(result.reasoning)
+                return ValidationStage(
+                    stage_name="enhanced_false_positive_filter",
+                    is_false_positive=True,
+                    confidence=0.90,
+                    reasoning=reasoning_text
+                )
+            
+            # If severity adjusted or has recommendations, return non-blocking result
+            if result.adjusted_severity or result.recommendations:
+                reasoning_parts = []
+                
+                if result.adjusted_severity:
+                    reasoning_parts.append(
+                        f"Severity adjusted: {result.original_severity} → {result.adjusted_severity}"
+                    )
+                
+                reasoning_parts.extend(result.reasoning)
+                
+                if result.recommendations:
+                    reasoning_parts.append("Recommendations:")
+                    reasoning_parts.extend(f"  - {rec}" for rec in result.recommendations)
+                
+                reasoning_text = "\n".join(reasoning_parts)
+                
+                # Apply adjustments to vulnerability
+                if result.adjusted_severity:
+                    vuln['severity'] = result.adjusted_severity
+                if result.confidence_adjustment:
+                    current_conf = vuln.get('confidence', 0.7)
+                    vuln['confidence'] = max(0.0, min(1.0, current_conf + result.confidence_adjustment))
+                
+                return ValidationStage(
+                    stage_name="enhanced_false_positive_filter",
+                    is_false_positive=False,
+                    confidence=vuln.get('confidence', 0.7),
+                    reasoning=reasoning_text
+                )
+            
+            return None
+            
+        except Exception as e:
+            # Don't fail the entire validation if enhanced filter has issues
+            import logging
+            logging.warning(f"Enhanced FP filter error: {e}")
+            return None
     
     def _check_builtin_protection(self, vuln: Dict) -> Optional[ValidationStage]:
         """Check if Solidity version provides built-in protection."""
