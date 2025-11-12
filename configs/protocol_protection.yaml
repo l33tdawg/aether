@@ -1,0 +1,34 @@
+protocol_protection:
+  enabled: true
+  
+  architecture_analysis:
+    enabled: true
+    scan_github: true
+    scan_local: true
+    max_depth: 3
+    
+  off_chain_detection:
+    enabled: true
+    languages: ["go", "rust", "typescript", "python"]
+    patterns:
+      - "observer"
+      - "validator"
+      - "watcher"
+      - "indexer"
+    file_patterns:
+      - "*observer*.go"
+      - "*validator*.go"
+      - "*observer*.rs"
+      - "*validator*.ts"
+  
+  legacy_detection:
+    enabled: true
+    check_documentation: true
+    check_comments: true
+    check_naming: true
+    
+  validation:
+    adjust_severity: true
+    mark_as_false_positive: false  # Instead, adjust severity for off-chain validation
+    min_confidence: 0.7
+

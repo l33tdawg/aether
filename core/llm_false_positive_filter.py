@@ -482,6 +482,18 @@ Description: {context.get('description')}
 **ARCHITECTURE ANALYSIS:**
 {architecture_analysis}
 
+**PROTOCOL-LEVEL PROTECTION CONTEXT:**
+Before flagging a vulnerability, check if:
+1. Off-chain observers validate the vulnerable parameters before processing
+2. Contract is marked as legacy/deprecated (lower priority)
+3. Multi-component security boundaries provide protection
+4. Protocol-level mitigations prevent systemic exploits (but may allow user errors)
+
+If off-chain validation prevents exploitation:
+- Mark as FALSE POSITIVE for security exploit
+- Note: User errors may still be possible
+- Adjust severity: HIGH → MEDIUM (user error risk, not security exploit)
+
 **ORACLE TYPE DETECTED:**
 {context.get('oracle_type', 'No oracle usage detected')}
 
@@ -740,6 +752,54 @@ Be STRICT: Only mark as REAL if you can describe exact exploitation steps.
         imports = context.get('imports', [])
         
         findings = []
+        
+        # NEW: Check for protocol-level protections
+        try:
+            from core.protocol_protection_detector import ProtocolProtectionDetector
+            
+            # Get project root from context if available
+            file_path = context.get('file_path', '')
+            project_root = None
+            if file_path:
+                from pathlib import Path
+                project_root = Path(file_path).parent
+                # Try to find project root
+                for _ in range(5):
+                    if (project_root / 'package.json').exists() or (project_root / 'foundry.toml').exists():
+                        break
+                    parent = project_root.parent
+                    if parent == project_root:
+                        break
+                    project_root = parent
+            
+            if project_root:
+                detector = ProtocolProtectionDetector(enabled=True)
+                architecture = detector.analyze_architecture(
+                    contract_code=contract_code,
+                    project_root=project_root
+                )
+                
+                if architecture:
+                    # Check for off-chain components
+                    observers = detector.find_observers(project_root)
+                    if observers:
+                        findings.append("🔵 **OFF-CHAIN OBSERVER COMPONENTS DETECTED**")
+                        findings.append(f"   - Found {len(observers)} observer/validator component(s)")
+                        for obs in observers[:3]:  # Show first 3
+                            findings.append(f"   - {obs.name} ({obs.language})")
+                            if obs.validation_functions:
+                                findings.append(f"     Validates: {', '.join(obs.validation_functions[:2])}")
+                        findings.append("   - Implication: Contract may have off-chain validation")
+                        findings.append("   - Action: Check if observer validates vulnerable parameters")
+                    
+                    # Check for security boundaries
+                    if architecture.security_boundaries:
+                        findings.append("🔵 **SECURITY BOUNDARIES DETECTED**")
+                        for boundary in architecture.security_boundaries[:2]:
+                            findings.append(f"   - {boundary.boundary_name}: {boundary.description}")
+        except Exception:
+            # Fail silently to not break existing functionality
+            pass
         
         # Check for gateway patterns
         if any('Gateway' in inh for inh in inheritance):

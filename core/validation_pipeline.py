@@ -48,6 +48,9 @@ class ValidationPipeline:
         # ENHANCED: Multi-strategy false positive filter (Nov 2025 improvements)
         self._enhanced_fp_filter = None
         self._enhanced_fp_analyzed = False
+        
+        # NEW: Protocol-level protection detector (optional, lazy-loaded)
+        self._protocol_protection_detector = None
     
     @property
     def governance_detector(self):
@@ -161,6 +164,28 @@ class ValidationPipeline:
             except ImportError:
                 self._dos_feasibility_validator = None
         return self._dos_feasibility_validator
+    
+    @property
+    def protocol_protection_detector(self):
+        """Lazy load protocol protection detector."""
+        if self._protocol_protection_detector is None:
+            try:
+                from core.protocol_protection_detector import ProtocolProtectionDetector
+                # Check if enabled via config (default: True)
+                enabled = True
+                try:
+                    import yaml
+                    config_path = Path(__file__).parent.parent / 'configs' / 'protocol_protection.yaml'
+                    if config_path.exists():
+                        with open(config_path) as f:
+                            config = yaml.safe_load(f)
+                            enabled = config.get('protocol_protection', {}).get('enabled', True)
+                except Exception:
+                    pass
+                self._protocol_protection_detector = ProtocolProtectionDetector(enabled=enabled)
+            except ImportError:
+                self._protocol_protection_detector = None
+        return self._protocol_protection_detector
     
     @property
     def enhanced_fp_filter(self):
@@ -295,6 +320,12 @@ class ValidationPipeline:
         if deployment_check:
             results.append(deployment_check)
             return results  # Early exit
+        
+        # Stage 6.5: Protocol-level protection check (NEW - protocol architecture analysis)
+        protocol_check = self._check_protocol_protections(vulnerability)
+        if protocol_check:
+            results.append(protocol_check)
+            # Don't early exit - may adjust severity instead of filtering
         
         # Stage 7: Local validation check
         validation_check = self._check_local_validation(vulnerability)
@@ -658,6 +689,83 @@ class ValidationPipeline:
                         confidence=usage_check['confidence'],
                         reasoning=f"Function {function_name} not called in deployment scripts"
                     )
+        
+        return None
+    
+    def _check_protocol_protections(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check if vulnerability is mitigated by protocol-level protections.
+        
+        This checks for:
+        - Off-chain observer validation
+        - Legacy contract status
+        - Multi-component security boundaries
+        """
+        if not self.protocol_protection_detector:
+            return None
+        
+        try:
+            # Get contract path if available
+            contract_path = None
+            if self.project_path:
+                # Try to find contract file
+                contract_name = vuln.get('contract_name', '')
+                if contract_name:
+                    # Search for .sol file with this contract name
+                    for sol_file in self.project_path.rglob('*.sol'):
+                        try:
+                            content = sol_file.read_text(encoding='utf-8', errors='ignore')
+                            if f'contract {contract_name}' in content or f'contract {contract_name} ' in content:
+                                contract_path = sol_file
+                                break
+                        except Exception:
+                            continue
+            
+            # Validate finding
+            validation_result = self.protocol_protection_detector.validate_finding(
+                vulnerability=vuln,
+                contract_code=self.contract_code,
+                contract_path=contract_path,
+                project_root=self.project_path
+            )
+            
+            if not validation_result:
+                return None
+            
+            # If mitigated, create validation stage
+            if validation_result.is_mitigated:
+                # Determine if this should be filtered or just severity-adjusted
+                # For off-chain validation that prevents exploit but not user error,
+                # we adjust severity rather than filter completely
+                if validation_result.mitigation_type and validation_result.mitigation_type.value == 'off_chain_validation':
+                    # Adjust severity but don't filter (user errors still possible)
+                    return ValidationStage(
+                        stage_name="protocol_protection",
+                        is_false_positive=False,  # Not a false positive, but severity adjusted
+                        confidence=validation_result.confidence,
+                        reasoning=f"Protocol-level protection detected: {validation_result.reasoning}"
+                    )
+                else:
+                    # Other mitigations might be false positives
+                    return ValidationStage(
+                        stage_name="protocol_protection",
+                        is_false_positive=True,
+                        confidence=validation_result.confidence,
+                        reasoning=validation_result.reasoning
+                    )
+            
+            # If severity was adjusted, return stage with adjustment info
+            if validation_result.adjusted_severity:
+                return ValidationStage(
+                    stage_name="protocol_protection",
+                    is_false_positive=False,
+                    confidence=validation_result.confidence,
+                    reasoning=f"Severity adjusted due to protocol context: {validation_result.reasoning}"
+                )
+        
+        except Exception:
+            # Fail silently to not break existing functionality
+            return None
         
         return None
     
