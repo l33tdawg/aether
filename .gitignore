@@ -144,6 +144,7 @@ coverage.xml
 
 # Documentation builds
 docs/_build/
+docs/
 *.pdf
 *.html
 *.xlsx
