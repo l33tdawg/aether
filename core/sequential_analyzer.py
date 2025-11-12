@@ -443,13 +443,19 @@ class SequentialAnalyzer:
         # Extract vulnerabilities from wherever they are
         for vuln in vulnerabilities:
             if isinstance(vuln, dict):
-                findings['vulnerabilities'].append({
+                vuln_dict = {
                     'type': vuln.get('title', vuln.get('vulnerability_type', 'Unknown')),
                     'severity': vuln.get('severity', 'unknown'),
                     'description': vuln.get('description', ''),
                     'line': vuln.get('line', vuln.get('line_number', 0)),
                     'confidence': vuln.get('confidence', 0.0)
-                })
+                }
+
+                # Preserve bug bounty assessment metadata if present
+                if 'bug_bounty_assessment' in vuln:
+                    vuln_dict['bug_bounty_assessment'] = vuln['bug_bounty_assessment']
+
+                findings['vulnerabilities'].append(vuln_dict)
 
                 # Update severity counts
                 severity = vuln.get('severity', 'unknown').lower()

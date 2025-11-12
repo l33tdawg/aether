@@ -218,12 +218,15 @@ class GitHubAuditReportGenerator:
                 
                 # Try both possible keys: 'vulnerabilities' (from enhanced analyzer) and 'findings' (legacy)
                 findings_list = findings_data.get('vulnerabilities', findings_data.get('findings', []))
-                
+
                 # Apply retroactive false positive filtering to clean up old database results
                 findings_list = self._filter_legacy_false_positives(findings_list, contract)
-                
+
                 # Apply post-processing: deduplication and severity calibration
                 findings_list = self._post_process_findings(findings_list, contract['file_path'])
+
+                # Apply bug bounty relevance assessment (retroactively for existing audits)
+                findings_list = self._apply_bug_bounty_assessment(findings_list, contract)
                 
                 findings_count = len(findings_list)
                 total_findings += findings_count
@@ -303,18 +306,43 @@ class GitHubAuditReportGenerator:
         
         # Summary by severity
         content += "## Findings by Severity\n\n"
-        
+
         severity_counts = defaultdict(int)
+        bug_bounty_counts = defaultdict(int)
+        total_bug_bounty_worthy = 0
+
         for contract in contracts:
             for finding in contract.findings:
                 severity = finding.get('severity', 'unknown').lower()
                 severity_counts[severity] += 1
-        
+
+                # Check for bug bounty assessment
+                bounty_assessment = finding.get('bug_bounty_assessment', {})
+                if bounty_assessment.get('is_relevant') and bounty_assessment.get('would_qualify'):
+                    total_bug_bounty_worthy += 1
+                    relevance_level = bounty_assessment.get('relevance_level', 'unknown')
+                    bug_bounty_counts[relevance_level] += 1
+
         for severity in ['critical', 'high', 'medium', 'low', 'info']:
             if severity in severity_counts:
                 content += f"- **{severity.title()}:** {severity_counts[severity]}\n"
-        
+
         content += "\n"
+
+        # Bug Bounty Ratings section
+        if total_bug_bounty_worthy > 0:
+            content += "## Bug Bounty Ratings\n\n"
+            content += f"**Total Bug Bounty Worthy Findings:** {total_bug_bounty_worthy}\n\n"
+
+            for level in ['accept', 'review', 'reject', 'code_quality']:
+                if level in bug_bounty_counts:
+                    emoji = {'accept': '🎯', 'review': '🔍', 'reject': '❌', 'code_quality': '📝'}.get(level, '❓')
+                    content += f"- **{emoji} {level.title()}:** {bug_bounty_counts[level]}\n"
+
+            content += "\n"
+        else:
+            content += "## Bug Bounty Ratings\n\n"
+            content += "No findings assessed as suitable for bug bounty submission.\n\n"
         
         # Detailed findings by contract
         content += "## Detailed Findings by Contract\n\n"
@@ -348,11 +376,28 @@ class GitHubAuditReportGenerator:
                     desc = finding.get('description', '')
                     confidence = finding.get('confidence', 0)
                     line = finding.get('line', finding.get('line_number', 'Unknown'))
-                    
+
+                    # Check for bug bounty assessment
+                    bounty_info = ""
+                    bounty_assessment = finding.get('bug_bounty_assessment', {})
+                    if bounty_assessment:
+                        relevance_level = bounty_assessment.get('relevance_level', 'unknown')
+                        impact_type = bounty_assessment.get('impact_type', 'unknown')
+                        exploitability_score = bounty_assessment.get('exploitability_score', 0)
+                        would_qualify = bounty_assessment.get('would_qualify', False)
+
+                        emoji = {'accept': '🎯', 'review': '🔍', 'reject': '❌', 'code_quality': '📝'}.get(relevance_level, '❓')
+
+                        bounty_info = f"- **Bug Bounty:** {emoji} {relevance_level.title()} | Impact: {impact_type} | Exploitability: {exploitability_score:.2f}"
+
+                        if would_qualify:
+                            bounty_info += " | **QUALIFIES FOR SUBMISSION**"
+
                     content += f"""**{title}**
 - Line: {line}
 - Confidence: {confidence:.1%}
 - Description: {desc}
+{bounty_info}
 
 """
         
@@ -406,12 +451,22 @@ The following {len(clean_contracts)} contracts had no findings:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = Path(output_dir) / f"audit_report_{project['repo_name']}_{timestamp}.html"
         
-        # Calculate severity stats
+        # Calculate severity stats and bug bounty stats
         severity_counts = defaultdict(int)
+        bug_bounty_counts = defaultdict(int)
+        total_bug_bounty_worthy = 0
+
         for contract in contracts:
             for finding in contract.findings:
                 severity = finding.get('severity', 'unknown').lower()
                 severity_counts[severity] += 1
+
+                # Check for bug bounty assessment
+                bounty_assessment = finding.get('bug_bounty_assessment', {})
+                if bounty_assessment.get('is_relevant') and bounty_assessment.get('would_qualify'):
+                    total_bug_bounty_worthy += 1
+                    relevance_level = bounty_assessment.get('relevance_level', 'unknown')
+                    bug_bounty_counts[relevance_level] += 1
         
         html = f"""<!DOCTYPE html>
 <html>
@@ -506,6 +561,10 @@ The following {len(clean_contracts)} contracts had no findings:
                 <div class="value severity-critical">{stats['high_severity_findings']}</div>
             </div>
             <div class="stat-card">
+                <h3 style="color: #10b981;">Bug Bounty Worthy</h3>
+                <div class="value" style="color: #10b981;">{total_bug_bounty_worthy}</div>
+            </div>
+            <div class="stat-card">
                 <h3>Analysis Time</h3>
                 <div class="value">{stats['average_analysis_time_ms']:.0f}ms avg</div>
             </div>
@@ -515,12 +574,21 @@ The following {len(clean_contracts)} contracts had no findings:
             <div class="contract-section">
                 <h2>📊 Findings Summary</h2>
 """
-        
+
         for severity in ['critical', 'high', 'medium', 'low', 'info']:
             count = severity_counts.get(severity, 0)
             if count > 0:
                 html += f'<p><span class="severity-{severity}">● {severity.title()}:</span> {count} findings</p>'
-        
+
+        # Bug Bounty Summary
+        if total_bug_bounty_worthy > 0:
+            html += '<h3>🎯 Bug Bounty Assessment</h3>'
+            for level in ['accept', 'review', 'reject', 'code_quality']:
+                count = bug_bounty_counts.get(level, 0)
+                if count > 0:
+                    emoji = {'accept': '🎯', 'review': '🔍', 'reject': '❌', 'code_quality': '📝'}.get(level, '❓')
+                    html += f'<p>{emoji} <strong>{level.title()}:</strong> {count} findings</p>'
+
         html += "</div></section>"
         
         # Findings by contract
@@ -541,12 +609,28 @@ The following {len(clean_contracts)} contracts had no findings:
                     desc = finding.get('description', '')
                     confidence = finding.get('confidence', 0)
                     line = finding.get('line', finding.get('line_number', 'Unknown'))
-                    
+
+                    # Check for bug bounty assessment
+                    bounty_info = ""
+                    bounty_assessment = finding.get('bug_bounty_assessment', {})
+                    if bounty_assessment:
+                        relevance_level = bounty_assessment.get('relevance_level', 'unknown')
+                        impact_type = bounty_assessment.get('impact_type', 'unknown')
+                        exploitability_score = bounty_assessment.get('exploitability_score', 0)
+                        would_qualify = bounty_assessment.get('would_qualify', False)
+
+                        emoji = {'accept': '🎯', 'review': '🔍', 'reject': '❌', 'code_quality': '📝'}.get(relevance_level, '❓')
+                        bounty_info = f'<div class="meta" style="margin-top: 5px; color: #059669; font-weight: bold;">{emoji} Bug Bounty: {relevance_level.title()} | Impact: {impact_type} | Exploitability: {exploitability_score:.2f}'
+                        if would_qualify:
+                            bounty_info += ' | <span style="color: #dc2626;">QUALIFIES FOR SUBMISSION</span>'
+                        bounty_info += '</div>'
+
                     html += f"""
             <div class="finding {severity}">
                 <h4><span class="severity-{severity}">●</span> {title}</h4>
                 <div class="meta">Line: <strong>{line}</strong> | Severity: <strong>{severity.title()}</strong> | Confidence: {confidence:.0%}</div>
                 <p>{desc}</p>
+                {bounty_info}
             </div>
 """
             
@@ -702,6 +786,68 @@ The following {len(clean_contracts)} contracts had no findings:
             print(f"   🔄 Deduplicated {removed} duplicate finding(s) in {Path(file_path).name}")
         
         return processed_dicts
+
+    def _apply_bug_bounty_assessment(
+        self,
+        findings: List[Dict[str, Any]],
+        contract: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Apply bug bounty relevance assessment to findings retroactively.
+
+        This is needed for existing audit data that wasn't processed through
+        the validation pipeline that includes bug bounty assessment.
+        """
+        if not findings:
+            return findings
+
+        # Try to load contract code for better assessment
+        contract_code = ""
+        contract_path = contract.get('file_path', '')
+
+        if contract_path and Path(contract_path).exists():
+            try:
+                with open(contract_path, 'r', encoding='utf-8') as f:
+                    contract_code = f.read()
+            except Exception:
+                pass  # Continue without contract code
+
+        # Import and use the bug bounty validator
+        try:
+            from core.bug_bounty_relevance_validator import BugBountyRelevanceValidator
+            validator = BugBountyRelevanceValidator()
+
+            assessed_findings = []
+            for finding in findings:
+                # Skip if already assessed (from main audit flow)
+                if finding.get('bug_bounty_assessment'):
+                    assessed_findings.append(finding)
+                    continue
+
+                # Apply retroactive assessment for legacy data
+                assessment = validator.validate(finding, contract_code)
+
+                # Add assessment metadata
+                finding['bug_bounty_assessment'] = {
+                    'is_relevant': assessment.is_relevant,
+                    'relevance_level': assessment.relevance_level.value,
+                    'impact_type': assessment.impact_type,
+                    'exploitability_score': assessment.exploitability_score,
+                    'would_qualify': assessment.would_qualify,
+                    'reasoning': assessment.reasoning,
+                }
+
+                assessed_findings.append(finding)
+
+            return assessed_findings
+
+        except ImportError:
+            # If validator not available, return findings unchanged
+            return findings
+        except Exception as e:
+            # If assessment fails, return findings unchanged
+            print(f"Warning: Bug bounty assessment failed for {contract_path}: {e}")
+            return findings
 
 
 if __name__ == "__main__":

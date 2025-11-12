@@ -18,16 +18,21 @@ from rich.console import Console
 from core.database_manager import AetherDatabase
 
 
-def _run(cmd: list[str], cwd: Optional[Union[str, Path]] = None) -> Tuple[int, str, str]:
-    process = subprocess.Popen(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    out, err = process.communicate()
-    return process.returncode, out, err
+def _run(cmd: list[str], cwd: Optional[Union[str, Path]] = None, timeout: int = 30) -> Tuple[int, str, str]:
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, 'GIT_ASKPASS': '/bin/echo'}  # Prevent interactive prompts
+        )
+        out, err = process.communicate(timeout=timeout)
+        return process.returncode, out, err
+    except subprocess.TimeoutExpired:
+        process.kill()
+        return -1, "", f"Command timed out after {timeout} seconds: {' '.join(cmd)}"
 
 
 def _strip_credentials(remote_url: str) -> str:
@@ -109,8 +114,12 @@ class RepositoryManager:
     def pull_updates(self, repo_path: Union[str, Path]) -> bool:
         code, out, err = _run(['git', 'pull', '--ff-only'], cwd=repo_path)
         if code != 0:
-            self.console.print(f"[yellow]⚠️ git pull failed: {err.strip()}[/yellow]")
-            return False
+            if code == -1:  # Timeout
+                self.console.print(f"[red]❌ git pull timed out: {err}[/red]")
+                return False
+            else:
+                self.console.print(f"[yellow]⚠️ git pull failed: {err.strip()}[/yellow]")
+                return False
         return True
 
     def is_cache_valid(self, repo_path: Union[str, Path], github_url: str) -> bool:
