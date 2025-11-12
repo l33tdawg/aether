@@ -149,11 +149,13 @@ class LLMFalsePositiveFilter:
                     self.last_validation_details['validated'].append(validated_vuln)
                     print(f"   ✓ REAL VULNERABILITY: {vuln.get('vulnerability_type', 'unknown')}")
                     print(f"      Confidence: {validation_result.confidence:.2f}")
-                    print(f"      Reason: {validation_result.reasoning[:120]}...")
+                    print(f"      Is False Positive (parsed): {validation_result.is_false_positive}")
+                    print(f"      Reason: {validation_result.reasoning[:200]}...")
                 else:
                     print(f"   ✗ FALSE POSITIVE: {vuln.get('vulnerability_type', 'unknown')}")
                     print(f"      Confidence: {validation_result.confidence:.2f}")
-                    print(f"      Reason: {validation_result.reasoning[:120]}...")
+                    print(f"      Is False Positive (parsed): {validation_result.is_false_positive}")
+                    print(f"      Reason: {validation_result.reasoning[:200]}...")
                     filtered_entry = vuln.copy()
                     filtered_entry['validation_confidence'] = validation_result.confidence
                     filtered_entry['validation_reasoning'] = validation_result.reasoning
@@ -167,6 +169,49 @@ class LLMFalsePositiveFilter:
                 logger.warning(f"Kept vulnerability due to validation error")
         
         logger.info(f"LLM validation: {len(validated_vulnerabilities)}/{len(vulnerabilities)} confirmed")
+        
+        # Stage 2: Bug bounty relevance assessment (AFTER LLM validation)
+        # This marks findings as bug-bounty-worthy but doesn't filter them
+        try:
+            from core.bug_bounty_relevance_validator import BugBountyRelevanceValidator
+            
+            logger.info("Assessing bug bounty relevance for validated findings...")
+            bounty_validator = BugBountyRelevanceValidator()
+            
+            for vuln in validated_vulnerabilities:
+                assessment = bounty_validator.validate(vuln, contract_code)
+                
+                # Add bug bounty assessment metadata (don't filter, just mark)
+                vuln['bug_bounty_assessment'] = {
+                    'is_relevant': assessment.is_relevant,
+                    'relevance_level': assessment.relevance_level.value,
+                    'impact_type': assessment.impact_type,
+                    'exploitability_score': assessment.exploitability_score,
+                    'would_qualify': assessment.would_qualify,
+                    'reasoning': assessment.reasoning,
+                }
+                
+                # Add visual marker for bug bounty worthy findings
+                if assessment.is_relevant and assessment.would_qualify:
+                    vuln['bug_bounty_worthy'] = True
+                    print(f"   🎯 BUG BOUNTY WORTHY: {vuln.get('vulnerability_type', 'unknown')}")
+                    print(f"      Impact: {assessment.impact_type}, Exploitability: {assessment.exploitability_score:.2f}")
+                elif assessment.relevance_level.value == 'review':
+                    vuln['bug_bounty_worthy'] = False
+                    vuln['bug_bounty_needs_review'] = True
+                    print(f"   ⚠️  NEEDS REVIEW: {vuln.get('vulnerability_type', 'unknown')} - {assessment.reasoning[0] if assessment.reasoning else 'Borderline case'}")
+                else:
+                    vuln['bug_bounty_worthy'] = False
+                    if assessment.downgrade_to:
+                        vuln['bug_bounty_downgrade'] = assessment.downgrade_to
+            
+            logger.info("Bug bounty assessment complete - all findings marked")
+            
+        except ImportError:
+            logger.warning("Bug bounty validator not available, skipping assessment")
+        except Exception as e:
+            logger.warning(f"Bug bounty assessment failed: {e}, continuing without assessment")
+        
         return validated_vulnerabilities
 
     def get_last_validation_details(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -847,6 +892,32 @@ Be STRICT: Only mark as REAL if you can describe exact exploitation steps.
         
         return "\n".join(findings)
     
+    def _clean_reasoning_text(self, reasoning: str) -> str:
+        """Clean reasoning text to remove JSON formatting and markdown code fences."""
+        import re
+        if not reasoning:
+            return 'No reasoning provided'
+        
+        # Remove markdown code fences (```json, ```, etc.)
+        reasoning = re.sub(r'```(?:json)?\s*', '', reasoning)
+        reasoning = re.sub(r'```\s*$', '', reasoning)
+        reasoning = reasoning.strip()
+        
+        # If reasoning contains a JSON object, try to extract just the reasoning field from it
+        # This handles cases where the LLM returns the full JSON in the reasoning field
+        json_match = re.search(r'\{[\s\S]*"reasoning"\s*:\s*"([^"]+)"[\s\S]*\}', reasoning)
+        if json_match:
+            # Extract the actual reasoning text from nested JSON
+            reasoning = json_match.group(1)
+        else:
+            # Remove any JSON-like structures that might be embedded
+            # Keep only the text content, not the JSON structure
+            reasoning = re.sub(r'\{"is_false_positive"\s*:\s*(?:true|false)[^}]*\}', '', reasoning)
+            reasoning = re.sub(r'"is_false_positive"\s*:\s*(?:true|false)[,\s]*', '', reasoning)
+            reasoning = re.sub(r'"confidence"\s*:\s*[\d.]+[,\s]*', '', reasoning)
+        
+        return reasoning.strip() or 'No reasoning provided'
+    
     def _parse_validation_response(self, response: str) -> ValidationResult:
         """Parse LLM validation response with governance-aware fields."""
         
@@ -856,10 +927,22 @@ Be STRICT: Only mark as REAL if you can describe exact exploitation steps.
             
             data = parse_llm_json(response, schema='fp_validation', fallback={})
             if data:
+                # Extract and clean the reasoning field
+                raw_reasoning = data.get('reasoning', 'No reasoning provided')
+                cleaned_reasoning = self._clean_reasoning_text(raw_reasoning)
+                
+                # Get the actual is_false_positive value (ensure it's a boolean)
+                is_fp = data.get('is_false_positive', False)
+                if isinstance(is_fp, str):
+                    # Handle string booleans
+                    is_fp = is_fp.lower() in ('true', '1', 'yes')
+                elif not isinstance(is_fp, bool):
+                    is_fp = bool(is_fp)
+                
                 return ValidationResult(
-                    is_false_positive=data.get('is_false_positive', False),
+                    is_false_positive=is_fp,
                     confidence=float(data.get('confidence', 0.5)),
-                    reasoning=data.get('reasoning', 'No reasoning provided'),
+                    reasoning=cleaned_reasoning,
                     corrected_severity=data.get('corrected_severity'),
                     corrected_description=data.get('corrected_description'),
                     governance_controlled=data.get('governance_controlled'),
@@ -869,10 +952,11 @@ Be STRICT: Only mark as REAL if you can describe exact exploitation steps.
             # Fallback parsing
             is_false_positive = 'false positive' in response.lower()
             confidence = 0.5
+            cleaned_reasoning = self._clean_reasoning_text(response[:500])
             return ValidationResult(
                 is_false_positive=is_false_positive,
                 confidence=confidence,
-                reasoning=response[:500]
+                reasoning=cleaned_reasoning
             )
                 
         except Exception as e:

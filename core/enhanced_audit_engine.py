@@ -343,7 +343,7 @@ class EnhancedAetherAuditEngine:
             slither = SlitherIntegration()
             
             if not slither.slither_available:
-                print("   ⚠️  Slither unavailable (macOS SIP restriction) - using enhanced detectors only", flush=True)
+                print("   ⚠️  Slither unavailable - using enhanced detectors only", flush=True)
                 return []
             
             all_findings = []

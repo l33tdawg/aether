@@ -251,6 +251,14 @@ class PrecisionAnalyzer:
             if code_snippet.startswith('import ') or code_snippet.startswith('//') or code_snippet.startswith('/*'):
                 continue
             
+            # Check if match is within an import statement (even if not at start of line)
+            if self._is_in_import_statement(contract_content, match.start(), lines, line_number):
+                continue
+            
+            # Check if match is within a string literal (import paths, file paths)
+            if self._is_in_string_literal(contract_content, match.start(), lines, line_number):
+                continue
+            
             # Check if this is a false positive
             if self._is_false_positive_precision(match, code_snippet):
                 continue
@@ -375,6 +383,65 @@ class PrecisionAnalyzer:
         
         return vulnerabilities
     
+    def _is_in_import_statement(self, contract_content: str, match_position: int, lines: List[str], line_number: int) -> bool:
+        """Check if the match is within an import statement"""
+        # Get the full line
+        if line_number < 1 or line_number > len(lines):
+            return False
+        
+        line_content = lines[line_number - 1]
+        
+        # Check if line contains 'import' keyword
+        if 'import' in line_content:
+            return True
+        
+        # Check if this is part of a multi-line import (look backwards)
+        for i in range(max(0, line_number - 3), line_number):
+            if i < len(lines) and 'import' in lines[i]:
+                # Check if the import statement continues to this line
+                prev_line = lines[i].strip()
+                if not prev_line.endswith(';') and not prev_line.endswith('}'):
+                    return True
+        
+        return False
+    
+    def _is_in_string_literal(self, contract_content: str, match_position: int, lines: List[str], line_number: int) -> bool:
+        """Check if the match is within a string literal (quotes, import paths, etc.)"""
+        if line_number < 1 or line_number > len(lines):
+            return False
+        
+        line_content = lines[line_number - 1]
+        match_text = contract_content[match_position:match_position + 20]  # Get context around match
+        
+        # Check if match is within quotes (single or double)
+        # Find the position of match within the line
+        line_start = contract_content.rfind('\n', 0, match_position)
+        if line_start == -1:
+            line_start = 0
+        position_in_line = match_position - line_start
+        
+        # Count quotes before the match position in this line
+        quotes_before = line_content[:position_in_line].count('"') + line_content[:position_in_line].count("'")
+        
+        # If odd number of quotes before, we're inside a string
+        if quotes_before % 2 == 1:
+            return True
+        
+        # Check for file path patterns (common in imports)
+        # Patterns like: "../", "./", ".sol", "/interfaces/", "/contracts/"
+        path_patterns = ['../', './', '.sol', '/interfaces/', '/contracts/', '/utils/', '/deploy/']
+        if any(pattern in line_content for pattern in path_patterns):
+            # If the match is near these patterns, it's likely a file path
+            for pattern in path_patterns:
+                pattern_pos = line_content.find(pattern)
+                if pattern_pos != -1:
+                    # Check if match is within reasonable distance of the path pattern
+                    match_pos_in_line = position_in_line
+                    if abs(match_pos_in_line - pattern_pos) < 50:  # Within 50 chars
+                        return True
+        
+        return False
+    
     def _is_false_positive_precision(self, match: re.Match, code_snippet: str) -> bool:
         """Check if precision detection is a false positive"""
         # Skip if using fixed-point arithmetic libraries
@@ -387,6 +454,10 @@ class PrecisionAnalyzer:
         
         # Skip if using WAD or RAY constants
         if 'WAD' in code_snippet or 'RAY' in code_snippet:
+            return True
+        
+        # Skip if this looks like a file path or import path
+        if any(pattern in code_snippet for pattern in ['../', './', '.sol', 'from "', "from '", 'import ']):
             return True
         
         return False

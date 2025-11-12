@@ -272,6 +272,11 @@ class ValidationPipeline:
             results.append(exploit_check)
             return results  # Early exit
         
+        # Stage 1.66: Bug bounty relevance check - REMOVED
+        # Bug bounty assessment now happens AFTER LLM validation (in llm_false_positive_filter.py)
+        # This allows all findings to be assessed by LLM first, then marked for bug bounty relevance
+        # No early filtering here - let LLM do its job first
+        
         # Stage 1.7: Enhanced access control chain check (AFTER exploitability)
         # Only filter if not front-runnable
         access_control_check = self._check_enhanced_access_control(vulnerability)
@@ -1494,6 +1499,10 @@ class ValidationPipeline:
             'confidence': 0.5,
             'reasoning': 'Cannot determine parameter origin'
         }
+    
+    # _check_bug_bounty_relevance method REMOVED
+    # Bug bounty assessment now happens AFTER LLM validation in llm_false_positive_filter.py
+    # This allows all findings to be assessed by LLM first, then marked for bug bounty relevance
     
     def _check_exploitability(self, vuln: Dict) -> Optional[ValidationStage]:
         """
