@@ -87,8 +87,13 @@ class BugBountyRelevanceValidator:
             "privilege_escalation",
             "logic_bypass",
             "reentrancy_exploit",
-            "oracle_manipulation",
+            "oracle_manipulation",  # Active oracle manipulation
             "access_control_bypass",
+        ]
+        
+        # Impact types that are borderline (resilience issues, not active exploits)
+        self.borderline_impacts = [
+            "oracle_stale_price",  # Passive - requires external failure
         ]
         
         # Impact types that don't qualify
@@ -193,6 +198,30 @@ class BugBountyRelevanceValidator:
                 exploitability_score=exploitability_score,
                 would_qualify=True
             )
+        
+        # NEW: Check for borderline impacts (resilience issues)
+        if impact_type in self.borderline_impacts:
+            if exploitability_score < 0.4:
+                reasoning.append(f"Resilience issue ({impact_type}) with low exploitability ({exploitability_score:.2f}) - requires external failure")
+                return BugBountyAssessment(
+                    is_relevant=False,
+                    relevance_level=BugBountyRelevance.REVIEW,
+                    reasoning=reasoning,
+                    impact_type=impact_type,
+                    exploitability_score=exploitability_score,
+                    would_qualify=False,
+                    downgrade_to="informational"
+                )
+            else:
+                reasoning.append(f"Resilience issue ({impact_type}) - borderline case, passing to LLM validation")
+                return BugBountyAssessment(
+                    is_relevant=True,
+                    relevance_level=BugBountyRelevance.REVIEW,
+                    reasoning=reasoning,
+                    impact_type=impact_type,
+                    exploitability_score=exploitability_score,
+                    would_qualify=False
+                )
         
         # Borderline case - DON'T filter, let LLM validation handle it
         # This allows LLM to make the final decision on unclear cases
@@ -373,6 +402,17 @@ class BugBountyRelevanceValidator:
         if 'reentrancy' in vulnerability_type or 'reentrancy' in description:
             return 'reentrancy_exploit'
         
+        # Oracle manipulation (active)
+        if any(term in description for term in ['oracle manipulation', 'price manipulation', 'oracle attack']):
+            # Check if it's passive (stale price) vs active (manipulation)
+            if any(term in description for term in ['stale', 'oracle failure', 'oracle stops', 'feed stops']):
+                return 'oracle_stale_price'  # Passive - resilience issue
+            return 'oracle_manipulation'  # Active - exploitable
+        
+        # Stale price / oracle resilience (passive)
+        if any(term in description for term in ['stale price', 'stale data', 'oracle failure', 'feed stops updating']):
+            return 'oracle_stale_price'
+        
         # Gas waste
         if any(term in description for term in ['gas waste', 'wasted gas', 'gas optimization']):
             return 'gas_waste'
@@ -396,6 +436,11 @@ class BugBountyRelevanceValidator:
         Calculate exploitability score (0.0 - 1.0).
         
         Higher score = more exploitable.
+        
+        Now includes detection of:
+        - External dependencies (oracle failures, network issues)
+        - Passive vs active exploits
+        - Attacker control over trigger conditions
         """
         score = 0.5  # Base score
         
@@ -411,32 +456,125 @@ class BugBountyRelevanceValidator:
         elif severity == 'medium':
             score += 0.1
         
-        # Exploitability indicators
-        if any(term in description for term in ['can be exploited', 'exploitable', 'attack vector']):
-            score += 0.2
+        # NEW: Check for external dependencies (passive exploits)
+        external_dependency_keywords = [
+            'requires external',
+            'oracle failure',
+            'oracle outage',
+            'feed stops updating',
+            'feed stops',
+            'oracle stops',
+            'network issue',
+            'external event',
+            'out of attacker control',
+            'attacker cannot trigger',
+            'attacker cannot cause',
+            'requires chainlink',
+            'requires oracle',
+            'if the oracle',
+            'if oracle',
+            'when oracle',
+            'when the oracle',
+            'passive exploitation',
+            'waiting for',
+            'depends on external',
+            'external dependency',
+            'external failure',
+            'third-party failure',
+            'infrastructure failure',
+        ]
         
-        # External access boost
+        has_external_dependency = any(keyword in description for keyword in external_dependency_keywords)
+        
+        # NEW: Check for active exploit indicators
+        active_exploit_keywords = [
+            'attacker can',
+            'attacker can directly',
+            'can be triggered',
+            'can trigger',
+            'directly exploitable',
+            'active exploit',
+            'attacker controls',
+            'attacker manipulates',
+            'attacker causes',
+            'attacker forces',
+            'attacker initiates',
+        ]
+        
+        has_active_exploit = any(keyword in description for keyword in active_exploit_keywords)
+        
+        # NEW: Apply external dependency penalty
+        if has_external_dependency:
+            # Strong penalty for passive exploits
+            score -= 0.4
+            logger.debug(f"External dependency detected - reducing exploitability by 0.4")
+        
+        # NEW: Apply active exploit boost (only if no external dependency)
+        if has_active_exploit and not has_external_dependency:
+            score += 0.2
+            logger.debug(f"Active exploit detected - boosting exploitability by 0.2")
+        
+        # Exploitability indicators (existing logic)
+        if any(term in description for term in ['can be exploited', 'exploitable', 'attack vector']):
+            # Only boost if it's an active exploit, not passive
+            if not has_external_dependency:
+                score += 0.2
+            else:
+                # Small boost for passive exploits (they're still exploitable, just not actively)
+                score += 0.05
+        
+        # External access boost (existing logic)
         if 'external' in description or 'public' in description:
             if 'admin' not in description and 'owner' not in description:
-                score += 0.2
+                # Only boost if no external dependency (external access doesn't help if attacker can't trigger condition)
+                if not has_external_dependency:
+                    score += 0.2
+                else:
+                    # Small boost - external access helps but condition still requires external event
+                    score += 0.05
         
-        # Internal function penalty
+        # Internal function penalty (existing logic)
         if 'internal' in description:
             score -= 0.3
         
-        # Admin-only penalty
+        # Admin-only penalty (existing logic)
         if any(term in description for term in ['admin', 'owner', 'governance']):
             score -= 0.4
         
-        # Failsafe penalty
+        # Failsafe penalty (existing logic)
         if any(term in description for term in ['will fail', 'will revert', 'fails safely']):
             score -= 0.5
         
-        # Code quality penalty
+        # Code quality penalty (existing logic)
         if any(term in description for term in ['code quality', 'best practice', 'developer experience']):
             score -= 0.4
         
-        return max(0.0, min(1.0, score))
+        # NEW: Additional penalty if description explicitly says attacker cannot trigger
+        cannot_trigger_keywords = [
+            'attacker cannot trigger',
+            'attacker cannot cause',
+            'attacker has no control',
+            'requires external failure',
+            'cannot be actively exploited',
+            'passive only',
+        ]
+        
+        if any(keyword in description for keyword in cannot_trigger_keywords):
+            score -= 0.3
+            logger.debug(f"Attacker cannot trigger condition - reducing exploitability by 0.3")
+        
+        # Ensure score is within bounds
+        final_score = max(0.0, min(1.0, score))
+        
+        # Log reasoning for debugging
+        if has_external_dependency:
+            logger.debug(f"Exploitability score: {final_score:.2f} (external dependency detected - passive exploit)")
+        elif has_active_exploit:
+            logger.debug(f"Exploitability score: {final_score:.2f} (active exploit detected)")
+        else:
+            logger.debug(f"Exploitability score: {final_score:.2f}")
+        
+        return final_score
     
     def filter_findings(self, findings: List[Dict[str, Any]], contract_code: str = "") -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
