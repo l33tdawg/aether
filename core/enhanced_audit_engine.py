@@ -68,14 +68,25 @@ class EnhancedAetherAuditEngine:
             'learning_feedback_entries': 0
         }
 
-    async def run_audit(self, contract_path: str, flow_config: Dict[str, Any], foundry_validation: bool = False, enhanced: bool = True, phase3: bool = False, llm_validation: bool = False, ai_ensemble: bool = False) -> Dict[str, Any]:
-        """Run enhanced audit with validation."""
+    async def run_audit(self, contract_path: str, flow_config: Dict[str, Any], foundry_validation: bool = False, enhanced: bool = True, phase3: bool = False, llm_validation: bool = False, ai_ensemble: bool = False, selected_contracts: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Run enhanced audit with validation.
+        
+        Args:
+            contract_path: Path to contract file or directory
+            flow_config: Audit flow configuration
+            foundry_validation: Enable Foundry validation
+            enhanced: Use enhanced analysis
+            phase3: Enable Phase 3 features
+            llm_validation: Enable LLM validation
+            ai_ensemble: Enable AI ensemble
+            selected_contracts: Optional list of specific contract file paths to audit (filters directory contents)
+        """
         print("🚀 Starting enhanced AetherAudit...", flush=True)
         start_time = time.time()
         
         try:
             # Step 1: Read contract files
-            contract_files = self._read_contract_files(contract_path)
+            contract_files = self._read_contract_files(contract_path, selected_contracts=selected_contracts)
             if not contract_files:
                 return {'error': 'No contract files found'}
             
@@ -115,8 +126,13 @@ class EnhancedAetherAuditEngine:
                 traceback.print_exc()
             return {'error': str(e)}
 
-    def _read_contract_files(self, contract_path: str) -> List[Dict[str, Any]]:
-        """Read contract files with enhanced error handling."""
+    def _read_contract_files(self, contract_path: str, selected_contracts: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Read contract files with enhanced error handling.
+        
+        Args:
+            contract_path: Path to contract file or directory
+            selected_contracts: Optional list of specific contract file paths to include (filters directory contents)
+        """
         contract_files = []
         
         if os.path.isfile(contract_path):
@@ -132,11 +148,18 @@ class EnhancedAetherAuditEngine:
             except Exception as e:
                 print(f"❌ Error reading contract file: {e}")
         elif os.path.isdir(contract_path):
-            # Directory
+            # Directory - filter by selected_contracts if provided
+            selected_set = set(selected_contracts) if selected_contracts else None
+            
             for root, dirs, files in os.walk(contract_path):
                 for file in files:
                     if file.endswith('.sol'):
                         file_path = os.path.join(root, file)
+                        
+                        # Filter by selected_contracts if provided
+                        if selected_set is not None and file_path not in selected_set:
+                            continue
+                        
                         try:
                             with open(file_path, 'r', encoding='utf-8') as f:
                                 content = f.read()

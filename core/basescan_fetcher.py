@@ -27,6 +27,8 @@ class BasescanFetcher:
         self.config_manager = config_manager or ConfigManager()
         self.api_key = self.config_manager.config.etherscan_api_key  # Use same API key
         self.base_url = "https://api.basescan.org/v2/api"
+        self.default_contracts_dir = Path.home() / '.aether' / 'contracts'
+        self.default_contracts_dir.mkdir(parents=True, exist_ok=True)
 
     def is_basescan_address(self, address: str) -> bool:
         """Check if the input is a Basescan address."""
@@ -135,8 +137,12 @@ class BasescanFetcher:
         except Exception as e:
             return {'error': f'Error fetching contract source: {e}'}
 
-    def save_contract_source(self, contract_data: Dict[str, Any], output_dir: str = "temp_contracts") -> str:
+    def save_contract_source(self, contract_data: Dict[str, Any], output_dir: Optional[str] = None) -> str:
         """Save contract source code to files."""
+        # Use default contracts directory if not specified
+        if output_dir is None:
+            output_dir = str(self.default_contracts_dir)
+        
         os.makedirs(output_dir, exist_ok=True)
         
         contract_name = contract_data.get('contract_name', 'UnknownContract')
@@ -193,7 +199,7 @@ class BasescanFetcher:
             self.console.print(f"[green]✅ Contract source saved to: {filepath}[/green]")
             return filepath
 
-    def fetch_and_save_contract(self, address: str, output_dir: str = "temp_contracts") -> Tuple[bool, str, Dict[str, Any]]:
+    def fetch_and_save_contract(self, address: str, output_dir: Optional[str] = None) -> Tuple[bool, str, Dict[str, Any]]:
         """Fetch contract source code and save it to files."""
         contract_data = self.fetch_contract_source(address)
         

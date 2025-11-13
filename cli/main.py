@@ -13,7 +13,7 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 
 import yaml
 
@@ -72,8 +72,13 @@ class AetherCLI:
         
         return None
 
-    def _handle_etherscan_address(self, address: str) -> Optional[str]:
-        """Handle Etherscan address by fetching contract source code."""
+    def _handle_etherscan_address(self, address: str, interactive_scope: bool = False) -> Optional[Union[str, Dict[str, Any]]]:
+        """Handle Etherscan address by fetching contract source code.
+        
+        Returns:
+            - str: Path to contract file/directory if single contract or no selection needed
+            - Dict: {'path': str, 'contracts': List[Dict]} if multiple contracts found and selection needed
+        """
         if not self.etherscan_fetcher.is_etherscan_address(address):
             return None
 
@@ -115,7 +120,118 @@ class AetherCLI:
         print(f"📝 Stored contract metadata: {self._etherscan_contract_metadata['contract_name']} at {self._etherscan_contract_metadata['contract_address']}")
 
         print(f"✅ Contract source saved to: {result}")
-        return result
+        
+        # Check if result is a directory (multi-file contract) or single file
+        from pathlib import Path
+        result_path = Path(result)
+        
+        if result_path.is_dir():
+            # Multi-file contract - discover all .sol files
+            discovered_contracts = []
+            
+            # Patterns to identify library/dependency contracts (should be filtered out)
+            library_patterns = [
+                'openzeppelin',
+                'lib/',
+                'interfaces/',
+                'utils/',
+                'libraries/',
+                'vendor/',
+                'test/',
+                'tests/',
+                'mock',
+                'Mock',
+                'Test',
+                'test_',
+                'Test_'
+            ]
+            
+            # Track seen contracts to avoid duplicates
+            # Use dict to store best path for each contract (prefer contracts/ directory)
+            contract_map = {}  # contract_name -> contract_info
+            
+            for sol_file in result_path.rglob("*.sol"):
+                rel_path = str(sol_file.relative_to(result_path))
+                file_path_str = str(sol_file)
+                
+                # Skip library/dependency contracts
+                is_library = any(pattern.lower() in file_path_str.lower() or pattern.lower() in rel_path.lower() 
+                               for pattern in library_patterns)
+                
+                # Skip if it's a library file
+                if is_library:
+                    continue
+                
+                # Extract contract name and check if it's a library/interface
+                try:
+                    content = sol_file.read_text(encoding='utf-8', errors='ignore')
+                    import re
+                    
+                    # Check if it's an interface or library (skip these)
+                    if re.search(r'\b(interface|library)\s+\w+', content, re.IGNORECASE):
+                        continue
+                    
+                    # Check if file contains only library/interface definitions
+                    contract_declarations = re.findall(r'\b(contract|interface|library|abstract\s+contract)\s+(\w+)', content, re.IGNORECASE)
+                    if contract_declarations:
+                        # If all declarations are interfaces/libraries, skip
+                        if all(decl[0].lower() in ['interface', 'library'] for decl in contract_declarations):
+                            continue
+                    
+                    contract_match = re.search(r'contract\s+(\w+)', content)
+                    contract_name = contract_match.group(1) if contract_match else sol_file.stem
+                    
+                    # Create a unique key based on contract name to avoid duplicates
+                    contract_key = contract_name.lower()
+                    
+                    # Prefer contracts in contracts/ directory over flattened ones
+                    is_in_contracts_dir = 'contracts/' in rel_path
+                    existing = contract_map.get(contract_key)
+                    
+                    if existing:
+                        # If we already have one, prefer the one in contracts/ directory
+                        existing_in_contracts = 'contracts/' in existing['relative_path']
+                        if is_in_contracts_dir and not existing_in_contracts:
+                            # Replace flattened with contracts/ version
+                            contract_map[contract_key] = {
+                                'file_path': str(sol_file),
+                                'contract_name': contract_name,
+                                'relative_path': rel_path
+                            }
+                        # Otherwise keep existing (either both in contracts/ or existing is better)
+                    else:
+                        # First time seeing this contract
+                        contract_map[contract_key] = {
+                            'file_path': str(sol_file),
+                            'contract_name': contract_name,
+                            'relative_path': rel_path
+                        }
+                except:
+                    contract_name = sol_file.stem
+                    contract_key = contract_name.lower()
+                    if contract_key not in contract_map:
+                        contract_map[contract_key] = {
+                            'file_path': str(sol_file),
+                            'contract_name': contract_name,
+                            'relative_path': rel_path
+                        }
+            
+            # Convert map to list
+            discovered_contracts = list(contract_map.values())
+            
+            if len(discovered_contracts) > 1 and interactive_scope:
+                # Return info for contract selection
+                return {
+                    'path': str(result_path),
+                    'contracts': discovered_contracts,
+                    'is_multi_file': True
+                }
+            else:
+                # Return directory path - will audit all contracts
+                return result
+        else:
+            # Single file contract
+            return result
 
     def _handle_basescan_address(self, address: str) -> Optional[str]:
         """Handle Basescan address by fetching contract source code."""
@@ -880,7 +996,8 @@ class AetherCLI:
         compliance_only: bool = False,
         export_formats: List[str] = None,
         foundry: bool = False,
-        llm_validation: bool = False
+        llm_validation: bool = False,
+        interactive_scope: bool = False
     ) -> int:
         """Run AetherAudit static analysis and AI reasoning."""
         print("🚀 Starting AetherAudit...")
@@ -888,8 +1005,32 @@ class AetherCLI:
         print(f"⚙️  Flow: {flow_config}")
 
         # Check if contract_path is an Etherscan or Basescan address
-        actual_contract_path = self._handle_etherscan_address(contract_path)
-        if actual_contract_path is None:
+        etherscan_result = self._handle_etherscan_address(contract_path, interactive_scope=interactive_scope)
+        
+        # Handle contract selection for multi-file contracts
+        selected_contracts = None
+        if isinstance(etherscan_result, dict) and etherscan_result.get('is_multi_file'):
+            # Multiple contracts found - show selector
+            from core.github_auditor import ScopeSelector
+            scope_selector = ScopeSelector()
+            
+            discovered_contracts = etherscan_result['contracts']
+            print(f"\n📋 Found {len(discovered_contracts)} contracts in multi-file contract")
+            
+            # Show contract selector
+            selected_paths = scope_selector.select_scope(discovered_contracts)
+            if not selected_paths:
+                print("[red]No contracts selected. Audit cancelled.[/red]")
+                return 1
+            
+            # Use the base directory and selected contracts
+            contract_path = etherscan_result['path']
+            selected_contracts = selected_paths
+            print(f"[green]Auditing {len(selected_paths)} selected contracts out of {len(discovered_contracts)} discovered[/green]\n")
+        elif etherscan_result is not None:
+            # Single contract or directory (all contracts)
+            contract_path = etherscan_result
+        else:
             # Try Basescan
             actual_contract_path = self._handle_basescan_address(contract_path)
             if actual_contract_path is None:
@@ -898,9 +1039,6 @@ class AetherCLI:
             else:
                 # Update contract_path to the fetched file path
                 contract_path = actual_contract_path
-        else:
-            # Update contract_path to the fetched file path
-            contract_path = actual_contract_path
 
         try:
             # Load flow configuration
@@ -978,7 +1116,8 @@ class AetherCLI:
                     enhanced=enhanced,
                     phase3=phase3,
                     ai_ensemble=ai_ensemble,
-                    llm_validation=llm_validation
+                    llm_validation=llm_validation,
+                    selected_contracts=selected_contracts
                 )
 
             # Generate report

@@ -120,8 +120,10 @@ class EtherscanFetcher:
         self.console = Console()
         self.config_manager = config_manager or ConfigManager()
         self.api_key = self.config_manager.config.etherscan_api_key
-        self.cache_dir = Path.home() / '.bugbounty' / 'etherscan_cache'
+        self.cache_dir = Path.home() / '.aether' / 'etherscan_cache'
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.default_contracts_dir = Path.home() / '.aether' / 'contracts'
+        self.default_contracts_dir.mkdir(parents=True, exist_ok=True)
         self.request_delay = 0.2  # Rate limiting delay between requests
 
         # Set default network
@@ -286,10 +288,25 @@ class EtherscanFetcher:
         except Exception as e:
             self.console.print(f"[yellow]⚠️ Failed to save cache: {e}[/yellow]")
 
-    def fetch_contract_source(self, address: str, network: Optional[str] = None) -> Dict[str, Any]:
-        """Fetch contract source code from specified network."""
+    def fetch_contract_source(self, address: str, network: Optional[str] = None, _visited: Optional[set] = None) -> Dict[str, Any]:
+        """Fetch contract source code from specified network.
+        
+        Args:
+            address: Contract address to fetch
+            network: Network name (optional)
+            _visited: Internal parameter to prevent infinite recursion when fetching proxy/implementation contracts
+        """
         if not self.is_etherscan_address(address):
             return {'error': f'Invalid Ethereum address format: {address}'}
+        
+        # Prevent infinite recursion when fetching proxy/implementation contracts
+        if _visited is None:
+            _visited = set()
+        
+        if address.lower() in _visited:
+            return {'error': f'Circular reference detected for address {address}'}
+        
+        _visited.add(address.lower())
 
         if not self.api_key:
             return {'error': 'Etherscan API key not configured. Use config.set_etherscan_key() to set it.'}
@@ -303,6 +320,37 @@ class EtherscanFetcher:
         cached_data = self._load_from_cache(address, target_network)
         if cached_data:
             self.console.print(f"[green]📋 Using cached data for {address} on {self.SUPPORTED_NETWORKS[target_network]['name']}[/green]")
+            # Ensure cached data has all_contracts field for backward compatibility
+            if 'all_contracts' not in cached_data and cached_data.get('source_code'):
+                # Reconstruct all_contracts from cached data
+                source_code = cached_data.get('source_code', '')
+                is_multi_file = source_code.startswith('{')
+                if is_multi_file:
+                    try:
+                        source_json = json.loads(source_code)
+                        if 'sources' in source_json:
+                            file_count = len(source_json.get('sources', {}))
+                            self.console.print(f"[blue]📁 Cached multi-file contract with {file_count} Solidity files[/blue]")
+                    except json.JSONDecodeError:
+                        pass
+                cached_data['all_contracts'] = [{
+                    'source_code': cached_data.get('source_code', ''),
+                    'contract_name': cached_data.get('contract_name', 'UnknownContract'),
+                    'address': cached_data.get('address', address),
+                    'abi': cached_data.get('abi', ''),
+                    'compiler_version': cached_data.get('compiler_version', ''),
+                    'optimization': cached_data.get('optimization', ''),
+                    'runs': cached_data.get('runs', ''),
+                    'constructor_args': cached_data.get('constructor_args', ''),
+                    'evm_version': cached_data.get('evm_version', ''),
+                    'library': cached_data.get('library', ''),
+                    'license': cached_data.get('license', ''),
+                    'proxy': cached_data.get('proxy', ''),
+                    'implementation': cached_data.get('implementation', ''),
+                    'swarm_source': cached_data.get('swarm_source', ''),
+                    'metadata': cached_data.get('metadata', {})
+                }]
+                cached_data['contract_count'] = 1
             return cached_data
 
         self.console.print(f"[cyan]🔍 Fetching contract source code for {address} on {self.SUPPORTED_NETWORKS[target_network]['name']}...[/cyan]")
@@ -342,38 +390,165 @@ class EtherscanFetcher:
             if not result:
                 return {'error': 'No contract data found'}
 
-            contract_data = result[0]
+            # Process all contracts returned (can be multiple for proxy/implementation pairs)
+            contracts_found = []
+            for idx, contract_data in enumerate(result):
+                if not contract_data.get('SourceCode'):
+                    if idx == 0:
+                        # Only error if the first (primary) contract has no source
+                        return {'error': 'Contract source code is not available (not verified)'}
+                    else:
+                        # Skip secondary contracts without source
+                        continue
 
-            if not contract_data.get('SourceCode'):
-                return {'error': 'Contract source code is not available (not verified)'}
+                source_code = contract_data['SourceCode']
+                contract_name = contract_data.get('ContractName', 'UnknownContract')
+                contract_address = contract_data.get('ContractAddress', address)
 
-            source_code = contract_data['SourceCode']
-            contract_name = contract_data.get('ContractName', 'UnknownContract')
+                # Check if this is a multi-file contract (Standard JSON Input format)
+                is_multi_file = False
+                file_count = 0
+                if source_code.startswith('{'):
+                    try:
+                        source_json = json.loads(source_code)
+                        if 'sources' in source_json:
+                            is_multi_file = True
+                            file_count = len(source_json.get('sources', {}))
+                    except json.JSONDecodeError:
+                        pass
 
-            self.console.print(f"[green]✅ Successfully fetched contract: {contract_name}[/green]")
-            self.console.print(f"[blue]📄 Source code length: {len(source_code)} characters[/blue]")
+                if idx == 0:
+                    self.console.print(f"[green]✅ Successfully fetched contract: {contract_name}[/green]")
+                    if is_multi_file:
+                        self.console.print(f"[blue]📁 Multi-file contract with {file_count} Solidity files[/blue]")
+                    else:
+                        self.console.print(f"[blue]📄 Source code length: {len(source_code)} characters[/blue]")
+                else:
+                    if is_multi_file:
+                        self.console.print(f"[green]✅ Found additional contract: {contract_name} at {contract_address} ({file_count} files)[/green]")
+                    else:
+                        self.console.print(f"[green]✅ Found additional contract: {contract_name} at {contract_address}[/green]")
 
-            # Prepare result data
+                # Prepare contract data
+                contract_info = {
+                    'source_code': source_code,
+                    'contract_name': contract_name,
+                    'address': contract_address,
+                    'abi': contract_data.get('ABI', ''),
+                    'compiler_version': contract_data.get('CompilerVersion', ''),
+                    'optimization': contract_data.get('OptimizationUsed', ''),
+                    'runs': contract_data.get('Runs', ''),
+                    'constructor_args': contract_data.get('ConstructorArguments', ''),
+                    'evm_version': contract_data.get('EVMVersion', ''),
+                    'library': contract_data.get('Library', ''),
+                    'license': contract_data.get('LicenseType', ''),
+                    'proxy': contract_data.get('Proxy', ''),
+                    'implementation': contract_data.get('Implementation', ''),
+                    'swarm_source': contract_data.get('SwarmSource', ''),
+                    'metadata': contract_data
+                }
+                contracts_found.append(contract_info)
+
+            if not contracts_found:
+                return {'error': 'No verified contracts found'}
+
+            # Use the first contract as primary (for backward compatibility)
+            primary_contract = contracts_found[0]
+            
+            # Prepare result data (backward compatible format)
             result_data = {
                 'success': True,
-                'source_code': source_code,
-                'contract_name': contract_name,
-                'address': address,
+                'source_code': primary_contract['source_code'],
+                'contract_name': primary_contract['contract_name'],
+                'address': primary_contract['address'],
                 'network': target_network,
                 'chain_id': chain_id,
-                'abi': contract_data.get('ABI', ''),
-                'compiler_version': contract_data.get('CompilerVersion', ''),
-                'optimization': contract_data.get('OptimizationUsed', ''),
-                'runs': contract_data.get('Runs', ''),
-                'constructor_args': contract_data.get('ConstructorArguments', ''),
-                'evm_version': contract_data.get('EVMVersion', ''),
-                'library': contract_data.get('Library', ''),
-                'license': contract_data.get('LicenseType', ''),
-                'proxy': contract_data.get('Proxy', ''),
-                'implementation': contract_data.get('Implementation', ''),
-                'swarm_source': contract_data.get('SwarmSource', ''),
-                'metadata': contract_data
+                'abi': primary_contract['abi'],
+                'compiler_version': primary_contract['compiler_version'],
+                'optimization': primary_contract['optimization'],
+                'runs': primary_contract['runs'],
+                'constructor_args': primary_contract['constructor_args'],
+                'evm_version': primary_contract['evm_version'],
+                'library': primary_contract['library'],
+                'license': primary_contract['license'],
+                'proxy': primary_contract['proxy'],
+                'implementation': primary_contract['implementation'],
+                'swarm_source': primary_contract['swarm_source'],
+                'metadata': primary_contract['metadata'],
+                # New: include all contracts found
+                'all_contracts': contracts_found,
+                'contract_count': len(contracts_found)
             }
+
+            if len(contracts_found) > 1:
+                self.console.print(f"[blue]📦 Found {len(contracts_found)} contracts total[/blue]")
+
+            # Check for proxy/implementation relationships and fetch those contracts too
+            proxy_address = primary_contract.get('proxy', '')
+            implementation_address = primary_contract.get('implementation', '')
+            
+            if proxy_address and proxy_address != '0' and proxy_address.lower() != address.lower():
+                self.console.print(f"[blue]🔗 Detected proxy contract: {proxy_address}[/blue]")
+                try:
+                    proxy_data = self.fetch_contract_source(proxy_address, target_network, _visited)
+                    if proxy_data.get('success'):
+                        proxy_contract = {
+                            'source_code': proxy_data['source_code'],
+                            'contract_name': proxy_data['contract_name'],
+                            'address': proxy_address,
+                            'abi': proxy_data.get('abi', ''),
+                            'compiler_version': proxy_data.get('compiler_version', ''),
+                            'optimization': proxy_data.get('optimization', ''),
+                            'runs': proxy_data.get('runs', ''),
+                            'constructor_args': proxy_data.get('constructor_args', ''),
+                            'evm_version': proxy_data.get('evm_version', ''),
+                            'library': proxy_data.get('library', ''),
+                            'license': proxy_data.get('license', ''),
+                            'proxy': proxy_data.get('proxy', ''),
+                            'implementation': proxy_data.get('implementation', ''),
+                            'swarm_source': proxy_data.get('swarm_source', ''),
+                            'metadata': proxy_data.get('metadata', {}),
+                            'is_proxy': True
+                        }
+                        contracts_found.append(proxy_contract)
+                        self.console.print(f"[green]✅ Fetched proxy contract: {proxy_data['contract_name']}[/green]")
+                except Exception as e:
+                    self.console.print(f"[yellow]⚠️ Failed to fetch proxy contract: {e}[/yellow]")
+            
+            if implementation_address and implementation_address != '0' and implementation_address.lower() != address.lower():
+                self.console.print(f"[blue]🔗 Detected implementation contract: {implementation_address}[/blue]")
+                try:
+                    impl_data = self.fetch_contract_source(implementation_address, target_network, _visited)
+                    if impl_data.get('success'):
+                        impl_contract = {
+                            'source_code': impl_data['source_code'],
+                            'contract_name': impl_data['contract_name'],
+                            'address': implementation_address,
+                            'abi': impl_data.get('abi', ''),
+                            'compiler_version': impl_data.get('compiler_version', ''),
+                            'optimization': impl_data.get('optimization', ''),
+                            'runs': impl_data.get('runs', ''),
+                            'constructor_args': impl_data.get('constructor_args', ''),
+                            'evm_version': impl_data.get('evm_version', ''),
+                            'library': impl_data.get('library', ''),
+                            'license': impl_data.get('license', ''),
+                            'proxy': impl_data.get('proxy', ''),
+                            'implementation': impl_data.get('implementation', ''),
+                            'swarm_source': impl_data.get('swarm_source', ''),
+                            'metadata': impl_data.get('metadata', {}),
+                            'is_implementation': True
+                        }
+                        contracts_found.append(impl_contract)
+                        self.console.print(f"[green]✅ Fetched implementation contract: {impl_data['contract_name']}[/green]")
+                except Exception as e:
+                    self.console.print(f"[yellow]⚠️ Failed to fetch implementation contract: {e}[/yellow]")
+
+            # Update result_data with all contracts found (including proxy/implementation)
+            result_data['all_contracts'] = contracts_found
+            result_data['contract_count'] = len(contracts_found)
+            
+            if len(contracts_found) > 1:
+                self.console.print(f"[blue]📦 Found {len(contracts_found)} contracts total (including proxy/implementation)[/blue]")
 
             # Save to cache
             self._save_to_cache(address, target_network, result_data)
@@ -387,13 +562,158 @@ class EtherscanFetcher:
         except Exception as e:
             return {'error': f'Unexpected error: {e}'}
 
-    def save_contract_source(self, contract_data: Dict[str, Any], output_dir: str = "temp_contracts") -> str:
-        """Save contract source code to files."""
+    def save_contract_source(self, contract_data: Dict[str, Any], output_dir: Optional[str] = None) -> str:
+        """Save contract source code to files. If multiple contracts are found, saves all of them."""
         if not contract_data.get('success'):
             raise ValueError(f"Cannot save contract: {contract_data.get('error', 'Unknown error')}")
 
+        # Use default contracts directory if not specified
+        if output_dir is None:
+            output_dir = str(self.default_contracts_dir)
+        
         os.makedirs(output_dir, exist_ok=True)
 
+        # Check if there are multiple contracts to save
+        all_contracts = contract_data.get('all_contracts', [])
+        if all_contracts and len(all_contracts) > 1:
+            # Save all contracts
+            saved_paths = []
+            for contract_info in all_contracts:
+                contract_name = contract_info.get('contract_name', 'UnknownContract')
+                address = contract_info.get('address', 'unknown')
+                source_code = contract_info.get('source_code', '')
+
+                # Clean contract name for filename
+                safe_name = "".join(c for c in contract_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_name = safe_name.replace(' ', '_')
+
+                # Handle multi-file contracts
+                if source_code.startswith('{'):
+                    source_json = None
+                    json_str = source_code.strip()
+                    
+                    # Handle double-brace case
+                    if json_str.startswith('{{') and json_str.endswith('}}'):
+                        json_str = json_str[1:-1]
+                    
+                    # Try parsing with improved error handling
+                    for attempt in [json_str, source_code.strip()]:
+                        try:
+                            parsed = json.loads(attempt)
+                            if isinstance(parsed, dict) and 'sources' in parsed:
+                                source_json = parsed
+                                break
+                        except json.JSONDecodeError as e:
+                            if 'Extra data' in str(e) or 'Expecting' in str(e):
+                                try:
+                                    # Find end of first valid JSON object
+                                    brace_count = 0
+                                    in_string = False
+                                    escape_next = False
+                                    end_pos = 0
+                                    for i, char in enumerate(attempt):
+                                        if escape_next:
+                                            escape_next = False
+                                            continue
+                                        if char == '\\':
+                                            escape_next = True
+                                            continue
+                                        if char == '"' and not escape_next:
+                                            in_string = not in_string
+                                            continue
+                                        if not in_string:
+                                            if char == '{':
+                                                brace_count += 1
+                                            elif char == '}':
+                                                brace_count -= 1
+                                                if brace_count == 0:
+                                                    end_pos = i + 1
+                                                    break
+                                    if end_pos > 0:
+                                        parsed = json.loads(attempt[:end_pos])
+                                        if isinstance(parsed, dict) and 'sources' in parsed:
+                                            source_json = parsed
+                                            break
+                                except Exception:
+                                    continue
+                            continue
+                    
+                    if source_json and 'sources' in source_json:
+                            # Multi-file contract
+                            contract_dir = os.path.join(output_dir, f"{safe_name}_{address[:8]}")
+                            os.makedirs(contract_dir, exist_ok=True)
+
+                            files_saved = 0
+                            # Preserve original directory structure for proper imports
+                            for file_path, file_data in source_json['sources'].items():
+                                # Keep original path structure (e.g., @openzeppelin/contracts/access/Ownable.sol)
+                                # Create proper directory structure
+                                if file_path.startswith('@'):
+                                    # Handle scoped packages like @openzeppelin/contracts/...
+                                    # Remove @ and create directory structure
+                                    clean_path = file_path[1:]  # Remove @
+                                else:
+                                    clean_path = file_path
+                                
+                                # Ensure .sol extension
+                                if not clean_path.endswith('.sol'):
+                                    clean_path += '.sol'
+                                
+                                # Create full path preserving directory structure
+                                full_path = os.path.join(contract_dir, clean_path)
+                                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                                
+                                with open(full_path, 'w', encoding='utf-8') as f:
+                                    f.write(file_data.get('content', ''))
+                                files_saved += 1
+                            
+                            # Create foundry.toml with remappings for Slither compilation
+                            foundry_toml_path = os.path.join(contract_dir, 'foundry.toml')
+                            if not os.path.exists(foundry_toml_path):
+                                # Extract Solidity version from contract metadata
+                                # Get compiler version from the contract_data in the loop context
+                                solc_version = '0.8.24'  # Default, will be set from metadata if available
+                                # Try to get from primary contract if available
+                                if 'all_contracts' in contract_data and contract_data['all_contracts']:
+                                    primary = contract_data['all_contracts'][0]
+                                    solc_version = primary.get('compiler_version', '0.8.24')
+                                elif 'compiler_version' in contract_data:
+                                    solc_version = contract_data.get('compiler_version', '0.8.24')
+                                # Extract version number (e.g., "0.8.24" from "v0.8.24+commit.xxx")
+                                import re
+                                version_match = re.search(r'(\d+\.\d+\.\d+)', solc_version)
+                                solc_version_str = version_match.group(1) if version_match else '0.8.24'
+                                
+                                foundry_config = f"""[profile.default]
+src = "."
+out = "out"
+libs = ["lib"]
+solc = "{solc_version_str}"
+
+[profile.default.remappings]
+@openzeppelin/ = "openzeppelin/"
+"""
+                                with open(foundry_toml_path, 'w') as f:
+                                    f.write(foundry_config)
+                                self.console.print(f"[blue]📝 Created foundry.toml with Solidity {solc_version_str}[/blue]")
+                            
+                            saved_paths.append(contract_dir)
+                            self.console.print(f"[green]💾 Saved {contract_name} ({files_saved} files) to: {contract_dir}[/green]")
+                            continue
+
+                # Single file contract
+                filename = f"{safe_name}_{address[:8]}.sol"
+                filepath = os.path.join(output_dir, filename)
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(source_code)
+                saved_paths.append(filepath)
+                self.console.print(f"[green]💾 Saved {contract_name} to: {filepath}[/green]")
+
+            self.console.print(f"[green]✅ Saved {len(saved_paths)} contracts total[/green]")
+            # Return the primary contract path for backward compatibility
+            return saved_paths[0] if saved_paths else output_dir
+
+        # Original single contract logic (for backward compatibility)
         contract_name = contract_data.get('contract_name', 'UnknownContract')
         address = contract_data.get('address', 'unknown')
 
@@ -403,37 +723,132 @@ class EtherscanFetcher:
 
         # Handle different source code formats
         source_code = contract_data['source_code']
+        
+        # Handle case where source_code might be a string representation of JSON
+        if isinstance(source_code, str):
+            # Strip any leading/trailing whitespace
+            source_code = source_code.strip()
+            # Check if it starts with { (might be double-braced {{ in some cases)
+            if source_code.startswith('{'):
+                # Try to parse as JSON - handle double-brace case
+                json_str = source_code
+                # Handle double-brace case (sometimes Etherscan returns {{...}})
+                # This happens when the JSON string is itself JSON-encoded
+                json_str = source_code.strip()
+                
+                # If it starts and ends with double braces, try removing outer braces
+                if json_str.startswith('{{') and json_str.endswith('}}'):
+                    # Try removing one brace from start and end
+                    json_str = json_str[1:-1]
+                
+                # Try multiple parsing strategies
+                source_json = None
+                for attempt in [json_str, source_code.strip()]:
+                    try:
+                        # Try parsing the full string
+                        parsed = json.loads(attempt)
+                        if isinstance(parsed, dict) and 'sources' in parsed:
+                            source_json = parsed
+                            break
+                    except json.JSONDecodeError as e:
+                        # If there's extra data, try to extract just the first valid JSON object
+                        if 'Extra data' in str(e) or 'Expecting' in str(e):
+                            try:
+                                # Find the end of the first valid JSON object by counting braces
+                                brace_count = 0
+                                in_string = False
+                                escape_next = False
+                                end_pos = 0
+                                
+                                for i, char in enumerate(attempt):
+                                    if escape_next:
+                                        escape_next = False
+                                        continue
+                                    if char == '\\':
+                                        escape_next = True
+                                        continue
+                                    if char == '"' and not escape_next:
+                                        in_string = not in_string
+                                        continue
+                                    if not in_string:
+                                        if char == '{':
+                                            brace_count += 1
+                                        elif char == '}':
+                                            brace_count -= 1
+                                            if brace_count == 0:
+                                                end_pos = i + 1
+                                                break
+                                
+                                if end_pos > 0:
+                                    parsed = json.loads(attempt[:end_pos])
+                                    if isinstance(parsed, dict) and 'sources' in parsed:
+                                        source_json = parsed
+                                        break
+                            except Exception:
+                                continue
+                        continue
+                
+                if source_json and 'sources' in source_json:
+                        # Multi-file contract
+                        file_count = len(source_json['sources'])
+                        self.console.print(f"[blue]📁 Detected multi-file contract with {file_count} files[/blue]")
 
-        # Check if source code is JSON (for multi-file contracts)
-        if source_code.startswith('{'):
-            try:
-                source_json = json.loads(source_code)
-                if 'sources' in source_json:
-                    # Multi-file contract
-                    self.console.print(f"[blue]📁 Detected multi-file contract with {len(source_json['sources'])} files[/blue]")
+                        # Create directory for multi-file contract
+                        contract_dir = os.path.join(output_dir, f"{safe_name}_{address[:8]}")
+                        os.makedirs(contract_dir, exist_ok=True)
 
-                    # Create directory for multi-file contract
-                    contract_dir = os.path.join(output_dir, safe_name)
-                    os.makedirs(contract_dir, exist_ok=True)
+                        # Save each source file
+                        files_saved = 0
+                        for file_path, file_data in source_json['sources'].items():
+                            # Handle both dict format {"content": "..."} and string format
+                            if isinstance(file_data, dict):
+                                content = file_data.get('content', '')
+                            else:
+                                content = str(file_data)
+                            
+                            # Preserve original directory structure for proper imports
+                            if file_path.startswith('@'):
+                                # Handle scoped packages like @openzeppelin/contracts/...
+                                clean_path = file_path[1:]  # Remove @
+                            else:
+                                clean_path = file_path
+                            
+                            # Ensure .sol extension
+                            if not clean_path.endswith('.sol'):
+                                clean_path += '.sol'
 
-                    # Save each source file
-                    for file_path, file_data in source_json['sources'].items():
-                        # Clean file path
-                        clean_path = file_path.replace('@', '').replace('/', '_')
-                        if not clean_path.endswith('.sol'):
-                            clean_path += '.sol'
+                            full_path = os.path.join(contract_dir, clean_path)
+                            os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
-                        full_path = os.path.join(contract_dir, clean_path)
-                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                            with open(full_path, 'w', encoding='utf-8') as f:
+                                f.write(content)
+                            files_saved += 1
+                        
+                        # Create foundry.toml with remappings for Slither compilation
+                        foundry_toml_path = os.path.join(contract_dir, 'foundry.toml')
+                        if not os.path.exists(foundry_toml_path):
+                            # Extract Solidity version from contract metadata
+                            solc_version = contract_data.get('compiler_version', '0.8.24')
+                            # Extract version number (e.g., "0.8.24" from "v0.8.24+commit.xxx")
+                            import re
+                            version_match = re.search(r'(\d+\.\d+\.\d+)', solc_version)
+                            solc_version_str = version_match.group(1) if version_match else '0.8.24'
+                            
+                            foundry_config = f"""[profile.default]
+src = "."
+out = "out"
+libs = ["lib"]
+solc = "{solc_version_str}"
 
-                        with open(full_path, 'w', encoding='utf-8') as f:
-                            f.write(file_data.get('content', ''))
+[profile.default.remappings]
+@openzeppelin/ = "openzeppelin/"
+"""
+                            with open(foundry_toml_path, 'w') as f:
+                                f.write(foundry_config)
+                            self.console.print(f"[blue]📝 Created foundry.toml with Solidity {solc_version_str}[/blue]")
 
-                    self.console.print(f"[green]💾 Saved multi-file contract to: {contract_dir}[/green]")
-                    return contract_dir
-            except json.JSONDecodeError:
-                # Not JSON, treat as single file
-                pass
+                        self.console.print(f"[green]💾 Saved multi-file contract ({files_saved} files) to: {contract_dir}[/green]")
+                        return contract_dir
 
         # Single file contract
         filename = f"{safe_name}_{address[:8]}.sol"
@@ -445,7 +860,7 @@ class EtherscanFetcher:
         self.console.print(f"[green]💾 Saved contract source to: {filepath}[/green]")
         return filepath
 
-    def fetch_and_save_contract(self, address: str, output_dir: str = "temp_contracts") -> Tuple[bool, str, Dict[str, Any]]:
+    def fetch_and_save_contract(self, address: str, output_dir: Optional[str] = None) -> Tuple[bool, str, Dict[str, Any]]:
         """Fetch contract source code and save it to files."""
         contract_data = self.fetch_contract_source(address)
         
@@ -601,11 +1016,36 @@ class EtherscanFetcher:
         explorer_url = self.SUPPORTED_NETWORKS[target_network]['explorer_url']
         return f"{explorer_url}/address/{address}"
 
-    def clear_cache(self, network: Optional[str] = None) -> int:
-        """Clear cached contract data."""
+    def clear_cache(self, network: Optional[str] = None, address: Optional[str] = None) -> int:
+        """Clear cached contract data.
+        
+        Args:
+            network: Optional network name to clear cache for
+            address: Optional specific address to clear cache for
+        """
         cleared_count = 0
 
-        if network:
+        if address:
+            # Clear cache for specific address
+            if network:
+                cache_path = self._get_cache_path(address, network)
+            else:
+                # Try all networks
+                for net in self.SUPPORTED_NETWORKS.keys():
+                    cache_path = self._get_cache_path(address, net)
+                    if cache_path.exists():
+                        try:
+                            cache_path.unlink()
+                            cleared_count += 1
+                        except Exception:
+                            pass
+            if network and cache_path.exists():
+                try:
+                    cache_path.unlink()
+                    cleared_count += 1
+                except Exception:
+                    pass
+        elif network:
             # Clear cache for specific network
             pattern = f"*{network}.json"
             for cache_file in self.cache_dir.glob(pattern):

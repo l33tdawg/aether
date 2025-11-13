@@ -1,5 +1,6 @@
 [profile.default]
 src = "src"
+test = "poc-tests"
 out = "out"
 libs = ["lib"]
 solc = "0.8.20"
@@ -10,7 +11,7 @@ remappings = [
     "@openzeppelin/=lib/openzeppelin-contracts/",
     "@forge-std/=lib/forge-std/src/"
 ]
-via_ir = false
+via_ir = true
 auto_detect_solc = true
 
 [profile.rocketpool]

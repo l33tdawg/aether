@@ -365,7 +365,8 @@ Examples:
                 compliance_only=args.compliance_only,
                 export_formats=args.export_formats,
                 foundry=args.foundry,
-                llm_validation=args.llm_validation
+                llm_validation=args.llm_validation,
+                interactive_scope=args.interactive_scope
             ))
             # For CLI, return 0 for success, handle results internally
             if args.verbose and result:
@@ -569,8 +570,8 @@ Examples:
                     print(f"❌ Failed to fetch contract: {contract_data.get('error')}")
                     return 1
 
-                # Save to output directory if specified
-                output_dir = args.output or "temp_contracts"
+                # Save to output directory if specified, otherwise use default (~/.aether/contracts)
+                output_dir = args.output if args.output else None
                 try:
                     file_path = cli.etherscan_fetcher.save_contract_source(contract_data, output_dir)
                     print(f"✅ Contract saved to: {file_path}")
