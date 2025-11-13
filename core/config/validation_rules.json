@@ -1,0 +1,39 @@
+{
+  "external_calls_to_manager": {
+    "description": "Calls to manager contracts should not be flagged as unvalidated",
+    "reason": "Manager contracts perform their own validation and return validated results",
+    "vulnerability_patterns": ["external_call", "unvalidated_call", "unchecked_return"],
+    "code_patterns": [
+      "asyncManager\\(\\)\\.(deposit|mint|withdraw|redeem)",
+      "manager\\.(requestDeposit|requestRedeem|cancelDepositRequest|cancelRedeemRequest)",
+      "asyncManager\\(\\)\\.(claimCancelDepositRequest|claimCancelRedeemRequest)"
+    ]
+  },
+  "claim_functions": {
+    "description": "Claim functions may delegate state changes to manager",
+    "reason": "Manager handles the actual claiming logic and state updates",
+    "vulnerability_patterns": ["claim_without_marking", "state_change"],
+    "function_patterns": [
+      "claimCancelDepositRequest",
+      "claimCancelRedeemRequest"
+    ]
+  },
+  "hub_delegation": {
+    "description": "Hub delegates complex operations to specialized handlers",
+    "reason": "Hub is coordination layer, handlers contain business logic",
+    "vulnerability_patterns": ["external_call", "unvalidated_call"],
+    "code_patterns": [
+      "handler\\..*\\(",
+      "spoke\\..*\\("
+    ]
+  },
+  "hook_callbacks": {
+    "description": "Token transfer hooks are trusted callbacks",
+    "reason": "Hooks are explicitly configured and trusted by token contract",
+    "vulnerability_patterns": ["external_call"],
+    "code_patterns": [
+      "hook\\..*Transfer.*\\(",
+      "ITransferHook.*\\."
+    ]
+  }
+}

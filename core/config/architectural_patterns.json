@@ -1,0 +1,31 @@
+{
+  "vault_manager_separation": {
+    "description": "ERC-7540 style async vaults with separate manager contracts",
+    "contracts": ["*Vault*", "*Manager*", "*RequestManager*"],
+    "trust_relationships": {
+      "vault": ["manager", "request_manager"],
+      "manager": ["vault", "escrow", "registry"],
+      "request_manager": ["vault", "manager"]
+    },
+    "validation_rules": ["external_calls_to_manager", "claim_functions"]
+  },
+  "hub_spoke_architecture": {
+    "description": "Central hub managing multiple spoke contracts",
+    "contracts": ["*Hub*", "*Spoke*", "*Handler*"],
+    "trust_relationships": {
+      "hub": ["spoke", "handler", "registry", "gateway"],
+      "spoke": ["hub", "registry", "token"],
+      "handler": ["hub", "spoke"]
+    },
+    "validation_rules": ["hub_delegation", "cross_chain_validation"]
+  },
+  "token_with_hooks": {
+    "description": "ERC-20/ERC-1404 tokens with transfer hooks",
+    "contracts": ["*Token*", "*Hook*"],
+    "trust_relationships": {
+      "token": ["hook"],
+      "hook": ["token", "registry"]
+    },
+    "validation_rules": ["hook_callbacks", "transfer_restrictions"]
+  }
+}
