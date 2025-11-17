@@ -91,7 +91,7 @@ class ArchitecturalPatternRecognizer:
                         description=rule_data['description'],
                         reason=rule_data['reason'],
                         vulnerability_patterns=rule_data['vulnerability_patterns'],
-                        code_patterns=rule_data['code_patterns'],
+                        code_patterns=rule_data.get('code_patterns'),
                         function_patterns=rule_data.get('function_patterns')
                     )
                 return rules
