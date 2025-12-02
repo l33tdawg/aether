@@ -6,6 +6,8 @@ This module provides improved prompts that require LLMs to:
 2. Provide concrete attack scenarios
 3. Check function context (view vs state-changing)
 4. Prove exploitability
+5. Analyze modifiers for validation (NEW Dec 2025)
+6. Recognize intentional design patterns (NEW Dec 2025)
 """
 
 from typing import Dict, Tuple
@@ -13,6 +15,51 @@ from typing import Dict, Tuple
 # Enhanced vulnerability analysis prompt with mandatory checks
 ENHANCED_VULNERABILITY_ANALYSIS_PROMPT = """
 You are a senior smart contract security auditor analyzing Solidity code for vulnerabilities.
+
+**CRITICAL: MANDATORY MODIFIER ANALYSIS (NEW)**
+
+Before reporting "missing validation" or "lacks input validation" findings:
+
+1. **IDENTIFY ALL MODIFIERS** on the function:
+   - List every modifier in the function signature
+   - Example: `function foo(address _token) external onlyOwner onlyRegisteredToken(_token)`
+   
+2. **FIND AND ANALYZE MODIFIER DEFINITIONS**:
+   - Locate each modifier's definition in the contract
+   - Parse what require/revert statements it contains
+   - Example: `onlyRegisteredToken` contains `require(registeredTokens[_token] != address(0))`
+   
+3. **MAP MODIFIER VALIDATION TO PARAMETERS**:
+   - If modifier validates a parameter (e.g., `onlyRegisteredToken(_token)`), 
+     that parameter IS validated - DO NOT report "missing validation"
+
+**EXAMPLE OF WHAT NOT TO REPORT:**
+
+```solidity
+modifier onlyRegisteredToken(address _token) {
+    require(registeredTokens[_token] != address(0), "not allowed");
+    _;
+}
+
+function unlockToken(address _token) 
+    external 
+    onlyOwner 
+    onlyRegisteredToken(_token)  // ← THIS VALIDATES _token!
+{
+    delete lockedTokens[_token];
+}
+```
+
+DO NOT report "unlockToken lacks validation for _token" - the modifier handles it!
+
+**INTENTIONAL DESIGN PATTERNS TO RECOGNIZE:**
+
+These are NOT vulnerabilities:
+1. `chargeWithoutEvent()` - Bridge liquidity function, intentionally permissionless
+2. `notify()` / `poke()` / `sync()` - Permissionless state sync triggers
+3. `receive()` / `fallback()` - ETH receivers, by design permissionless
+4. Functions with comments like "for increasing the withdrawal limit"
+5. Functions named with "Without" (e.g., chargeWithoutEvent) - intentional design
 
 **CRITICAL: MANDATORY VERIFICATION CHECKLIST**
 
@@ -91,12 +138,18 @@ DO NOT REPORT if:
 - Finding is about missing validation in getter (returning empty is OK)
 - Attack scenario requires multiple unlikely conditions ("if X and Y and Z")
 - Severity is high but function risk is low (misalignment)
+- **Parameter is validated by a modifier** (e.g., onlyRegisteredToken validates _token)
+- **Function is intentionally permissionless** (chargeWithoutEvent, notify, sync, etc.)
+- **Function name indicates intentional design** (e.g., "WithoutEvent" suffix)
+- **Comments explain the intentional design** (e.g., "for increasing withdrawal limit")
 
 ONLY REPORT if:
 - exploitability_score >= 0.6
 - attack_scenario has concrete steps
 - state_impact matches claimed severity
 - Finding would qualify for bug bounty submission
+- **You have verified all modifiers do NOT validate the parameter in question**
+- **The function is NOT an intentional design pattern**
 
 **EXPLOITABILITY ASSESSMENT:**
 

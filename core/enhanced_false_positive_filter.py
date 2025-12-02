@@ -7,6 +7,8 @@ Integrates multiple validation strategies to significantly reduce false positive
 3. DeFi pattern recognition
 4. Impact quantification
 5. Severity calibration
+6. Modifier-based validation detection (NEW Dec 2025)
+7. Intentional design pattern recognition (NEW Dec 2025)
 """
 
 import logging
@@ -40,6 +42,8 @@ class EnhancedFalsePositiveFilter:
     - Verifying inheritance claims
     - Recognizing standard DeFi patterns
     - Calibrating severity based on context
+    - Detecting modifier-based validation (NEW)
+    - Recognizing intentional design patterns (NEW)
     """
     
     def __init__(self):
@@ -47,8 +51,26 @@ class EnhancedFalsePositiveFilter:
         self.inheritance_verifier = InheritanceVerifier()
         self.pattern_recognizer = DeFiPatternRecognizer()
         
+        # New components for enhanced false positive detection
+        self._modifier_analyzer = None
+        self._intentional_design_detector = None
+        
         # Initialize with contract code
         self.contract_analyzed = False
+    
+    def _get_modifier_analyzer(self):
+        """Lazy load modifier analyzer."""
+        if self._modifier_analyzer is None:
+            from .modifier_semantic_analyzer import ModifierSemanticAnalyzer
+            self._modifier_analyzer = ModifierSemanticAnalyzer()
+        return self._modifier_analyzer
+    
+    def _get_intentional_design_detector(self):
+        """Lazy load intentional design detector."""
+        if self._intentional_design_detector is None:
+            from .intentional_design_detector import IntentionalDesignDetector
+            self._intentional_design_detector = IntentionalDesignDetector()
+        return self._intentional_design_detector
         
     def analyze_contract_context(self, contract_code: str, contract_name: str = "Unknown"):
         """Analyze contract context before validating findings."""
@@ -66,6 +88,23 @@ class EnhancedFalsePositiveFilter:
             logger.info(f"Detected {len(patterns)} DeFi patterns:")
             for p in patterns:
                 logger.info(f"  - {p.pattern_type.value} (confidence: {p.confidence:.0%})")
+        
+        # NEW: Analyze modifiers in the contract
+        try:
+            modifier_analyzer = self._get_modifier_analyzer()
+            modifier_defs = modifier_analyzer.analyze_contract(contract_code)
+            if modifier_defs:
+                logger.info(f"Detected {len(modifier_defs)} custom modifiers:")
+                for name, mod_def in modifier_defs.items():
+                    validation_info = []
+                    if mod_def.is_access_control:
+                        validation_info.append("access_control")
+                    if mod_def.validated_params:
+                        validation_info.append(f"validates: {', '.join(mod_def.validated_params)}")
+                    if validation_info:
+                        logger.info(f"  - {name}: {', '.join(validation_info)}")
+        except Exception as e:
+            logger.debug(f"Modifier analysis failed (non-critical): {e}")
         
         self.contract_analyzed = True
         self.contract_code = contract_code
@@ -138,6 +177,22 @@ class EnhancedFalsePositiveFilter:
             if impact_result['has_no_impact']:
                 is_false_positive = True
                 recommendations.append("No realistic attack path or impact identified")
+        
+        # === STRATEGY 6: Modifier-Based Validation (NEW) ===
+        modifier_result = self._check_modifier_validations(finding, line_num, description)
+        if modifier_result:
+            reasoning.extend(modifier_result['reasoning'])
+            if modifier_result['is_validated']:
+                is_false_positive = True
+                recommendations.append(f"Parameter validated by modifier: {modifier_result['modifier']}")
+        
+        # === STRATEGY 7: Intentional Design Detection (NEW) ===
+        design_result = self._check_intentional_design(finding, line_num, description)
+        if design_result:
+            reasoning.extend(design_result['reasoning'])
+            if design_result['is_intentional']:
+                is_false_positive = True
+                recommendations.append(f"Intentional design: {design_result['pattern']}")
         
         return EnhancedValidationResult(
             is_false_positive=is_false_positive,
@@ -311,6 +366,140 @@ class EnhancedFalsePositiveFilter:
             }
         
         return None
+    
+    def _check_modifier_validations(
+        self, 
+        finding: Dict[str, Any], 
+        line_num: int,
+        description: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Check if finding is about a parameter validated by modifiers.
+        
+        This addresses false positives like:
+        - "unlockToken lacks validation" when onlyRegisteredToken validates it
+        - "deregisterToken missing validation" when modifier checks it
+        """
+        if not hasattr(self, 'contract_code'):
+            return None
+        
+        # Check if this is a validation-related finding
+        validation_keywords = [
+            'lacks validation', 'missing validation', 'no validation',
+            'unvalidated', 'without validation', 'input validation',
+            'parameter validation', 'address validation'
+        ]
+        
+        is_validation_finding = any(kw in description.lower() for kw in validation_keywords)
+        if not is_validation_finding:
+            return None
+        
+        try:
+            # Extract the function containing this line
+            function_code = self._extract_function_at_line(line_num)
+            if not function_code:
+                return None
+            
+            modifier_analyzer = self._get_modifier_analyzer()
+            
+            # Ensure contract is analyzed
+            if not modifier_analyzer.modifier_definitions:
+                modifier_analyzer.analyze_contract(self.contract_code)
+            
+            # Get modifiers on this function
+            usages = modifier_analyzer.get_function_modifier_usages(function_code['code'])
+            
+            if not usages:
+                return None
+            
+            # Check each modifier for validation
+            for usage in usages:
+                if usage.modifier_name in modifier_analyzer.modifier_definitions:
+                    mod_def = modifier_analyzer.modifier_definitions[usage.modifier_name]
+                    
+                    # If modifier validates parameters, it's likely a false positive
+                    if mod_def.validated_params:
+                        return {
+                            'is_validated': True,
+                            'modifier': usage.modifier_name,
+                            'validated_params': list(mod_def.validated_params),
+                            'reasoning': [
+                                f"Function has modifier '{usage.modifier_name}' that validates parameters",
+                                f"Modifier validates: {', '.join(mod_def.validated_params)}",
+                                "The 'missing validation' finding is a false positive"
+                            ]
+                        }
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Modifier validation check failed: {e}")
+            return None
+    
+    def _check_intentional_design(
+        self, 
+        finding: Dict[str, Any],
+        line_num: int,
+        description: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Check if finding is about intentionally designed behavior.
+        
+        This addresses false positives like:
+        - "chargeWithoutEvent lacks access control" when it's intentionally permissionless
+        - "anyone can call notify()" when it's a permissionless sync function
+        """
+        if not hasattr(self, 'contract_code'):
+            return None
+        
+        # Check if this might be about missing access control or similar
+        design_keywords = [
+            'lacks access control', 'missing access control', 'anyone can call',
+            'permissionless', 'no authorization', 'public function',
+            'without event', 'no event'
+        ]
+        
+        is_design_finding = any(kw in description.lower() for kw in design_keywords)
+        if not is_design_finding:
+            return None
+        
+        try:
+            # Extract the function containing this line
+            function_code = self._extract_function_at_line(line_num)
+            if not function_code:
+                return None
+            
+            detector = self._get_intentional_design_detector()
+            
+            # Get surrounding comments
+            surrounding_comments = detector.get_function_intent_context(
+                self.contract_code, 
+                function_code['start_line']
+            )
+            
+            # Analyze for intentional design
+            result = detector.analyze_function(
+                function_code['code'],
+                surrounding_comments=surrounding_comments
+            )
+            
+            if result.is_intentional:
+                return {
+                    'is_intentional': True,
+                    'pattern': result.pattern.name if result.pattern else 'comment_indicated',
+                    'confidence': result.confidence,
+                    'reasoning': [
+                        result.reasoning,
+                        f"Confidence: {result.confidence:.0%}",
+                        "This behavior is intentional, not a vulnerability"
+                    ]
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Intentional design check failed: {e}")
+            return None
     
     def _reduce_severity(self, severity: str) -> str:
         """Reduce severity by one level."""
