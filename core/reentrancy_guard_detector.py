@@ -229,10 +229,20 @@ class ReentrancyGuardDetector:
         effects = []
         interactions = []
         
+        # More precise patterns for external calls to avoid false positives
+        # e.g., '.send' should not match 'msg.sender'
+        interaction_patterns = [
+            r'\.call\s*[({]',      # .call( or .call{
+            r'\.transfer\s*\(',    # .transfer(
+            r'\.send\s*\(',        # .send( - not .sender
+            r'\.delegatecall\s*[({]',
+            r'\.staticcall\s*[({]',
+        ]
+        
         for i, line in enumerate(lines):
             if 'require' in line or 'assert' in line:
                 checks.append((i, line))
-            elif '.call' in line or '.transfer' in line or '.send' in line:
+            elif any(re.search(pattern, line) for pattern in interaction_patterns):
                 interactions.append((i, line))
             elif ('=' in line or '-=' in line or '+=' in line) and \
                  any(keyword in line.lower() for keyword in ['balance', 'amount', 'total', 'supply']):
