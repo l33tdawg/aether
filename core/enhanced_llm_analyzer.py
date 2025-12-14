@@ -511,6 +511,39 @@ Before reporting any vulnerability, verify:
             # Optional: strict schema validation
             # Already validated in parse_llm_json when schema='analyzer'
             
+            # NEW: Validate and correct line numbers
+            try:
+                from .line_number_validator import LineNumberValidator
+                line_validator = LineNumberValidator()
+                line_validated_vulns = []
+                line_validation_stats = {'corrected': 0, 'invalid': 0}
+                
+                for vuln in analysis_data.get('vulnerabilities', []):
+                    validated_vuln = line_validator.validate_finding_line_number(vuln, contract_content)
+                    validation_status = validated_vuln.get('line_validation', {}).get('status', 'unknown')
+                    
+                    if validation_status == 'invalid' and 'corrected_to' not in validated_vuln.get('line_validation', {}):
+                        # Line invalid and couldn't be corrected - skip this finding
+                        line_validation_stats['invalid'] += 1
+                        print(f"⚠️  Filtered finding with invalid line number: {vuln.get('title', 'Unknown')} (line {vuln.get('line_number', vuln.get('line', 'unknown'))})")
+                        continue
+                    
+                    if validation_status == 'corrected':
+                        line_validation_stats['corrected'] += 1
+                    
+                    line_validated_vulns.append(validated_vuln)
+                
+                if line_validation_stats['corrected'] > 0 or line_validation_stats['invalid'] > 0:
+                    print(f"📍 Line validation: {line_validation_stats['corrected']} corrected, {line_validation_stats['invalid']} filtered")
+                
+                # Use line-validated vulnerabilities for further processing
+                analysis_data['vulnerabilities'] = line_validated_vulns
+            except ImportError:
+                # Line validator not available, continue without it
+                pass
+            except Exception as e:
+                print(f"⚠️  Line validation error (continuing without): {e}")
+            
             # Validate each vulnerability and apply severity calibration
             validated_vulnerabilities = []
             for vuln in analysis_data.get('vulnerabilities', []):

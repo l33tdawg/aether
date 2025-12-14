@@ -8,7 +8,7 @@ reporting issues that claim fund loss on read-only functions, etc.
 
 import re
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from enum import Enum
 
@@ -538,6 +538,273 @@ class ImpactAnalyzer:
         return severity_matrix.get(impact_type, {}).get(risk_level, 'medium')
 
 
+class SeverityReductionReason(Enum):
+    """Reasons for severity reduction."""
+    USER_SELF_HARM = "user_self_harm"
+    REQUIRES_MALICIOUS_TOKEN = "requires_malicious_token"
+    REQUIRES_PRIVILEGED_ACCESS = "requires_privileged_access"
+    THEORETICAL_ONLY = "theoretical_only"
+    DEPLOYMENT_TIME_ONLY = "deployment_time_only"
+    CONFIGURATION_CONCERN = "configuration_concern"
+    NONE = "none"
+
+
+@dataclass
+class SeverityCalibrationResult:
+    """Result of severity calibration."""
+    original_severity: str
+    adjusted_severity: str
+    reduction_reason: SeverityReductionReason
+    confidence: float
+    reasoning: str
+    severity_reduced: bool
+
+
+class EnhancedSeverityCalibrator:
+    """
+    Enhanced severity calibration that accounts for real-world exploit prerequisites.
+    
+    Handles cases like:
+    - User self-harm (user can only harm themselves, not others)
+    - Requires attacker's own malicious token
+    - Requires privileged access (admin/governance)
+    - Theoretical-only scenarios
+    - Deployment-time only issues
+    """
+    
+    # Impact reduction factors with their characteristics
+    IMPACT_REDUCTION_FACTORS = {
+        SeverityReductionReason.USER_SELF_HARM: {
+            'keywords': [
+                'user provides invalid',
+                "user's own transaction fails",
+                'caller\'s transaction fails',
+                'user must manually claim',
+                'own transaction',
+                'user provides incorrect',
+                'user supplies wrong',
+                'sender loses',
+                'caller loses',
+            ],
+            'severity_cap': 'low',
+            'severity_multiplier': 0.3,
+            'reasoning': 'User can only harm themselves through incorrect usage, not other users or protocol'
+        },
+        SeverityReductionReason.REQUIRES_MALICIOUS_TOKEN: {
+            'keywords': [
+                'malicious token',
+                'manipulate.*balanceof',
+                'token.*lies about',
+                'non-standard token',
+                'malicious erc20',
+                'fake token',
+                'token with fee',
+                'fee-on-transfer',
+                'rebasing token',
+                'custom balanceof',
+            ],
+            'severity_cap': 'medium',
+            'severity_multiplier': 0.5,
+            'reasoning': 'Requires attacker to deploy and use their own malicious token - self-sabotaging attack'
+        },
+        SeverityReductionReason.REQUIRES_PRIVILEGED_ACCESS: {
+            'keywords': [
+                'owner must',
+                'admin can',
+                'admin must',
+                'governance decision',
+                'requires.*role',
+                'onlyowner',
+                'onlyadmin',
+                'governance-controlled',
+                'multisig.*required',
+                'admin-only',
+            ],
+            'severity_cap': 'medium',
+            'severity_multiplier': 0.5,
+            'reasoning': 'Requires privileged access - centralization concern, not external exploit'
+        },
+        SeverityReductionReason.THEORETICAL_ONLY: {
+            'keywords': [
+                'in theory',
+                'could potentially',
+                'if conditions',
+                'under specific circumstances',
+                'hypothetically',
+                'theoretical',
+                'edge case',
+                'unlikely scenario',
+                'extremely rare',
+            ],
+            'severity_cap': 'low',
+            'severity_multiplier': 0.25,
+            'reasoning': 'Theoretical scenario without demonstrated exploit path or requires unlikely conditions'
+        },
+        SeverityReductionReason.DEPLOYMENT_TIME_ONLY: {
+            'keywords': [
+                'constructor',
+                'during deployment',
+                'at deployment time',
+                'malicious deployer',
+                'compromised factory',
+                'deploy-time',
+                'initialization',
+                'initial setup',
+            ],
+            'severity_cap': 'low',
+            'severity_multiplier': 0.3,
+            'reasoning': 'Issue only exploitable at deployment time, not during normal operation'
+        },
+        SeverityReductionReason.CONFIGURATION_CONCERN: {
+            'keywords': [
+                'misconfiguration',
+                'incorrect configuration',
+                'wrong parameter',
+                'bad configuration',
+                'configuration error',
+                'setup error',
+            ],
+            'severity_cap': 'medium',
+            'severity_multiplier': 0.5,
+            'reasoning': 'Configuration/setup issue, not a code vulnerability'
+        },
+    }
+    
+    # Severity ordering for comparison
+    SEVERITY_ORDER = ['info', 'low', 'medium', 'high', 'critical']
+    
+    def calibrate_severity(
+        self,
+        finding: Dict[str, Any],
+        function_code: str = ""
+    ) -> SeverityCalibrationResult:
+        """
+        Calibrate finding severity based on real-world impact assessment.
+        
+        Args:
+            finding: Vulnerability finding dict
+            function_code: Optional function code for context
+            
+        Returns:
+            SeverityCalibrationResult with adjusted severity and reasoning
+        """
+        description = finding.get('description', '').lower()
+        title = finding.get('title', '').lower()
+        vuln_type = finding.get('vulnerability_type', '').lower()
+        original_severity = finding.get('severity', 'medium').lower()
+        
+        combined_text = f"{description} {title} {vuln_type}"
+        
+        # Check each reduction factor
+        for reason, config in self.IMPACT_REDUCTION_FACTORS.items():
+            # Check if any keywords match (with regex support)
+            keyword_matched = False
+            for kw in config['keywords']:
+                if '.*' in kw:
+                    # Regex pattern
+                    if re.search(kw, combined_text, re.IGNORECASE):
+                        keyword_matched = True
+                        break
+                else:
+                    # Simple substring match
+                    if kw in combined_text:
+                        keyword_matched = True
+                        break
+            
+            if keyword_matched:
+                # Apply severity cap
+                adjusted_severity = self._apply_severity_cap(
+                    original_severity,
+                    config['severity_cap']
+                )
+                
+                if adjusted_severity != original_severity:
+                    return SeverityCalibrationResult(
+                        original_severity=original_severity,
+                        adjusted_severity=adjusted_severity,
+                        reduction_reason=reason,
+                        confidence=0.85,
+                        reasoning=config['reasoning'],
+                        severity_reduced=True
+                    )
+        
+        # No reduction factors matched
+        return SeverityCalibrationResult(
+            original_severity=original_severity,
+            adjusted_severity=original_severity,
+            reduction_reason=SeverityReductionReason.NONE,
+            confidence=0.7,
+            reasoning='No severity reduction factors detected',
+            severity_reduced=False
+        )
+    
+    def _apply_severity_cap(self, current_severity: str, cap_severity: str) -> str:
+        """Apply severity cap - return lower of current and cap."""
+        current_idx = self.SEVERITY_ORDER.index(current_severity.lower())
+        cap_idx = self.SEVERITY_ORDER.index(cap_severity.lower())
+        
+        if current_idx > cap_idx:
+            return cap_severity
+        return current_severity
+    
+    def get_severity_multiplier(self, reason: SeverityReductionReason) -> float:
+        """Get severity multiplier for a reduction reason."""
+        config = self.IMPACT_REDUCTION_FACTORS.get(reason)
+        if config:
+            return config['severity_multiplier']
+        return 1.0
+    
+    def calibrate_findings_batch(
+        self,
+        findings: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+        """
+        Calibrate severity for a batch of findings.
+        
+        Args:
+            findings: List of vulnerability findings
+            
+        Returns:
+            Tuple of (calibrated_findings, stats)
+        """
+        calibrated = []
+        stats = {
+            'total': len(findings),
+            'unchanged': 0,
+            'user_self_harm': 0,
+            'requires_malicious_token': 0,
+            'requires_privileged_access': 0,
+            'theoretical_only': 0,
+            'deployment_time_only': 0,
+            'configuration_concern': 0,
+        }
+        
+        for finding in findings:
+            result = self.calibrate_severity(finding)
+            
+            # Update finding with calibration info
+            finding_copy = finding.copy()
+            if result.severity_reduced:
+                finding_copy['original_severity'] = result.original_severity
+                finding_copy['severity'] = result.adjusted_severity
+                finding_copy['severity_calibration'] = {
+                    'reduction_reason': result.reduction_reason.value,
+                    'reasoning': result.reasoning,
+                    'confidence': result.confidence
+                }
+                
+                # Update stats
+                reason_key = result.reduction_reason.value
+                if reason_key in stats:
+                    stats[reason_key] += 1
+            else:
+                stats['unchanged'] += 1
+            
+            calibrated.append(finding_copy)
+        
+        return calibrated, stats
+
+
 if __name__ == "__main__":
     # Example usage
     from core.function_context_analyzer import FunctionContextAnalyzer
@@ -572,4 +839,33 @@ if __name__ == "__main__":
     print(f"  Should Report: {impact.should_report}")
     print(f"  Severity Adjustment: {impact.severity_adjustment}")
     print(f"  Reasoning: {impact.reasoning}")
+    
+    # Test enhanced severity calibration
+    print("\n--- Enhanced Severity Calibration Test ---")
+    calibrator = EnhancedSeverityCalibrator()
+    
+    test_findings = [
+        {
+            'title': 'User Self-Harm Issue',
+            'severity': 'high',
+            'description': "User's own transaction fails if they provide invalid gas parameter"
+        },
+        {
+            'title': 'Malicious Token Attack',
+            'severity': 'high', 
+            'description': 'A malicious token could manipulate balanceOf to bypass checks'
+        },
+        {
+            'title': 'Admin Misconfiguration',
+            'severity': 'critical',
+            'description': 'Admin must set correct parameters or protocol breaks'
+        },
+    ]
+    
+    for f in test_findings:
+        result = calibrator.calibrate_severity(f)
+        print(f"\n{f['title']}:")
+        print(f"  Original: {result.original_severity} → Adjusted: {result.adjusted_severity}")
+        print(f"  Reason: {result.reduction_reason.value}")
+        print(f"  Reasoning: {result.reasoning}")
 

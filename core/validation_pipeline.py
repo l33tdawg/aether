@@ -51,6 +51,15 @@ class ValidationPipeline:
         
         # NEW: Protocol-level protection detector (optional, lazy-loaded)
         self._protocol_protection_detector = None
+        
+        # NEW: Cross-contract analyzer for external call access control (Dec 2025)
+        self._cross_contract_analyzer = None
+        
+        # NEW: Design pattern detector for safe permissionless patterns (Dec 2025)
+        self._design_pattern_detector = None
+        
+        # NEW: Enhanced severity calibrator (Dec 2025)
+        self._severity_calibrator = None
     
     @property
     def governance_detector(self):
@@ -206,6 +215,39 @@ class ValidationPipeline:
                 self._enhanced_fp_filter = None
         return self._enhanced_fp_filter
     
+    @property
+    def cross_contract_analyzer(self):
+        """Lazy load cross-contract analyzer (Dec 2025)."""
+        if self._cross_contract_analyzer is None:
+            try:
+                from core.cross_contract_analyzer import CrossContractAnalyzer
+                self._cross_contract_analyzer = CrossContractAnalyzer(project_root=self.project_path)
+            except ImportError:
+                self._cross_contract_analyzer = None
+        return self._cross_contract_analyzer
+    
+    @property
+    def design_pattern_detector(self):
+        """Lazy load design pattern detector (Dec 2025)."""
+        if self._design_pattern_detector is None:
+            try:
+                from core.design_pattern_detector import DesignPatternDetector
+                self._design_pattern_detector = DesignPatternDetector()
+            except ImportError:
+                self._design_pattern_detector = None
+        return self._design_pattern_detector
+    
+    @property
+    def severity_calibrator(self):
+        """Lazy load enhanced severity calibrator (Dec 2025)."""
+        if self._severity_calibrator is None:
+            try:
+                from core.impact_analyzer import EnhancedSeverityCalibrator
+                self._severity_calibrator = EnhancedSeverityCalibrator()
+            except ImportError:
+                self._severity_calibrator = None
+        return self._severity_calibrator
+    
     def _extract_contract_name(self) -> str:
         """Extract primary contract name from code."""
         import re
@@ -282,6 +324,20 @@ class ValidationPipeline:
         access_control_check = self._check_enhanced_access_control(vulnerability)
         if access_control_check and access_control_check.is_false_positive:
             results.append(access_control_check)
+            return results  # Early exit
+        
+        # Stage 1.75: Cross-contract access control check (NEW - Dec 2025)
+        # Check if external calls enforce access control that protects this function
+        cross_contract_check = self._check_cross_contract_access_control(vulnerability)
+        if cross_contract_check and cross_contract_check.is_false_positive:
+            results.append(cross_contract_check)
+            return results  # Early exit
+        
+        # Stage 1.76: Safe design pattern check (NEW - Dec 2025)
+        # Check for intentionally permissionless patterns (migration helpers, pull payments, etc.)
+        design_pattern_check = self._check_safe_design_pattern(vulnerability)
+        if design_pattern_check and design_pattern_check.is_false_positive:
+            results.append(design_pattern_check)
             return results  # Early exit
         
         # Stage 1.8: Parameter origin check (NEW - admin-configured vs user-controlled)
@@ -1403,6 +1459,128 @@ class ValidationPipeline:
         end = self._find_function_end(match.end(), contract_code)
         
         return contract_code[start:end]
+    
+    def _check_cross_contract_access_control(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check for cross-contract access control (Dec 2025).
+        
+        Some functions appear permissionless but are actually protected by
+        access control enforced in external contracts they call.
+        
+        Example: transferFundsFromSharedBridge() is permissionless but calls
+        L1_NULLIFIER.transferTokenToNTV() which requires onlyL1NTV modifier.
+        """
+        if not self.cross_contract_analyzer:
+            return None
+        
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        description = vuln.get('description', '').lower()
+        
+        # Only apply to access control related findings
+        if not any(kw in vuln_type or kw in description 
+                   for kw in ['access control', 'permission', 'authorization', 'missing modifier']):
+            return None
+        
+        # Extract function code
+        function_name = vuln.get('function', '') or self._extract_function_name_from_vuln(vuln)
+        if not function_name:
+            return None
+        
+        function_code = self._extract_function_code(function_name)
+        if not function_code:
+            return None
+        
+        try:
+            # Check if function is permissionless but protected by external calls
+            is_safe, reasoning = self.cross_contract_analyzer.is_permissionless_but_safe(
+                function_code,
+                self.contract_code,
+                self.project_path
+            )
+            
+            if is_safe:
+                return ValidationStage(
+                    stage_name="cross_contract_access_control",
+                    is_false_positive=True,
+                    confidence=0.88,
+                    reasoning=f"Cross-contract protection: {reasoning}"
+                )
+            
+            # Also try the enhanced access control check
+            result = self.cross_contract_analyzer.enhance_access_control_check(
+                vuln,
+                function_code,
+                self.contract_code,
+                self.project_path
+            )
+            
+            if result.has_access_control and result.confidence >= 0.85:
+                return ValidationStage(
+                    stage_name="cross_contract_access_control",
+                    is_false_positive=True,
+                    confidence=result.confidence,
+                    reasoning=result.reasoning
+                )
+        except Exception as e:
+            # Don't fail validation pipeline if cross-contract analysis fails
+            pass
+        
+        return None
+    
+    def _check_safe_design_pattern(self, vuln: Dict) -> Optional[ValidationStage]:
+        """
+        Check for safe permissionless design patterns (Dec 2025).
+        
+        Some functions are intentionally permissionless by design:
+        - Migration helpers
+        - Pull payments
+        - Factory deployments
+        - Sync operations
+        - Bridge relays
+        
+        These should not be flagged as access control vulnerabilities.
+        """
+        if not self.design_pattern_detector:
+            return None
+        
+        vuln_type = vuln.get('vulnerability_type', '').lower()
+        description = vuln.get('description', '').lower()
+        
+        # Only apply to access control related findings
+        if not any(kw in vuln_type or kw in description 
+                   for kw in ['access control', 'permission', 'authorization', 'missing modifier']):
+            return None
+        
+        # Extract function info
+        function_name = vuln.get('function', '') or self._extract_function_name_from_vuln(vuln)
+        if not function_name:
+            return None
+        
+        function_code = self._extract_function_code(function_name)
+        if not function_code:
+            return None
+        
+        try:
+            # Check if finding should be filtered due to safe design pattern
+            should_filter, reasoning = self.design_pattern_detector.should_filter_access_control_finding(
+                vuln,
+                function_name,
+                function_code,
+                self.contract_code
+            )
+            
+            if should_filter:
+                return ValidationStage(
+                    stage_name="safe_design_pattern",
+                    is_false_positive=True,
+                    confidence=0.85,
+                    reasoning=f"Safe design pattern: {reasoning}"
+                )
+        except Exception as e:
+            # Don't fail validation pipeline if pattern detection fails
+            pass
+        
+        return None
     
     def _check_parameter_origin(self, vuln: Dict) -> Optional[ValidationStage]:
         """
