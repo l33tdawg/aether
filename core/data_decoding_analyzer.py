@@ -519,9 +519,12 @@ class DataDecodingAnalyzer:
             if self._is_in_view_function(contract_content, line_number):
                 return True
         
-        # NEW: Skip if decoding external call results
-        if 'abi.decode(' in code_snippet and any(pattern in code_snippet for pattern in ['returnData', 'response', 'result', 'data']):
-            return True
+        # NEW: Skip if decoding external call results (but NOT msg.data which is a vulnerability)
+        # Be specific to avoid filtering msg.data which we want to detect
+        external_result_patterns = ['returnData', 'responseData', 'resultData', 'callResult', 'callData']
+        if 'abi.decode(' in code_snippet and 'msg.data' not in code_snippet:
+            if any(pattern in code_snippet for pattern in external_result_patterns):
+                return True
         
         # NEW: Skip CCIP-Read patterns
         if any(pattern in code_snippet for pattern in ['extraData', 'OffchainLookup', 'resolveCallback', 'response']):

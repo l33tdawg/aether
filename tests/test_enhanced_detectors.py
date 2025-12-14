@@ -346,7 +346,7 @@ class TestDataDecodingAnalyzer(unittest.TestCase):
         contract = """
         contract Test {
             function processData() public {
-                (uint256 value) = abi.decode(msg.data[4:], (uint256));  // Direct msg.data decoding
+                uint256 value = abi.decode(msg.data[4:], (uint256));  // Direct msg.data decoding
             }
         }
         """
@@ -525,18 +525,19 @@ class TestPerformance(unittest.TestCase):
     
     def _generate_large_contract(self, lines: int) -> str:
         """Generate a large contract for testing."""
-        contract = "contract LargeTest {\n"
-        
+        # Note: Use 'func' prefix instead of 'test' to avoid Foundry test pattern filtering
+        contract = "contract LargeContract {\n"
+
         for i in range(lines):
             if i % 10 == 0:
-                contract += f"    function test{i}() public {{\n"
+                contract += f"    function process{i}() public {{\n"
                 contract += f"        uint256 a = {i};\n"
                 contract += f"        uint256 b = a * 2;  // Potential overflow\n"
                 contract += f"        uint256 c = a / b;  // Potential division by zero\n"
                 contract += f"    }}\n"
             else:
                 contract += f"    uint256 var{i} = {i};\n"
-        
+
         contract += "}\n"
         return contract
 
