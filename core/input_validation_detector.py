@@ -285,7 +285,126 @@ class InputValidationDetector:
         vulnerabilities.extend(self._detect_signature_validation_issues(contract_content, lines))
         vulnerabilities.extend(self._detect_zero_value_issues(contract_content, lines))
         
+        # NEW: Detect missing zero-address validation in admin setter functions
+        vulnerabilities.extend(self._detect_admin_setter_zero_address_issues(contract_content, lines))
+        
         return vulnerabilities
+    
+    def _detect_admin_setter_zero_address_issues(self, contract_content: str, lines: List[str]) -> List[InputValidationVulnerability]:
+        """
+        Detect admin setter functions that set address parameters without zero-address validation.
+        
+        This addresses the issue found in ADI-Stack-Contracts Bridgehub.sol setAddresses() 
+        where critical addresses were set without checking for address(0).
+        """
+        vulnerabilities = []
+        
+        # Pattern for setter functions that set addresses with admin modifiers
+        # Matches: function setX(...address _param...) external onlyOwner/onlyAdmin
+        setter_pattern = r'function\s+(set\w+|update\w+|change\w+|configure\w+)\s*\(([^)]*)\)\s*([^{]*)\{'
+        
+        # Admin modifier patterns
+        admin_modifiers = [
+            'onlyOwner', 'onlyAdmin', 'onlyRole', 'onlyGovernance',
+            'onlyOwnerOrAdmin', 'onlyOperator', 'onlyManager', 'authorized'
+        ]
+        
+        for match in re.finditer(setter_pattern, contract_content, re.IGNORECASE | re.DOTALL):
+            func_name = match.group(1)
+            params_str = match.group(2)
+            modifiers_str = match.group(3)
+            func_start = match.start()
+            line_number = self._get_line_number(func_start, contract_content)
+            
+            # Check if this function has admin modifiers
+            has_admin_modifier = any(mod in modifiers_str for mod in admin_modifiers)
+            
+            # Check if function is external or public
+            is_external = 'external' in modifiers_str or 'public' in modifiers_str
+            
+            if not is_external:
+                continue
+            
+            # Extract address parameters from the function signature
+            address_params = re.findall(r'(?:address|I\w+)\s+(\w+)', params_str)
+            
+            if not address_params:
+                continue
+            
+            # Get function body to check for zero-address validation
+            func_body = self._get_function_content(contract_content, line_number)
+            if not func_body:
+                continue
+            
+            # Check each address parameter for zero-address validation
+            for param in address_params:
+                has_zero_check = self._has_zero_address_check(func_body, param)
+                
+                if not has_zero_check:
+                    # Determine severity based on admin modifier presence
+                    severity = 'low' if has_admin_modifier else 'medium'
+                    
+                    # Determine confidence based on context
+                    confidence = 0.85 if has_admin_modifier else 0.75
+                    
+                    # Extract code snippet
+                    snippet_end = min(func_start + 200, len(contract_content))
+                    code_snippet = contract_content[func_start:snippet_end].strip()
+                    
+                    vulnerability = InputValidationVulnerability(
+                        vulnerability_type='missing_zero_address_check',
+                        severity=severity,
+                        description=f'Admin function {func_name}() sets address parameter "{param}" without zero-address validation. '
+                                    f'If called with address(0), it could brick the contract functionality.',
+                        line_number=line_number,
+                        code_snippet=code_snippet[:150] + '...' if len(code_snippet) > 150 else code_snippet,
+                        confidence=confidence,
+                        swc_id='SWC-123',
+                        recommendation=f'Add validation: require({param} != address(0), "{func_name}: zero address");',
+                        parameter_name=param,
+                        parameter_type='address'
+                    )
+                    vulnerabilities.append(vulnerability)
+        
+        return vulnerabilities
+    
+    def _has_zero_address_check(self, func_body: str, param_name: str) -> bool:
+        """
+        Check if a function body contains zero-address validation for a parameter.
+        
+        Looks for patterns like:
+        - require(param != address(0))
+        - if (param == address(0)) revert
+        - revert ZeroAddress() style custom errors
+        """
+        if not func_body:
+            return False
+        
+        # Normalize whitespace for matching
+        func_body_normalized = ' '.join(func_body.split())
+        
+        # Check for various zero-address validation patterns
+        zero_check_patterns = [
+            # require(param != address(0))
+            rf'require\s*\(\s*{re.escape(param_name)}\s*!=\s*address\s*\(\s*0\s*\)',
+            rf'require\s*\(\s*address\s*\(\s*{re.escape(param_name)}\s*\)\s*!=\s*address\s*\(\s*0\s*\)',
+            # if (param == address(0)) revert
+            rf'if\s*\(\s*{re.escape(param_name)}\s*==\s*address\s*\(\s*0\s*\)',
+            rf'if\s*\(\s*address\s*\(\s*{re.escape(param_name)}\s*\)\s*==\s*address\s*\(\s*0\s*\)',
+            # Custom error reverts with ZeroAddress
+            rf'{re.escape(param_name)}.*ZeroAddress',
+            rf'ZeroAddress.*{re.escape(param_name)}',
+            # General zero address check on the parameter
+            rf'require\s*\([^)]*{re.escape(param_name)}[^)]*!=\s*address\s*\(\s*0\s*\)',
+            # != address(0x0) variant
+            rf'{re.escape(param_name)}\s*!=\s*address\s*\(\s*0x0\s*\)',
+        ]
+        
+        for pattern in zero_check_patterns:
+            if re.search(pattern, func_body_normalized, re.IGNORECASE):
+                return True
+        
+        return False
     
     def _detect_missing_input_validation(self, contract_content: str, lines: List[str]) -> List[InputValidationVulnerability]:
         """Detect missing input validation in functions"""

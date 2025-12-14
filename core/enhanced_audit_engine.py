@@ -950,13 +950,20 @@ class EnhancedAetherAuditEngine:
         vulns = security_findings
         
         # Configurable thresholds via env
+        # NEW: Include informational findings by default for comprehensive reports
+        # LLM validation still defaults to medium to save API costs
+        include_informational = os.getenv('AETHER_INCLUDE_INFORMATIONAL', '1') == '1'
+        
         if for_llm:
+            # LLM validation uses higher threshold to control costs (default: medium)
             min_sev = os.getenv('AETHER_LLM_TRIAGE_MIN_SEVERITY', os.getenv('AETHER_TRIAGE_MIN_SEVERITY', 'medium'))
             min_conf = float(os.getenv('AETHER_LLM_TRIAGE_MIN_CONFIDENCE', os.getenv('AETHER_TRIAGE_MIN_CONFIDENCE', '0.40')))
             max_items = int(os.getenv('AETHER_LLM_TRIAGE_MAX_ITEMS', os.getenv('AETHER_TRIAGE_MAX_ITEMS', '200')))
             max_per_type = int(os.getenv('AETHER_LLM_TRIAGE_MAX_PER_TYPE', os.getenv('AETHER_TRIAGE_MAX_PER_TYPE', '30')))
         else:
-            min_sev = os.getenv('AETHER_TRIAGE_MIN_SEVERITY', 'medium')
+            # Report generation includes low/informational by default for comprehensive audits
+            default_min_sev = 'informational' if include_informational else 'medium'
+            min_sev = os.getenv('AETHER_TRIAGE_MIN_SEVERITY', default_min_sev)
             min_conf = float(os.getenv('AETHER_TRIAGE_MIN_CONFIDENCE', '0.40'))
             max_items = int(os.getenv('AETHER_TRIAGE_MAX_ITEMS', '200'))
             max_per_type = int(os.getenv('AETHER_TRIAGE_MAX_PER_TYPE', '30'))
