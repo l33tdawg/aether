@@ -291,6 +291,89 @@ class TestEdgeCases:
         assert isinstance(result, dict)
 
 
+class TestCommentLineCorrection:
+    """Test correction of comment line numbers."""
+    
+    @pytest.fixture
+    def validator(self):
+        return LineNumberValidator()
+    
+    def test_comment_line_correction_to_constructor(self, validator):
+        """Test that comment lines are corrected to actual code."""
+        contract = """// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {IBridgehub} from "./interfaces/IBridgehub.sol";
+
+contract MessageRoot {
+    IBridgehub public immutable BRIDGE_HUB;
+    
+    /// @notice Initializes the contract with the bridgehub address
+    /// @param _bridgehub The address of the bridgehub contract
+    constructor(IBridgehub _bridgehub) {
+        BRIDGE_HUB = _bridgehub;
+    }
+}
+"""
+        # Finding points to line 10 (comment) instead of line 11 (constructor)
+        finding = {
+            'title': 'Unchecked Input',
+            'description': 'The constructor(IBridgehub _bridgehub) parameter is not validated',
+            'line_number': 10,  # Points to comment
+        }
+        
+        result = validator.validate_finding_line_number(finding, contract)
+        
+        # Should be corrected to constructor line
+        assert result.get('line_validation', {}).get('status') == 'corrected'
+        assert result.get('line_number') == 11  # Constructor line
+    
+    def test_comment_block_skipped(self, validator):
+        """Test that multi-line comments are skipped."""
+        contract = """// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/**
+ * @notice This is a test contract
+ * @dev Used for testing purposes
+ */
+contract Test {
+    function doSomething() external {
+        // Some logic
+    }
+}
+"""
+        # Finding points to NatSpec comment
+        finding = {
+            'title': 'Missing Validation',
+            'description': 'The doSomething function lacks input validation',
+            'line_number': 5,  # Points to NatSpec
+        }
+        
+        result = validator.validate_finding_line_number(finding, contract)
+        
+        # Should detect it's a comment and try to correct
+        validation = result.get('line_validation', {})
+        assert validation.get('status') in ['corrected', 'uncertain']
+    
+    def test_is_comment_detection(self, validator):
+        """Test comment detection helper."""
+        assert validator._is_comment_or_empty("// This is a comment") is True
+        assert validator._is_comment_or_empty("/// NatSpec comment") is True
+        assert validator._is_comment_or_empty("/** Multi-line start") is True
+        assert validator._is_comment_or_empty(" * continuation") is True
+        assert validator._is_comment_or_empty("   */") is True
+        assert validator._is_comment_or_empty("") is True
+        assert validator._is_comment_or_empty("   ") is True
+        assert validator._is_comment_or_empty("{") is True
+        assert validator._is_comment_or_empty("}") is True
+        
+        # Actual code should return False
+        assert validator._is_comment_or_empty("function test() {") is False
+        assert validator._is_comment_or_empty("constructor() {") is False
+        assert validator._is_comment_or_empty("uint256 x = 5;") is False
+
+
 class TestIntegration:
     """Integration tests for line number validation."""
     

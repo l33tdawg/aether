@@ -94,9 +94,25 @@ class LineNumberValidator:
             }
             return finding
 
-        # Check 2: Line content matches description
+        # Check 2: Line is a comment or empty - find actual code line
         line_content = lines[reported_line - 1]
+        
+        if self._is_comment_or_empty(line_content):
+            # Line is a comment, find the actual code
+            corrected_line = self._find_nearest_code_line(reported_line, lines, finding)
+            if corrected_line and corrected_line != reported_line:
+                finding['line_number'] = corrected_line
+                finding['line'] = corrected_line
+                finding['line_validation'] = {
+                    'status': 'corrected',
+                    'original_line': reported_line,
+                    'corrected_to': corrected_line,
+                    'confidence': 0.90,
+                    'reason': f'Line {reported_line} is a comment, corrected to code at line {corrected_line}'
+                }
+                return finding
 
+        # Check 3: Line content matches description
         # Extract key identifiers from description
         key_identifiers = self._extract_identifiers(description, title, code_snippet)
 
@@ -168,6 +184,97 @@ class LineNumberValidator:
             'reason': 'Could not find matching identifiers near reported line'
         }
         return finding
+
+    def _is_comment_or_empty(self, line: str) -> bool:
+        """Check if a line is a comment or empty."""
+        stripped = line.strip()
+        
+        # Empty line
+        if not stripped:
+            return True
+        
+        # Single-line comment
+        if stripped.startswith('//'):
+            return True
+        
+        # Multi-line comment start/end or content
+        if stripped.startswith('/*') or stripped.startswith('*') or stripped.endswith('*/'):
+            return True
+        
+        # NatSpec comments
+        if stripped.startswith('///') or stripped.startswith('/**'):
+            return True
+        
+        # Just opening/closing braces
+        if stripped in ['{', '}', '};']:
+            return True
+        
+        return False
+
+    def _find_nearest_code_line(
+        self,
+        reported_line: int,
+        lines: List[str],
+        finding: Dict[str, Any]
+    ) -> Optional[int]:
+        """
+        Find the nearest actual code line from a comment line.
+        
+        Searches forward first (comments usually precede code),
+        then backward if no code found forward.
+        """
+        description = finding.get('description', '').lower()
+        title = finding.get('title', '').lower()
+        
+        # Keywords to look for based on the finding
+        keywords = []
+        if 'constructor' in description or 'constructor' in title:
+            keywords.append('constructor')
+        if 'function' in description:
+            # Extract function name
+            import re
+            func_match = re.search(r'`?(\w+)`?\s+function|function\s+`?(\w+)`?', description)
+            if func_match:
+                keywords.append(func_match.group(1) or func_match.group(2))
+        
+        # Search forward first (up to 10 lines)
+        for offset in range(1, 11):
+            check_idx = reported_line - 1 + offset
+            if check_idx >= len(lines):
+                break
+            
+            line_content = lines[check_idx]
+            if not self._is_comment_or_empty(line_content):
+                # Found code line, check if it matches keywords
+                if keywords:
+                    if any(kw.lower() in line_content.lower() for kw in keywords):
+                        return check_idx + 1  # 1-indexed
+                else:
+                    # No specific keywords, return first code line
+                    return check_idx + 1
+        
+        # Search backward if forward search didn't find matching keywords
+        for offset in range(1, 11):
+            check_idx = reported_line - 1 - offset
+            if check_idx < 0:
+                break
+            
+            line_content = lines[check_idx]
+            if not self._is_comment_or_empty(line_content):
+                if keywords:
+                    if any(kw.lower() in line_content.lower() for kw in keywords):
+                        return check_idx + 1
+                # Don't return non-keyword matches going backward
+        
+        # Return first code line found forward
+        for offset in range(1, 11):
+            check_idx = reported_line - 1 + offset
+            if check_idx >= len(lines):
+                break
+            if not self._is_comment_or_empty(lines[check_idx]):
+                return check_idx + 1
+        
+        return None
 
     def _extract_identifiers(self, description: str, title: str, code_snippet: str = "") -> List[str]:
         """Extract function/variable names from finding description and title."""
