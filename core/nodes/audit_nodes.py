@@ -212,7 +212,8 @@ solc_version = "0.7.5"
 
                 # Setup environment
                 env = os.environ.copy()
-                env['PATH'] = f"/Users/l33tdawg/.foundry/bin:{env.get('PATH', '')}"
+                foundry_bin = str(Path.home() / ".foundry/bin")
+                env['PATH'] = f"{foundry_bin}:{env.get('PATH', '')}"
 
                 # Install forge-std
                 subprocess.run(
