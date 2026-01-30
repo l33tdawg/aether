@@ -770,7 +770,7 @@ shrink_run_limit = 5000
 
                 # Run fuzzing
                 env = os.environ.copy()
-                foundry_path = "/Users/l33tdawg/.foundry/bin"
+                foundry_path = str(Path.home() / ".foundry/bin")
                 env['PATH'] = f"{foundry_path}:{env.get('PATH', '')}"
 
                 # Run fuzz tests
