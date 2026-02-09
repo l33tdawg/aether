@@ -8,6 +8,7 @@ ensuring database connections are properly closed before exit.
 import signal
 import sys
 import atexit
+import threading
 from typing import Optional, Callable, List
 from pathlib import Path
 
@@ -31,10 +32,16 @@ class GracefulShutdownHandler:
             self.cleanup_callbacks.append(callback)
     
     def setup_signal_handlers(self):
-        """Set up signal handlers for graceful shutdown."""
-        signal.signal(signal.SIGINT, self._handle_signal)
-        signal.signal(signal.SIGTERM, self._handle_signal)
-        
+        """Set up signal handlers for graceful shutdown.
+
+        signal.signal() can only be called from the main thread.
+        When called from a daemon thread (e.g. AuditRunner workers),
+        we skip signal registration but still register the atexit handler.
+        """
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, self._handle_signal)
+            signal.signal(signal.SIGTERM, self._handle_signal)
+
         # Register cleanup on normal exit
         atexit.register(self._cleanup)
     

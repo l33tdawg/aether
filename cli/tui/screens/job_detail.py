@@ -61,7 +61,7 @@ class JobDetailScreen(Screen):
     }
 
     JobDetailScreen #metadata .meta-title {
-        color: cyan bold;
+        color: cyan;
         text-style: bold;
         margin-bottom: 1;
     }
