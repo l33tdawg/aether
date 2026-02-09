@@ -1,12 +1,12 @@
-# Aether v2.0 — Smart Contract Security Analysis Framework
+# Aether v2.1 — Smart Contract Security Analysis Framework
 
-**Version 2.0** | [What's New in v2.0](#whats-new-in-v20) | [Changelog](#changelog)
+**Version 2.1** | [What's New in v2.1](#whats-new-in-v21) | [Changelog](#changelog)
 
-Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines static analysis (Slither), prompt-driven LLM analysis, AI-ensemble reasoning, and advanced false-positive filtering into a single guided workflow.
+Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines 60+ pattern-based static detectors, prompt-driven LLM analysis (GPT/Gemini/Claude), AI-ensemble reasoning, and advanced false-positive filtering into a single guided workflow.
 
-## What's New in v2.0
+## What's New in v2.1
 
-**Interactive Menu-Driven TUI** — Aether v2.0 replaces the command-memorization workflow with a guided interactive experience. Just run `python aether.py` (or `python main.py` with no arguments) and you get:
+**Interactive Menu-Driven TUI** — Aether replaces the command-memorization workflow with a guided interactive experience. Just run `python aether.py` (or `python main.py` with no arguments) and you get:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -35,6 +35,8 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
 - **Multi-chain contract fetching** — select network, paste address or URL, optionally audit immediately
 - **Settings management** — full setup wizard, API key config, model selection, triage tuning
 - **Power-user CLI preserved** — all `python main.py <command>` workflows still work for scripting and CI/CD
+
+**Parallel Audit Engine**: Run multiple contract audits concurrently with a real-time Rich Live dashboard showing per-contract progress, phases, and findings. Configurable concurrency (up to 8 contracts in parallel).
 
 **Three-Provider LLM Support**: OpenAI (GPT-5/5.3), Google Gemini (2.5/3.0), and Anthropic Claude (Sonnet 4.5/Opus 4.6) for maximum flexibility and redundancy.
 
@@ -85,7 +87,6 @@ python main.py audit ./contracts --enhanced --ai-ensemble --llm-validation -o ./
 - **Node.js 22+** (for Hardhat/npm-based projects)
 - **Foundry (forge/anvil)** on PATH for PoC generation and validation
 - **solc-select** for multiple Solidity compiler versions
-- **Optional: Slither** for static analysis integration (v0.10.0 recommended)
 - **API keys for LLM features:**
   - `OPENAI_API_KEY` (for GPT models)
   - `GEMINI_API_KEY` (for Gemini models)
@@ -100,9 +101,6 @@ If you prefer manual installation:
 # Foundry
 curl -L https://foundry.paradigm.xyz | bash && foundryup
 export PATH="$PATH:$HOME/.foundry/bin"
-
-# Slither (optional)
-pip install slither-analyzer==0.10.0
 
 # solc-select
 pip install solc-select
@@ -236,14 +234,16 @@ Use `python main.py <command> --help` for full options on any subcommand.
 
 ## Scope and Capabilities
 
-- **Static analysis** — Slither integration + 60+ pattern-based detectors
+- **Static analysis** — 60+ pattern-based detectors (reentrancy, access control, arithmetic, oracle manipulation, flash loans, MEV, governance, DeFi-specific, and more)
 - **LLM analysis** — Structured, validation-oriented analysis with OpenAI, Gemini, and Claude; automatic provider fallback
 - **AI ensemble** — Multi-agent coordination with consensus-based reasoning (6 agents: 2 OpenAI, 2 Gemini, 2 Anthropic)
+- **Parallel auditing** — Concurrent multi-contract analysis with real-time Rich Live dashboard
 - **False positive filtering** — 4-stage validation pipeline with governance, deployment, and LLM-based filtering
 - **GitHub audit workflow** — Clone repos, detect frameworks, discover contracts, interactive scope selection, persistent state
 - **Foundry PoC generation** — AST-based analysis, iterative compilation feedback, production-ready exploit prompts
 - **Multi-chain contract fetching** — 10+ EVM networks + Solana support
 - **Reporting** — Markdown, JSON, HTML report generation from audit data
+- **LLM usage tracking** — Token usage, cost tracking, and post-audit summary across all providers
 - **Persistence** — Two SQLite databases for engine results and GitHub audit workflow
 
 ## Output Directories
@@ -257,7 +257,6 @@ Use `python main.py <command> --help` for full options on any subcommand.
 ## Troubleshooting
 
 - **Foundry not found** — Ensure `forge`/`anvil` are installed and on `PATH` (`foundryup` and `export PATH="$PATH:$HOME/.foundry/bin"`)
-- **Slither not found** — Install with `pip install slither-analyzer==0.10.0`. If unavailable, the pipeline skips Slither
 - **solc not found** — Install `solc-select` and required versions: `solc-select install 0.8.20 latest`
 - **LLM features not working** — Verify API keys are set. Some models may be unavailable in your account/region; the system falls back automatically
 - **Database not found** — For GitHub reports, ensure the audit workflow has been run first
@@ -266,8 +265,10 @@ Use `python main.py <command> --help` for full options on any subcommand.
 
 ## Tests
 
+729 tests across 47 focused test files, running in ~12 seconds:
+
 ```bash
-python -m pytest tests/                                    # All tests
+python -m pytest tests/                                    # All tests (~12s)
 python -m pytest tests/test_enhanced_detectors.py -v       # Single file
 python -m pytest tests/ -k "governance" -v                 # Pattern match
 python -m pytest tests/ --cov=core --cov-report=html       # With coverage
@@ -286,8 +287,9 @@ python -m pytest tests/ --cov=core --cov-report=html       # With coverage
 ### Core Layers
 - **Detection** — `core/enhanced_vulnerability_detector.py` + specialized detectors (DeFi, MEV, oracle, arithmetic, gas, business logic, state management, centralization, looping, data inconsistency)
 - **Validation** — `core/validation_pipeline.py` (4-stage pipeline), `core/governance_detector.py`, `core/deployment_analyzer.py`, `core/llm_false_positive_filter.py`
-- **LLM & AI** — `core/enhanced_llm_analyzer.py`, `core/ai_ensemble.py`, `core/enhanced_prompts.py`
+- **LLM & AI** — `core/enhanced_llm_analyzer.py`, `core/ai_ensemble.py`, `core/enhanced_prompts.py`, `core/llm_usage_tracker.py`
 - **PoC Generation** — `core/foundry_poc_generator.py` (AST-based, ~8000 lines), `core/llm_foundry_generator.py`, `core/enhanced_foundry_integration.py`
+- **Orchestration** — `core/parallel_audit_manager.py` (concurrent audits), `core/audit_progress.py` (thread-safe tracking), `core/audit_dashboard.py` (Rich Live dashboard), `core/post_audit_summary.py`
 - **Persistence** — `core/database_manager.py` (DatabaseManager + AetherDatabase), `core/analysis_cache.py`, `core/accuracy_tracker.py`
 - **Integrations** — `core/github_auditor.py`, `core/etherscan_fetcher.py`, `core/basescan_fetcher.py`, `core/exploit_tester.py`, `core/fork_verifier.py`
 
@@ -297,6 +299,15 @@ Audit flows defined in YAML configs (`configs/`). Enhanced audit pipeline:
 
 
 ## Changelog
+
+### v2.1 — Parallel Audits, Slither Removal & Test Cleanup
+- **Parallel audit engine** — run multiple contracts concurrently with `ThreadPoolExecutor`, configurable up to 8 parallel workers
+- **Real-time audit dashboard** — Rich Live TUI showing per-contract progress bars, current phase, findings count, and elapsed time
+- **Thread-safe progress tracking** — `ContractAuditStatus` with locking, `ThreadDemuxWriter` for stdout multiplexing by thread ID
+- **Post-audit summary** — consolidated results view after parallel audits complete
+- **LLM usage tracking** — track token usage, costs, and API calls across all three providers
+- **Slither fully removed** — all Slither dependencies, integration code, config references, and tests deleted (~1200 lines); pattern-based detectors + Foundry ABI + regex are now the sole static analysis tools
+- **Test suite cleanup** — removed 40+ old/slow/integration test files; 729 tests pass in ~12 seconds across 47 focused test files
 
 ### v2.0 — Interactive Menu TUI
 - Interactive menu-driven TUI as the primary interface (`python aether.py`)
