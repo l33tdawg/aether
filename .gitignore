@@ -177,6 +177,7 @@ docs/
 !foundry.toml
 scripts/fix_unknown_vulnerability_types.py
 *.md
+!CLAUDE.md
 
 # Local web UI (ignored until release)
 webui/
