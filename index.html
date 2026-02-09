@@ -1084,7 +1084,7 @@
         <section id="home" class="hero">
             <div class="container">
                 <h1>Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories</h1>
-                <p><strong>Stop the Setup Nightmare.</strong> Manual repository configuration, scope management, and environment setup for every target is exhausting. Aether eliminates the complexity—just supply a URL and watch it analyze, detect vulnerabilities, and generate production-ready exploits automatically.</p>
+                <p><strong>Stop the Setup Nightmare.</strong> Manual repository configuration, scope management, and environment setup for every target is exhausting. Aether eliminates the complexity with a persistent full-screen TUI—supply a URL, select your scope, and watch it analyze, detect vulnerabilities, and generate production-ready exploits in the background while you work on the next target.</p>
                 <div class="hero-buttons">
                     <a href="#installation" class="btn-primary">Get Started</a>
                     <a href="#features" class="btn-secondary">Learn More</a>
@@ -1102,13 +1102,13 @@
                     <div class="feature-card reveal">
                         <div class="feature-icon search"></div>
                         <h3>Multi-Layer Analysis</h3>
-                        <p>Combines static analysis with pattern-based detectors, Slither integration, and advanced vulnerability detection for comprehensive smart contract security assessment.</p>
+                        <p>Combines 60+ pattern-based detectors with advanced vulnerability detection, multi-stage false positive filtering, and governance-aware validation for comprehensive smart contract security assessment.</p>
                     </div>
 
                     <div class="feature-card reveal reveal-delay-1">
                         <div class="feature-icon ai"></div>
                         <h3>AI-Powered Detection</h3>
-                        <p>Advanced LLM analysis with OpenAI and Gemini integration, AI ensemble coordination, intelligent false positive filtering, and automated vulnerability classification for production-ready security intelligence.</p>
+                        <p>Advanced LLM analysis with OpenAI, Gemini, and Anthropic Claude integration, AI ensemble coordination with six-agent consensus, intelligent false positive filtering, and automated vulnerability classification for production-ready security intelligence.</p>
                     </div>
 
                     <div class="feature-card reveal reveal-delay-2">
@@ -1141,30 +1141,27 @@
         <section class="code-section">
             <div class="container">
                 <h2>Production-Ready Security Analysis</h2>
-                <p class="code-subtitle">Enterprise-Grade Security Intelligence Platform</p>
-                <p class="code-description">Advanced analysis engine delivering the depth, accuracy, and actionable insights that professional security auditors and enterprise teams require for mission-critical smart contract assessments and vulnerability management.</p>
+                <p class="code-subtitle">Persistent Full-Screen TUI</p>
+                <p class="code-description">A persistent full-screen Textual TUI that never drops to a raw terminal. Every operation — audits, PoC generation, reports, GitHub scope selection, settings — runs entirely within the dashboard with live output streaming, concurrent background jobs, and real-time cost tracking.</p>
 
                 <div class="code-block reveal">
                     <div class="code-header">Terminal</div>
-<!-- Example: Comprehensive audit workflow -->
-<span class="keyword">python</span> main.py audit <span class="string">https://github.com/owner/repo</span> \
-  --enhanced \
-  --ai-ensemble \
-  --llm-validation \
-  --interactive-scope \
-  --github-token <span class="string">$GITHUB_TOKEN</span>
+<span class="comment"># Install and launch</span>
+<span class="keyword">python</span> setup.py                  <span class="comment"># Interactive installer</span>
+<span class="keyword">python</span> aether.py                  <span class="comment"># Launch the full-screen TUI</span>
 
-# Generate production-ready Foundry PoCs
-<span class="keyword">python</span> main.py generate-foundry \
-  --from-results <span class="string">./output/results.json</span> \
-  --out <span class="string">./output/pocs</span> \
-  --max-items <span class="number">20</span> \
-  --only-consensus
+<span class="comment"># Keyboard-driven workflow inside the TUI:</span>
+<span class="comment">#   n  New Audit     — local or GitHub repo analysis</span>
+<span class="comment">#   r  Resume        — continue previous audits</span>
+<span class="comment">#   h  History       — browse past results</span>
+<span class="comment">#   p  PoCs          — generate Foundry exploit tests</span>
+<span class="comment">#   o  Reports       — export markdown/json/html</span>
+<span class="comment">#   f  Fetch         — pull contracts from Etherscan</span>
+<span class="comment">#   s  Settings      — configure API keys & models</span>
+<span class="comment">#   q  Quit</span>
 
-# Verify exploits against mainnet fork
-<span class="keyword">python</span> main.py fork-verify <span class="string">./output/pocs</span> \
-  --rpc-url <span class="string">$MAINNET_RPC</span> \
-  --block <span class="number">19000000</span>
+<span class="comment"># Live jobs table — htop-style view of all running jobs</span>
+<span class="comment"># Press Enter on any job to view live output & progress</span>
                 </div>
             </div>
         </section>
@@ -1185,7 +1182,7 @@
                     <div class="workflow-step reveal reveal-delay-1">
                         <div class="workflow-step-number">2</div>
                         <h3>Comprehensive Audit</h3>
-                        <p><strong>Automated Intelligence.</strong> Multi-layered analysis with AI-powered detection eliminates manual configuration and scope definition—get results in minutes, not hours.</p>
+                        <p><strong>Automated Intelligence.</strong> Multi-layered analysis with AI-powered detection runs as background jobs with live output streaming—start multiple audits concurrently and track them all from the htop-style jobs table.</p>
                     </div>
 
                     <div class="workflow-step reveal reveal-delay-2">
