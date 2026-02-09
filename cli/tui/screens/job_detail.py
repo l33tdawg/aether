@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Container
 from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Footer, Header, Static
@@ -33,18 +33,22 @@ class JobDetailScreen(Screen):
     JobDetailScreen #detail-layout {
         layout: horizontal;
         height: 1fr;
+        overflow: hidden;
     }
 
     JobDetailScreen #log-panel {
         width: 1fr;
         height: 100%;
         padding: 0;
+        overflow: hidden;
     }
 
     JobDetailScreen #side-panel {
+        layout: vertical;
         width: 40;
         height: 100%;
         padding: 0 1;
+        overflow: hidden;
     }
 
     JobDetailScreen #phase-bar {
@@ -54,10 +58,13 @@ class JobDetailScreen(Screen):
 
     JobDetailScreen #metadata {
         height: auto;
+        max-height: 100%;
         padding: 1;
         border: tall $border;
+        border-title-color: cyan;
+        border-title-style: bold;
         background: $surface;
-        overflow-x: hidden;
+        overflow: hidden;
     }
 
     JobDetailScreen .log-viewer {
@@ -78,15 +85,17 @@ class JobDetailScreen(Screen):
 
         yield Header(show_clock=True)
 
-        with Horizontal(id="detail-layout"):
+        with Container(id="detail-layout"):
             # Left panel: log viewer (70%)
-            with Vertical(id="log-panel"):
+            with Container(id="log-panel"):
                 yield LogViewer(id="log-viewer", classes="log-viewer")
 
             # Right panel: phase bar + metadata (30%)
-            with Vertical(id="side-panel"):
+            with Container(id="side-panel"):
                 yield PhaseBar(id="phase-bar")
-                yield Static(self._build_metadata_text(job), id="metadata")
+                meta = Static(self._build_metadata_text(job), id="metadata")
+                meta.border_title = "Job Details"
+                yield meta
 
         yield Footer()
 
@@ -161,8 +170,6 @@ class JobDetailScreen(Screen):
             return "[dim]Job not found[/]"
 
         lines: list[str] = []
-        lines.append("[bold cyan]Job Details[/]")
-        lines.append("")
 
         # Status
         status_display = self._format_status(job.status)
