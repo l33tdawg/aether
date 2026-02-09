@@ -12,7 +12,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, IO, Optional
+from typing import Dict, IO, List, Optional
 
 
 class AuditPhase(Enum):
@@ -88,6 +88,10 @@ _PHASE_INDEX = {
 }
 
 
+LOG_BUFFER_MAX = 5000
+LOG_BUFFER_TRIM = 1000  # Remove oldest N lines when buffer is full
+
+
 @dataclass
 class ContractAuditStatus:
     """Thread-safe per-contract progress tracker."""
@@ -105,6 +109,8 @@ class ContractAuditStatus:
     llm_tokens_input: int = 0
     llm_tokens_output: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _log_buffer: List[str] = field(default_factory=list, repr=False)
+    _log_read_index: int = field(default=0, repr=False)
 
     def set_phase(self, phase: AuditPhase) -> None:
         with self._lock:
@@ -163,6 +169,28 @@ class ContractAuditStatus:
     def phase_index(self) -> int:
         with self._lock:
             return _PHASE_INDEX.get(self.phase, 0)
+
+    def append_log(self, line: str) -> None:
+        """Append a line to the per-job log buffer (thread-safe)."""
+        with self._lock:
+            self._log_buffer.append(line)
+            if len(self._log_buffer) > LOG_BUFFER_MAX:
+                # Trim oldest lines
+                self._log_buffer = self._log_buffer[LOG_BUFFER_TRIM:]
+                # Adjust read index so consumers don't miss the trim
+                self._log_read_index = max(0, self._log_read_index - LOG_BUFFER_TRIM)
+
+    def get_new_log_lines(self) -> List[str]:
+        """Return log lines added since last call (thread-safe)."""
+        with self._lock:
+            new_lines = self._log_buffer[self._log_read_index:]
+            self._log_read_index = len(self._log_buffer)
+            return new_lines
+
+    def get_all_log_lines(self) -> List[str]:
+        """Return a copy of all log lines in the buffer."""
+        with self._lock:
+            return list(self._log_buffer)
 
     def sync_llm_stats(self) -> None:
         """Pull latest totals from the global LLM usage tracker."""
@@ -236,6 +264,7 @@ class ThreadDemuxWriter:
         for line in complete_lines:
             if line.strip():
                 status.update_from_line(line)
+                status.append_log(line)
 
         # Sync LLM stats from global tracker (lightweight read)
         status.sync_llm_stats()

@@ -1,42 +1,32 @@
-# Aether v2.1 — Smart Contract Security Analysis Framework
+# Aether v3.0 — Smart Contract Security Analysis Framework
 
-**Version 2.1** | [What's New in v2.1](#whats-new-in-v21) | [Changelog](#changelog)
+**Version 3.0** | [What's New in v3.0](#whats-new-in-v30) | [Changelog](#changelog)
 
-Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines 60+ pattern-based static detectors, prompt-driven LLM analysis (GPT/Gemini/Claude), AI-ensemble reasoning, and advanced false-positive filtering into a single guided workflow.
+Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines 60+ pattern-based static detectors, prompt-driven LLM analysis (GPT/Gemini/Claude), AI-ensemble reasoning, and advanced false-positive filtering into a single persistent full-screen TUI.
 
-## What's New in v2.1
+## What's New in v3.0
 
-**Interactive Menu-Driven TUI** — Aether replaces the command-memorization workflow with a guided interactive experience. Just run `python aether.py` (or `python main.py` with no arguments) and you get:
+**Fully Inline Textual TUI** — Aether v3.0 is a persistent full-screen application that never drops to a raw terminal. Every operation — audits, PoC generation, report generation, GitHub scope selection, settings configuration — runs entirely within the TUI:
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║               A E T H E R   v 2 . 0                          ║
-║      Smart Contract Security Analysis Framework              ║
-╚══════════════════════════════════════════════════════════════╝
+- **Zero `app.suspend()` calls** — the TUI never disappears, no jarring terminal switches
+- **Background jobs for everything** — local audits, GitHub audits, PoC generation, and report generation all run as daemon threads with live output streaming
+- **Live jobs table** — htop-style view of all running/completed jobs with real-time status, phase progress, findings count, cost, and elapsed time
+- **Per-job drill-down** — press `Enter` on any job to see live scrolling output, phase progress bar, and metadata
+- **Concurrent operations** — start multiple audits, PoC generations, and reports simultaneously; all visible and trackable
+- **Contract selector dialog** — filterable, near-fullscreen multi-select replacing the old curses-based selector. Space to toggle, `a`/`n` for all/none, type to filter, color-coded previously-audited contracts
+- **Inline GitHub audit flow** — clone, discover, select contracts, and launch audits without leaving the TUI. Scope management (continue, re-audit, new scope) via native Textual dialogs
+- **Inline settings** — API key configuration and model selection via TextInputDialog and SelectDialog, no external setup wizard needed
+- **Session cost bar** — real-time LLM cost tracking by provider (OpenAI, Gemini, Anthropic)
+- **Keyboard-driven** — `n` New Audit, `r` Resume, `h` History, `p` PoCs, `o` Reports, `f` Fetch, `s` Settings, `q` Quit
 
-  [1]  New Audit            Start a new security audit
-  [2]  Resume Audit         Continue an in-progress audit
-  [3]  Audit History        Browse past audits & results
-  [4]  Generate PoCs        Create Foundry exploit proofs
-  [5]  Reports              Generate/view audit reports
-  [6]  Fetch Contract       Fetch from blockchain explorers
-  [7]  Settings             Configure API keys, models, tools
-  [8]  Console              Launch advanced Metasploit-style console
-  [0]  Exit
+**Four Background Job Types**: All heavy operations run as background daemon threads via `AuditRunner`, with output captured by `ThreadDemuxWriter` and visible in `JobDetailScreen`:
 
-  Select: _
-```
-
-- **Guided audit wizard** — walks you through source selection, feature toggles, and output config
-- **Resume audits** — pick up exactly where you left off on any in-progress GitHub audit
-- **Audit history** — browse all past audits across local and GitHub sources, with details and re-audit options
-- **Integrated PoC generation** — select project, scope, severity, and generate Foundry exploits in one flow
-- **Report generation** — choose project, scope, format (markdown/json/html/all) from a menu
-- **Multi-chain contract fetching** — select network, paste address or URL, optionally audit immediately
-- **Settings management** — full setup wizard, API key config, model selection, triage tuning
-- **Power-user CLI preserved** — all `python main.py <command>` workflows still work for scripting and CI/CD
-
-**Parallel Audit Engine**: Run multiple contract audits concurrently with a real-time Rich Live dashboard showing per-contract progress, phases, and findings. Configurable concurrency (up to 8 contracts in parallel).
+| Job Type | Description |
+|----------|-------------|
+| `local` | Single or parallel contract audits |
+| `github` | GitHub repository audits with pre-selected scope |
+| `poc` | Foundry proof-of-concept generation |
+| `report` | Audit report generation (markdown/json/html) |
 
 **Three-Provider LLM Support**: OpenAI (GPT-5/5.3), Google Gemini (2.5/3.0), and Anthropic Claude (Sonnet 4.5/Opus 4.6) for maximum flexibility and redundancy.
 
@@ -66,18 +56,10 @@ python setup.py          # Interactive installer (recommended)
 ### 2. Launch Aether
 
 ```bash
-python aether.py         # Interactive menu (recommended)
-python main.py           # Same thing — launches menu when no args given
+python aether.py         # Launches the full-screen Textual TUI
 ```
 
-That's it. The menu guides you through everything.
-
-### Non-interactive / CI mode
-
-```bash
-python setup.py --non-interactive
-python main.py audit ./contracts --enhanced --ai-ensemble --llm-validation -o ./output
-```
+That's it. The TUI guides you through everything via keyboard shortcuts and modal dialogs.
 
 ---
 
@@ -113,7 +95,14 @@ pip install -r requirements.txt
 
 ## Configuration
 
-The setup wizard (`python setup.py`) handles everything, or configure manually:
+The setup wizard (`python setup.py`) handles everything. You can also configure from within the TUI via `s` (Settings):
+
+- **Configure API Keys** — sequential prompts for OpenAI, Gemini, Anthropic, Etherscan keys with masked current values
+- **Configure Models** — select models per provider from available options
+- **Full Wizard** — runs API keys followed by model selection
+- **Triage Settings** — adjust severity thresholds, confidence levels, max findings
+
+Or set environment variables directly:
 
 ```bash
 export OPENAI_API_KEY=sk-...
@@ -121,13 +110,7 @@ export GEMINI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 ```
 
-Or copy and edit the example env file:
-
-```bash
-cp env.example .env
-```
-
-Configuration is stored in `~/.aether/config.yaml`. Use **[7] Settings** in the interactive menu to manage it.
+Configuration is stored in `~/.aether/config.yaml`.
 
 Database locations:
 - Engine results: `~/.aether/aetheraudit.db`
@@ -135,100 +118,74 @@ Database locations:
 
 ---
 
-## Interactive Menu Guide
+## TUI Guide
 
-### [1] New Audit
+All interaction happens via keyboard shortcuts from the main screen:
 
-The guided wizard walks you through:
-1. **Source selection** — Local file/directory, GitHub URL, or block explorer URL/address
-2. **Target input** — path, URL, or address with validation
-3. **Feature selection** — checkboxes for Enhanced mode, AI Ensemble, LLM Validation, Foundry PoC, Enhanced Reports (sensible defaults pre-checked)
-4. **Output directory** — with sensible default
-5. **Confirm & run**
+### `n` — New Audit
 
-### [2] Resume Audit
+Multi-step wizard with three source types:
 
-Shows a table of all in-progress GitHub audits with project name, scope, progress (N/M contracts), and last update time. Select one to resume exactly where you left off.
+**Local file or directory:**
+1. Select path via PathDialog
+2. If directory, select contracts via CheckboxDialog
+3. Choose features (Enhanced, AI Ensemble, LLM Validation, Foundry PoC, Enhanced Reports)
+4. Set output directory
+5. Confirm and launch as background job(s)
 
-### [3] Audit History
+**GitHub URL:**
+1. Enter repository URL
+2. Aether clones the repo and discovers contracts (progress shown inline)
+3. If previous scopes exist, choose: continue, re-audit, or create new scope
+4. Select contracts via ContractSelectorDialog (filterable, space to toggle, `a`/`n` for all/none)
+5. Audit launches as a background job — visible in the jobs table
 
-Unified view of all past audits from both databases (local + GitHub). Select any entry for a submenu: view scopes & details, generate PoCs, or re-audit.
+**Block explorer URL / address:**
+1. Enter address or explorer URL
+2. Aether fetches verified source code
+3. Continue through features and output selection
 
-### [4] Generate PoCs
+### `r` — Resume Audit
 
-Select a project, configure max items, minimum severity, and consensus-only filtering, then generate Foundry exploit proofs.
+Table of all in-progress GitHub audits with project name, scope, progress (N/M contracts), and last update time. Select one to verify pending contracts and launch as a background job.
 
-### [5] Reports
+### `h` — Audit History
 
-Select project, scope, and format (markdown/json/html/all) to generate audit reports.
+Unified view of all past audits from both databases (local + GitHub). Select any entry for a submenu:
+- **View Details** — scope breakdown with progress and status
+- **Generate PoCs** — redirect to PoC wizard with project pre-selected
+- **Re-audit** — select contracts via ContractSelectorDialog, launch as background job
 
-### [6] Fetch Contract
+### `p` — Generate PoCs
+
+Select a project, configure max items, minimum severity, and consensus-only filtering. PoC generation runs as a background job — watch progress in the jobs table.
+
+### `o` — Reports
+
+Select project, scope, and format (markdown/json/html/all). Report generation runs as a background job.
+
+### `f` — Fetch Contract
 
 Pick a network from 10+ supported chains, enter an address or paste an explorer URL, fetch the verified source code, and optionally audit it immediately.
 
-### [7] Settings
+### `s` — Settings
 
-- Run full setup wizard
-- View current configuration
-- Reconfigure API keys only
-- Reconfigure model selections only
-- Edit triage settings (severity, confidence, max findings)
+- **Run full setup wizard** — API keys then model selection, all inline
+- **View current configuration** — formatted display of all settings
+- **Reconfigure API keys** — TextInputDialog prompts with masked current values
+- **Reconfigure model selections** — SelectDialog per provider
+- **Triage settings** — severity, confidence threshold, max findings
 
-### [8] Console
+### `Enter` — Job Detail
 
-Launches the advanced Metasploit-style interactive console. Type `exit` to return to the main menu.
+Press Enter on any row in the jobs table to see:
+- Live scrolling log output (updated every second)
+- Phase progress bar
+- Job metadata (type, target, status, cost, elapsed time)
 
----
+### `q` — Quit
 
-## CLI Reference (Power-User Mode)
-
-All subcommands remain available for scripting, CI/CD, and power users:
-
-```bash
-# Audit local contracts
-python main.py audit ./contracts --enhanced --ai-ensemble --llm-validation -o ./output
-
-# Audit a GitHub repository
-python main.py audit https://github.com/owner/repo --interactive-scope --github-token <token>
-
-# Generate Foundry PoCs
-python main.py generate-foundry --from-results ./output/results.json --out ./output/pocs
-python main.py generate-foundry --project-id 1 --scope-id 2 --only-consensus
-
-# Generate reports
-python main.py report --format markdown --project-id 1 -o ./output/reports
-python main.py report --list-projects
-python main.py report --list-scopes 1
-
-# Foundry validation
-python main.py foundry ./contracts -o ./output --verbose
-
-# Fork verification
-python main.py fork-verify ./output --rpc-url <url>
-
-# Exploit testing
-python main.py exploit-test <project_name>
-
-# Fetch contracts from block explorers
-python main.py fetch 0x1234... --network polygon -o ./contracts
-
-# Console
-python main.py console
-
-# Configuration
-python main.py config --show
-python main.py config --set-etherscan-key YOUR_KEY
-python main.py config --list-networks
-
-# Database management
-python main.py db --stats
-python main.py db --list-audits
-
-# Version
-python main.py version
-```
-
-Use `python main.py <command> --help` for full options on any subcommand.
+Exits the TUI. If jobs are running, prompts for confirmation.
 
 ---
 
@@ -237,9 +194,9 @@ Use `python main.py <command> --help` for full options on any subcommand.
 - **Static analysis** — 60+ pattern-based detectors (reentrancy, access control, arithmetic, oracle manipulation, flash loans, MEV, governance, DeFi-specific, and more)
 - **LLM analysis** — Structured, validation-oriented analysis with OpenAI, Gemini, and Claude; automatic provider fallback
 - **AI ensemble** — Multi-agent coordination with consensus-based reasoning (6 agents: 2 OpenAI, 2 Gemini, 2 Anthropic)
-- **Parallel auditing** — Concurrent multi-contract analysis with real-time Rich Live dashboard
+- **Parallel auditing** — Concurrent multi-contract analysis with live progress in the jobs table
 - **False positive filtering** — 4-stage validation pipeline with governance, deployment, and LLM-based filtering
-- **GitHub audit workflow** — Clone repos, detect frameworks, discover contracts, interactive scope selection, persistent state
+- **GitHub audit workflow** — Clone repos, detect frameworks, discover contracts, inline scope selection, persistent state
 - **Foundry PoC generation** — AST-based analysis, iterative compilation feedback, production-ready exploit prompts
 - **Multi-chain contract fetching** — 10+ EVM networks + Solana support
 - **Reporting** — Markdown, JSON, HTML report generation from audit data
@@ -253,6 +210,81 @@ Use `python main.py <command> --help` for full options on any subcommand.
 - `./output/pocs/` — Generated Foundry PoC suites
 - `./output/exploit_tests/` — Results from exploit testing
 
+---
+
+## Architecture
+
+### Entry Points
+- `aether.py` — Sole entry point; launches the Textual TUI
+- `cli/interactive_menu.py` — Thin shim creating JobManager + AetherApp
+- `cli/tui/app.py` — `AetherApp(App)` — main Textual app with key bindings and 1-second refresh timer
+
+### TUI Layer (`cli/tui/`)
+- **Screens**: `MainScreen` (jobs table + cost bar), `JobDetailScreen` (live log + phase + metadata), `NewAuditScreen`, `HistoryScreen`, `ResumeScreen`, `PoCScreen`, `ReportsScreen`, `FetchScreen`, `SettingsScreen`
+- **Widgets**: `JobsTable` (DataTable polling JobManager), `CostBar` (session cost by provider), `LogViewer` (RichLog with incremental refresh), `PhaseBar` (Unicode block progress)
+- **Dialogs**: `ConfirmDialog`, `TextInputDialog`, `SelectDialog`, `CheckboxDialog`, `PathDialog`, `ContractSelectorDialog` — all ModalScreen subclasses
+- **Helpers**: `GitHubAuditHelper` — decomposed GitHub audit operations for TUI integration
+- **Theme**: `theme.tcss` — cyan-themed Textual CSS
+
+### Background Execution
+- `cli/audit_runner.py` — `AuditRunner` class running audits, PoCs, reports, and GitHub audits in daemon threads
+- `core/job_manager.py` — `JobManager` singleton: session job registry (QUEUED/RUNNING/COMPLETED/FAILED/CANCELLED)
+- `core/audit_progress.py` — `ContractAuditStatus` with per-job log buffers, `ThreadDemuxWriter` for stdout/stderr capture
+- `core/llm_usage_tracker.py` — Thread-safe singleton with `snapshot()` for per-job cost deltas
+
+### Core Orchestration
+- `cli/main.py` — `AetherCLI` class (~2600 lines) — internal audit orchestrator used by AuditRunner
+- `core/enhanced_audit_engine.py` — Main audit engine (Phase 1-3 execution)
+- `core/post_audit_summary.py` — Post-audit panel with cost-by-provider breakdown
+
+### Detection Layer
+- `core/enhanced_vulnerability_detector.py` — Primary detector with 60+ patterns
+- `core/business_logic_detector.py`, `core/state_management_detector.py`, `core/data_inconsistency_detector.py`, `core/centralization_detector.py`, `core/looping_detector.py` — Move-inspired detectors
+- `core/defi_vulnerability_detector.py`, `core/mev_detector.py`, `core/oracle_manipulation_detector.py` — DeFi-specific detectors
+- `core/arithmetic_analyzer.py`, `core/precision_analyzer.py`, `core/gas_analyzer.py`, `core/input_validation_detector.py`, `core/data_decoding_analyzer.py` — Specialized analyzers
+
+### Validation Layer
+- `core/validation_pipeline.py` — 4-stage pipeline: built-in protection check, governance detection, deployment verification, local validation
+- `core/governance_detector.py`, `core/deployment_analyzer.py`, `core/llm_false_positive_filter.py`
+- `core/control_flow_guard_detector.py`, `core/inheritance_verifier.py`
+
+### LLM & AI Layer
+- `core/enhanced_llm_analyzer.py` — Structured LLM analysis (GPT/Gemini/Claude) with JSON output
+- `core/ai_ensemble.py` — Multi-agent coordination with consensus-based reasoning
+- `core/enhanced_prompts.py` — Production prompt templates
+
+### PoC Generation Layer
+- `core/foundry_poc_generator.py` (~8000 lines) — AST-based analysis, iterative compilation feedback
+- `core/llm_foundry_generator.py` — LLM-based test generation
+- `core/enhanced_foundry_integration.py` — Foundry validation and formatting
+
+### Persistence Layer
+- `core/database_manager.py` — `DatabaseManager` (local audits) + `AetherDatabase` (GitHub audits)
+- `core/analysis_cache.py` — Smart caching for 2x faster repeated analysis
+- `core/accuracy_tracker.py` — Submission outcomes and bounty earnings
+
+### Integrations
+- `core/github_auditor.py` — Clone repos, detect frameworks, discover contracts, coordinate analysis
+- `core/etherscan_fetcher.py`, `core/basescan_fetcher.py` — Fetch verified contracts from block explorers
+- `core/exploit_tester.py`, `core/fork_verifier.py` — Validate exploits against Anvil forks
+
+### Flow-Based Execution
+Audit flows defined in YAML configs (`configs/`). Enhanced audit pipeline:
+`FileReaderNode -> StaticAnalysisNode -> LLMAnalysisNode -> EnhancedExploitabilityNode -> [FixGeneratorNode -> ValidationNode] -> ReportNode`
+
+---
+
+## Tests
+
+770 tests across 50 test files, running in ~13 seconds:
+
+```bash
+python -m pytest tests/                                    # All tests (~13s)
+python -m pytest tests/test_enhanced_detectors.py -v       # Single file
+python -m pytest tests/test_enhanced_detectors.py::TestArithmeticAnalyzer -v  # Single class
+python -m pytest tests/ -k "governance" -v                 # Pattern match
+python -m pytest tests/ --cov=core --cov-report=html       # With coverage
+```
 
 ## Troubleshooting
 
@@ -260,79 +292,60 @@ Use `python main.py <command> --help` for full options on any subcommand.
 - **solc not found** — Install `solc-select` and required versions: `solc-select install 0.8.20 latest`
 - **LLM features not working** — Verify API keys are set. Some models may be unavailable in your account/region; the system falls back automatically
 - **Database not found** — For GitHub reports, ensure the audit workflow has been run first
-- **Menu not appearing** — Run `pip install questionary rich` if missing
+- **Textual not loading** — Run `pip install textual>=1.0.0` if missing
 
-
-## Tests
-
-729 tests across 47 focused test files, running in ~12 seconds:
-
-```bash
-python -m pytest tests/                                    # All tests (~12s)
-python -m pytest tests/test_enhanced_detectors.py -v       # Single file
-python -m pytest tests/ -k "governance" -v                 # Pattern match
-python -m pytest tests/ --cov=core --cov-report=html       # With coverage
-```
-
-
-## Architecture
-
-### Entry Points
-- `aether.py` — Primary entry point, launches interactive menu TUI
-- `main.py` — CLI dispatcher; no args launches menu, subcommands for direct access
-- `cli/interactive_menu.py` — Interactive menu engine (AetherInteractiveMenu class)
-- `cli/main.py` — AetherCLI class (~2600 lines) orchestrating all command implementations
-- `cli/console.py` — Metasploit-style interactive console
-
-### Core Layers
-- **Detection** — `core/enhanced_vulnerability_detector.py` + specialized detectors (DeFi, MEV, oracle, arithmetic, gas, business logic, state management, centralization, looping, data inconsistency)
-- **Validation** — `core/validation_pipeline.py` (4-stage pipeline), `core/governance_detector.py`, `core/deployment_analyzer.py`, `core/llm_false_positive_filter.py`
-- **LLM & AI** — `core/enhanced_llm_analyzer.py`, `core/ai_ensemble.py`, `core/enhanced_prompts.py`, `core/llm_usage_tracker.py`
-- **PoC Generation** — `core/foundry_poc_generator.py` (AST-based, ~8000 lines), `core/llm_foundry_generator.py`, `core/enhanced_foundry_integration.py`
-- **Orchestration** — `core/parallel_audit_manager.py` (concurrent audits), `core/audit_progress.py` (thread-safe tracking), `core/audit_dashboard.py` (Rich Live dashboard), `core/post_audit_summary.py`
-- **Persistence** — `core/database_manager.py` (DatabaseManager + AetherDatabase), `core/analysis_cache.py`, `core/accuracy_tracker.py`
-- **Integrations** — `core/github_auditor.py`, `core/etherscan_fetcher.py`, `core/basescan_fetcher.py`, `core/exploit_tester.py`, `core/fork_verifier.py`
-
-### Flow-Based Execution
-Audit flows defined in YAML configs (`configs/`). Enhanced audit pipeline:
-`FileReaderNode → StaticAnalysisNode → LLMAnalysisNode → EnhancedExploitabilityNode → [FixGeneratorNode → ValidationNode] → ReportNode`
-
+---
 
 ## Changelog
 
+### v3.0 — Fully Inline Textual TUI
+- **Zero `app.suspend()` calls** — the TUI never drops to a raw terminal; every operation runs inline
+- **Background PoC generation** — runs as a daemon thread via `AuditRunner.start_poc_generation()` with live output in JobDetailScreen
+- **Background report generation** — runs as a daemon thread via `AuditRunner.start_report_generation()` with live output
+- **Background GitHub audits** — scope selection via Textual dialogs, audit runs as a daemon thread via `AuditRunner.start_github_audit()`
+- **ContractSelectorDialog** — near-fullscreen filterable multi-select modal replacing curses-based `ScopeManager.interactive_select()`. Space to toggle, `a`/`n` for all/none, type to filter, color-coded previously-audited contracts
+- **GitHubAuditHelper** — decomposed wrapper around `GitHubAuditor`/`AetherDatabase` providing atomic operations (`clone_and_discover`, `get_scope_state`, `save_new_scope`, `get_pending_contracts`, `handle_reaudit`) callable from Textual screens
+- **Inline settings** — API key and model configuration via native TextInputDialog/SelectDialog, no external setup wizard needed
+- **Inline GitHub scope management** — continue, re-audit, or create new scope via SelectDialog; contract selection via ContractSelectorDialog
+- **6 screens rewritten** — PoCScreen, ReportsScreen, SettingsScreen, NewAuditScreen, HistoryScreen, ResumeScreen — all fully inline
+- **770 tests** passing across 50 test files in ~13 seconds
+
+### v2.2 — Textual TUI Dashboard
+- Full-screen Textual TUI with persistent app, key bindings, and 1-second refresh timer
+- MainScreen with live jobs table and session cost bar
+- JobDetailScreen with live log viewer, phase progress bar, and metadata
+- Modal dialogs (confirm, text input, select, checkbox, path picker) replacing questionary prompts
+- Background audit execution via AuditRunner with ThreadDemuxWriter output capture
+- JobManager singleton for session job registry
+- Per-job cost tracking via LLMUsageTracker snapshots
+
 ### v2.1 — Parallel Audits, Slither Removal & Test Cleanup
-- **Parallel audit engine** — run multiple contracts concurrently with `ThreadPoolExecutor`, configurable up to 8 parallel workers
-- **Real-time audit dashboard** — Rich Live TUI showing per-contract progress bars, current phase, findings count, and elapsed time
-- **Thread-safe progress tracking** — `ContractAuditStatus` with locking, `ThreadDemuxWriter` for stdout multiplexing by thread ID
-- **Post-audit summary** — consolidated results view after parallel audits complete
-- **LLM usage tracking** — track token usage, costs, and API calls across all three providers
-- **Slither fully removed** — all Slither dependencies, integration code, config references, and tests deleted (~1200 lines); pattern-based detectors + Foundry ABI + regex are now the sole static analysis tools
-- **Test suite cleanup** — removed 40+ old/slow/integration test files; 729 tests pass in ~12 seconds across 47 focused test files
+- Parallel audit engine — run multiple contracts concurrently with `ThreadPoolExecutor`, configurable up to 8 parallel workers
+- Thread-safe progress tracking — `ContractAuditStatus` with locking, `ThreadDemuxWriter` for stdout multiplexing
+- Post-audit summary — consolidated results view after parallel audits complete
+- LLM usage tracking — track token usage, costs, and API calls across all three providers
+- Slither fully removed — all dependencies, integration code, and tests deleted (~1200 lines); pattern-based detectors + Foundry ABI + regex are the sole analysis tools
+- Test suite cleanup — removed 40+ old/slow/integration test files
 
 ### v2.0 — Interactive Menu TUI
-- Interactive menu-driven TUI as the primary interface (`python aether.py`)
-- `python main.py` without arguments now launches the interactive menu
+- Interactive menu-driven TUI as the primary interface
 - Guided audit wizard with source selection, feature checkboxes, and confirmation
 - Resume audit capability for in-progress GitHub audits
 - Unified audit history browser across local and GitHub databases
 - Integrated PoC generation and report workflows from menu
 - Multi-chain contract fetching with optional immediate audit
-- Settings management (setup wizard, API keys, models, triage) from menu
+- Settings management from menu
 - Console launch/return from menu
-- Version bumped to 2.0.0
 
 ### v1.5 — Three-Provider LLM Support & Enhanced Analysis
 - Anthropic Claude integration (Sonnet 4.5, Opus 4.6, Haiku 4.5) as third LLM provider
 - 6-agent AI ensemble: 2 OpenAI + 2 Gemini + 2 Anthropic specialist agents
 - Automatic cross-provider fallback for maximum availability
 - Updated OpenAI models (GPT-5.3) and Google Gemini models (3.0 Flash/Pro)
-- Anthropic Security Auditor agent for deep access control and reentrancy analysis
-- Anthropic Reasoning Specialist agent leveraging extended thinking for complex vulnerabilities
 - Setup wizard updated with Anthropic API key configuration and model selection
-- Fixed broken generate-foundry CLI command (restored LLMFoundryGenerator module)
-- Fixed indentation bug in output directory handling for generate-foundry
-- All 22 previously-broken foundry generator tests now passing
+- Fixed broken generate-foundry CLI command
 
+---
 
 ## License
 

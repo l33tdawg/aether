@@ -6,6 +6,7 @@ aiohttp>=3.9.0
 # CLI and utilities
 click>=8.1.7
 rich>=13.7.0
+textual>=1.0.0
 questionary>=2.0.1
 pyyaml>=6.0.1
 tqdm>=4.66.0
@@ -23,12 +24,9 @@ web3>=6.11.0
 eth-account>=0.10.0
 eth-utils>=4.0.0
 
-# Smart contract analysis tools (TESTED & WORKING)
-# Primary: Slither for static analysis
-slither-analyzer==0.10.0
-# Note: Mythril has dependency conflicts with Python 3.12 in version 0.23.25
-# Primary integration uses Slither which is fully functional
-# Lock setuptools version to avoid pkg_resources deprecation warning (removal: Nov 30, 2025)
+# Smart contract analysis tools
+# Note: Slither removed in v2.1; pattern-based detectors + Foundry ABI + regex only
+# Lock setuptools version to avoid pkg_resources deprecation warning
 setuptools<81
 
 # Foundry/Anvil integration

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Aether v2.0 — Smart Contract Security Analysis Framework
+Aether v3.0 — Smart Contract Security Analysis Framework
 
-Primary entry point. Launches the interactive menu-driven TUI.
+Sole entry point. Launches the persistent full-screen Textual TUI dashboard.
 
 Usage:
-    python aether.py          # Interactive menu (recommended)
-    python main.py <command>  # Direct CLI for power users / CI
+    python aether.py
 """
 
 import sys

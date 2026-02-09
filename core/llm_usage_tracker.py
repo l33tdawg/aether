@@ -198,6 +198,19 @@ class LLMUsageTracker:
         with self._lock:
             return self._total_calls
 
+    def snapshot(self) -> Dict:
+        """Return a snapshot of current totals for per-job cost delta calculation.
+
+        Call before and after a job to compute cost_delta = after - before.
+        """
+        with self._lock:
+            return {
+                "total_cost": self._total_cost,
+                "total_calls": self._total_calls,
+                "total_input_tokens": self._total_input_tokens,
+                "total_output_tokens": self._total_output_tokens,
+            }
+
     # ── Full summary for post-audit display ──
 
     def get_summary(self) -> Dict:

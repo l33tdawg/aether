@@ -1,0 +1,371 @@
+/* ─────────────────────────────────────────────────────────────
+   Aether v3.0 — Textual TUI Theme (Cyan)
+   ───────────────────────────────────────────────────────────── */
+
+/* ── Global ────────────────────────────────────────────────── */
+
+Screen {
+    background: $surface;
+}
+
+/* ── Header ────────────────────────────────────────────────── */
+
+Header {
+    background: $panel;
+    color: cyan;
+    dock: top;
+    height: 3;
+}
+
+HeaderTitle {
+    color: cyan;
+    text-style: bold;
+}
+
+HeaderIcon {
+    color: cyan;
+}
+
+/* ── Footer (key-binding hints) ────────────────────────────── */
+
+Footer {
+    background: $panel;
+    color: $text;
+    dock: bottom;
+}
+
+FooterKey {
+    background: cyan 15%;
+    color: cyan;
+}
+
+Footer > .footer--key {
+    background: cyan 15%;
+    color: cyan;
+    text-style: bold;
+}
+
+Footer > .footer--description {
+    color: $text-muted;
+}
+
+/* ── DataTable (jobs table) ────────────────────────────────── */
+
+DataTable {
+    height: auto;
+    max-height: 60%;
+    scrollbar-color: cyan 30%;
+    scrollbar-color-hover: cyan 50%;
+    scrollbar-color-active: cyan 70%;
+}
+
+DataTable > .datatable--header {
+    background: cyan 15%;
+    color: cyan;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: cyan 25%;
+    color: $text;
+}
+
+DataTable > .datatable--hover {
+    background: cyan 10%;
+}
+
+DataTable > .datatable--even-row {
+    background: $surface;
+}
+
+DataTable > .datatable--odd-row {
+    background: $surface-darken-1;
+}
+
+/* ── Phase progress bar ────────────────────────────────────── */
+
+.phase-bar {
+    height: 1;
+    width: 100%;
+}
+
+ProgressBar {
+    padding: 0 1;
+}
+
+ProgressBar > .bar--bar {
+    color: cyan;
+}
+
+ProgressBar > .bar--complete {
+    color: cyan;
+}
+
+ProgressBar Bar > .bar--indeterminate {
+    color: cyan;
+}
+
+/* ── Cost bar widget ───────────────────────────────────────── */
+
+.cost-bar {
+    height: 3;
+    padding: 0 2;
+    background: $panel;
+    border-top: tall cyan 30%;
+}
+
+.cost-bar .cost-total {
+    color: cyan;
+    text-style: bold;
+}
+
+.cost-bar .cost-provider {
+    color: $text;
+}
+
+.cost-bar .cost-label {
+    color: $text-muted;
+}
+
+/* ── Status bar widget ─────────────────────────────────────── */
+
+.status-bar {
+    height: 1;
+    padding: 0 2;
+    background: $panel;
+    color: $text-muted;
+    border-top: tall $border;
+}
+
+.status-bar .status-active {
+    color: cyan;
+    text-style: bold;
+}
+
+.status-bar .status-idle {
+    color: $text-muted;
+}
+
+.status-bar .status-finding-count {
+    color: yellow;
+    text-style: bold;
+}
+
+/* ── Modal / Dialog overlay ────────────────────────────────── */
+
+ModalScreen {
+    align: center middle;
+}
+
+.dialog-overlay {
+    align: center middle;
+    background: $surface 80%;
+}
+
+.dialog-container {
+    width: 60;
+    max-width: 80%;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $panel;
+    border: tall cyan;
+    border-title-color: cyan;
+    border-title-style: bold;
+    border-subtitle-color: $text-muted;
+}
+
+.dialog-container .dialog-title {
+    text-align: center;
+    color: cyan;
+    text-style: bold;
+    padding-bottom: 1;
+    width: 100%;
+}
+
+.dialog-container .dialog-message {
+    text-align: center;
+    color: $text;
+    padding-bottom: 1;
+    width: 100%;
+}
+
+.dialog-container .dialog-buttons {
+    align: center middle;
+    height: 3;
+    width: 100%;
+    layout: horizontal;
+}
+
+.dialog-container .dialog-buttons Button {
+    margin: 0 1;
+    min-width: 12;
+}
+
+.dialog-container .dialog-buttons .btn-confirm {
+    background: cyan;
+    color: $text;
+}
+
+.dialog-container .dialog-buttons .btn-confirm:hover {
+    background: cyan 80%;
+}
+
+.dialog-container .dialog-buttons .btn-cancel {
+    background: $surface;
+    color: $text;
+    border: tall $border;
+}
+
+.dialog-container .dialog-buttons .btn-cancel:hover {
+    background: $surface-lighten-1;
+}
+
+/* ── Jobs panel (wrapper around DataTable) ─────────────────── */
+
+.jobs-panel {
+    height: auto;
+    max-height: 65%;
+    padding: 0 1;
+}
+
+.jobs-panel .jobs-empty {
+    text-align: center;
+    color: $text-muted;
+    padding: 2 0;
+}
+
+/* ── Main dashboard layout ─────────────────────────────────── */
+
+.main-content {
+    layout: vertical;
+    height: 100%;
+    padding: 0;
+}
+
+.main-content .dashboard-title {
+    text-align: center;
+    color: cyan;
+    text-style: bold;
+    padding: 1 0 0 0;
+    height: 2;
+}
+
+.main-content .dashboard-subtitle {
+    text-align: center;
+    color: $text-muted;
+    padding: 0 0 1 0;
+    height: 2;
+}
+
+/* ── Sub-screens (New Audit, Settings, etc.) ───────────────── */
+
+.sub-screen {
+    layout: vertical;
+    padding: 1 2;
+}
+
+.sub-screen .screen-title {
+    color: cyan;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+.sub-screen .form-group {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+.sub-screen .form-label {
+    color: cyan;
+    padding: 0 1 0 0;
+}
+
+.sub-screen Input {
+    border: tall $border;
+    background: $surface;
+}
+
+.sub-screen Input:focus {
+    border: tall cyan;
+}
+
+.sub-screen Select {
+    border: tall $border;
+    background: $surface;
+}
+
+.sub-screen Select:focus {
+    border: tall cyan;
+}
+
+.sub-screen Button {
+    margin: 1 1 0 0;
+}
+
+.sub-screen .btn-primary {
+    background: cyan;
+    color: $text;
+}
+
+.sub-screen .btn-primary:hover {
+    background: cyan 80%;
+}
+
+/* ── Log viewer ────────────────────────────────────────────── */
+
+.log-viewer {
+    height: 100%;
+    scrollbar-color: cyan 30%;
+    scrollbar-color-hover: cyan 50%;
+}
+
+.log-viewer RichLog {
+    height: 100%;
+    background: $surface;
+    border: tall $border;
+    padding: 0 1;
+}
+
+/* ── Status badges in job rows ─────────────────────────────── */
+
+.status-running {
+    color: cyan;
+    text-style: bold;
+}
+
+.status-completed {
+    color: green;
+    text-style: bold;
+}
+
+.status-failed {
+    color: red;
+    text-style: bold;
+}
+
+.status-queued {
+    color: $text-muted;
+}
+
+.status-cancelled {
+    color: yellow;
+}
+
+/* ── Scrollbar theming ─────────────────────────────────────── */
+
+* {
+    scrollbar-background: $surface;
+    scrollbar-color: cyan 20%;
+    scrollbar-color-hover: cyan 40%;
+    scrollbar-color-active: cyan 60%;
+    scrollbar-size-vertical: 1;
+}
+
+/* ── Toast / Notification ──────────────────────────────────── */
+
+Toast {
+    background: $panel;
+    border: tall cyan;
+    color: $text;
+}
