@@ -58,13 +58,14 @@ class AetherConfig:
     # API settings (for LLM features)
     openai_api_key: str = ""
     gemini_api_key: str = ""
-    
+    anthropic_api_key: str = ""
+
     # Model Provider Selection (per task type)
-    # Choose which provider to use for each task: "openai" or "gemini"
+    # Choose which provider to use for each task: "openai", "gemini", or "anthropic"
     validation_provider: str = "gemini"   # Provider for validation (false positive filtering) - Gemini has 2M TPM vs OpenAI's 30K
     analysis_provider: str = "openai"     # Provider for vulnerability analysis
     generation_provider: str = "openai"   # Provider for PoC/test generation
-    
+
     # OpenAI Model selection - Different models for different purposes
     # Validation model (for false positive filtering) - needs highest accuracy
     openai_validation_model: str = "gpt-5-chat-latest"
@@ -74,7 +75,7 @@ class AetherConfig:
     openai_generation_model: str = "gpt-5-mini"
     # Deprecated: kept for backwards compatibility
     openai_model: str = "gpt-5-chat-latest"
-    
+
     # Gemini Model selection (alternative to OpenAI)
     # Validation model - Gemini 2.5 Flash has thinking mode and 2M context
     gemini_validation_model: str = "gemini-2.5-flash"
@@ -82,13 +83,23 @@ class AetherConfig:
     gemini_analysis_model: str = "gemini-2.5-flash"
     # Generation model - Flash is fast and cost-effective
     gemini_generation_model: str = "gemini-2.5-flash"
-    
+
+    # Anthropic Model selection (Claude models - 200K context, extended thinking)
+    # Validation model - Claude Sonnet for fast, accurate validation
+    anthropic_validation_model: str = "claude-sonnet-4-5-20250929"
+    # Analysis model - Claude Opus for deepest vulnerability analysis
+    anthropic_analysis_model: str = "claude-opus-4-6"
+    # Generation model - Claude Sonnet for balanced PoC generation
+    anthropic_generation_model: str = "claude-sonnet-4-5-20250929"
+
     # AI Ensemble Agent Models (individual specialist agents)
     # Each agent can use a different model for specialized analysis
     agent_gpt5_security_model: str = "gpt-5-chat-latest"      # Security vulnerability auditor
     agent_gpt5_defi_model: str = "gpt-5-chat-latest"          # DeFi protocol specialist
     agent_gemini_security_model: str = "gemini-2.5-flash"     # Gemini security hunter (2M context)
     agent_gemini_verification_model: str = "gemini-2.5-pro"   # Formal verification (use Pro for best quality)
+    agent_anthropic_security_model: str = "claude-opus-4-6"   # Anthropic security auditor (deep analysis)
+    agent_anthropic_reasoning_model: str = "claude-opus-4-6"  # Anthropic reasoning specialist (extended thinking)
     
     max_tokens: int = 4000
     
@@ -145,6 +156,8 @@ def get_model_for_task(task_type: str) -> str:
         if not model:
             if provider == "gemini":
                 model = "gemini-2.5-flash"
+            elif provider == "anthropic":
+                model = "claude-sonnet-4-5-20250929"
             else:
                 model = "gpt-5-chat-latest" if task_type == "validation" or task_type == "analysis" else "gpt-5-mini"
         
@@ -380,6 +393,12 @@ class ConfigManager:
         self.config.gemini_api_key = api_key
         self.save_config()
         self.console.print("[green]✓ Gemini API key configured[/green]")
+
+    def set_anthropic_key(self, api_key: str) -> None:
+        """Set Anthropic API key for LLM features."""
+        self.config.anthropic_api_key = api_key
+        self.save_config()
+        self.console.print("[green]✓ Anthropic API key configured[/green]")
     
     def validate_openai_key(self, api_key: Optional[str] = None) -> tuple[bool, str]:
         """Validate OpenAI API key by making a test call.
@@ -454,6 +473,46 @@ class ConfigManager:
         except Exception as e:
             return False, f"Validation error: {str(e)[:100]}"
     
+    def validate_anthropic_key(self, api_key: Optional[str] = None) -> tuple[bool, str]:
+        """Validate Anthropic API key by making a test call.
+
+        Args:
+            api_key: API key to validate. If None, uses configured key.
+
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        key_to_test = api_key or self.config.anthropic_api_key
+
+        if not key_to_test:
+            return False, "No API key provided"
+
+        if not key_to_test.startswith('sk-ant-'):
+            return False, "Invalid format (should start with 'sk-ant-')"
+
+        try:
+            import anthropic
+
+            client = anthropic.Anthropic(api_key=key_to_test)
+
+            # Make a minimal test call
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=5,
+                messages=[{"role": "user", "content": "test"}],
+            )
+
+            return True, "Valid"
+
+        except Exception as e:
+            error_msg = str(e)
+            if "invalid" in error_msg.lower() or "authentication" in error_msg.lower():
+                return False, "Invalid API key"
+            elif "rate" in error_msg.lower() or "quota" in error_msg.lower():
+                return True, "Valid (but rate limited)"
+            else:
+                return False, f"Validation failed: {error_msg[:100]}"
+
     def validate_etherscan_key(self, api_key: Optional[str] = None, network: str = 'mainnet') -> tuple[bool, str]:
         """Validate Etherscan API key by making a test call.
         

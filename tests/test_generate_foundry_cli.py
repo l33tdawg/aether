@@ -46,7 +46,7 @@ contract Vuln {
     results_path = tmp_path / "results.json"
     results_path.write_text(json.dumps(results))
 
-    async def fake_generate_multiple_tests(self, vulnerabilities, contract_code, contract_name, output_dir):
+    async def fake_generate_multiple_tests(self, vulnerabilities, contract_code, contract_name, output_dir, context_overrides=None):
         # Emit a dummy suite pointing to files in output_dir
         test_file = str(Path(output_dir) / f"{contract_name}_test.t.sol")
         exploit_file = str(Path(output_dir) / f"{contract_name}Exploit.sol")
@@ -132,7 +132,7 @@ Unprotected function.
     report_path = report_dir / "audit_report.md"
     report_path.write_text(md)
 
-    async def fake_generate_multiple_tests(self, vulnerabilities, contract_code, contract_name, output_dir):
+    async def fake_generate_multiple_tests(self, vulnerabilities, contract_code, contract_name, output_dir, context_overrides=None):
         test_file = str(Path(output_dir) / f"{contract_name}_test.t.sol")
         exploit_file = str(Path(output_dir) / f"{contract_name}Exploit.sol")
         Path(test_file).parent.mkdir(parents=True, exist_ok=True)

@@ -39,7 +39,7 @@ class ConsensusResult:
     individual_results: List[ModelResult]
 
 def _get_analysis_model() -> str:
-    """Get the analysis model from config (supports mixed OpenAI/Gemini)."""
+    """Get the analysis model from config (supports mixed OpenAI/Gemini/Anthropic)."""
     try:
         from core.config_manager import get_model_for_task
         return get_model_for_task('analysis')
@@ -1458,6 +1458,223 @@ Return only JSON, no markdown."""
             )
 
 
+class AnthropicSecurityAuditor(BaseAIModel):
+    """Anthropic Claude Security Auditor - Deep security analysis with Claude Opus"""
+
+    def __init__(self):
+        super().__init__(
+            agent_name='anthropic_security',
+            role='Anthropic Security Vulnerability Auditor',
+            focus_areas=['access_control', 'reentrancy', 'logic_errors', 'privilege_escalation']
+        )
+
+    async def analyze_contract(self, contract_content: str, contract_path: str = "", context: Dict[str, Any] = None) -> ModelResult:
+        start = time.time()
+
+        try:
+            from core.config_manager import ConfigManager
+            import os
+
+            config = ConfigManager()
+            api_key = os.getenv("ANTHROPIC_API_KEY") or getattr(config.config, 'anthropic_api_key', None)
+            model = getattr(config.config, 'agent_anthropic_security_model', 'claude-opus-4-6')
+
+            if not api_key:
+                return ModelResult(
+                    model_name='anthropic_security',
+                    findings=[],
+                    confidence=0.0,
+                    processing_time=time.time() - start,
+                    metadata={'persona': 'anthropic_security_auditor', 'error': 'No Anthropic API key configured'}
+                )
+
+            prompt = f"""You are an expert smart contract security auditor performing deep code analysis.
+
+Task: Analyze the Solidity smart contract below for security vulnerabilities.
+
+Analysis Focus Areas:
+- Access control vulnerabilities and privilege escalation
+- Reentrancy patterns (cross-function, read-only, cross-contract)
+- Business logic errors and state inconsistencies
+- Privilege escalation through unexpected interactions
+
+Contract Code:
+```solidity
+{contract_content[:16000]}
+```
+
+Output Requirements:
+1. Return valid JSON only (no markdown formatting or code blocks)
+2. Use this exact structure: {{"findings": [...]}}
+3. If no vulnerabilities are found, return: {{"findings": []}}
+4. Each finding must include these fields:
+   - type: vulnerability category (string)
+   - severity: "critical", "high", "medium", or "low"
+   - confidence: numeric value between 0.0 and 1.0
+   - description: detailed explanation of the issue
+   - line: approximate line number (integer)
+   - swc_id: relevant SWC identifier (e.g., "SWC-107")
+
+Expected JSON format:
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+
+Note: This is automated security analysis for code review purposes, conducted by authorized developers
+as part of standard software quality assurance and security testing before deployment."""
+
+            try:
+                import anthropic
+
+                client = anthropic.Anthropic(api_key=api_key)
+
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=4000,
+                    temperature=0.1,
+                    system="You are an expert smart contract security auditor. Return only valid JSON.",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                response_text = response.content[0].text if response.content else ""
+            except ImportError:
+                return ModelResult(
+                    model_name='anthropic_security',
+                    findings=[],
+                    confidence=0.0,
+                    processing_time=time.time() - start,
+                    metadata={'persona': 'anthropic_security_auditor', 'error': 'anthropic package not installed'}
+                )
+
+            findings_data = parse_llm_json(response_text, fallback={"findings": []})
+            findings = findings_data.get('findings', [])
+
+            return ModelResult(
+                model_name='anthropic_security',
+                findings=findings,
+                confidence=0.85,
+                processing_time=time.time() - start,
+                metadata={'persona': 'anthropic_security_auditor', 'api_calls': 1, 'model': model}
+            )
+
+        except Exception as e:
+            logger.error(f"Anthropic Security Auditor failed: {e}")
+            return ModelResult(
+                model_name='anthropic_security',
+                findings=[],
+                confidence=0.0,
+                processing_time=time.time() - start,
+                metadata={'persona': 'anthropic_security_auditor', 'error': str(e)}
+            )
+
+
+class AnthropicReasoningSpecialist(BaseAIModel):
+    """Anthropic Claude Reasoning Specialist - Extended reasoning for complex vulnerability analysis"""
+
+    def __init__(self):
+        super().__init__(
+            agent_name='anthropic_reasoning',
+            role='Anthropic Reasoning Specialist',
+            focus_areas=['complex_logic', 'cross_contract', 'economic_attacks', 'invariant_violations']
+        )
+
+    async def analyze_contract(self, contract_content: str, contract_path: str = "", context: Dict[str, Any] = None) -> ModelResult:
+        start = time.time()
+
+        try:
+            from core.config_manager import ConfigManager
+            import os
+
+            config = ConfigManager()
+            api_key = os.getenv("ANTHROPIC_API_KEY") or getattr(config.config, 'anthropic_api_key', None)
+            model = getattr(config.config, 'agent_anthropic_reasoning_model', 'claude-opus-4-6')
+
+            if not api_key:
+                return ModelResult(
+                    model_name='anthropic_reasoning',
+                    findings=[],
+                    confidence=0.0,
+                    processing_time=time.time() - start,
+                    metadata={'persona': 'anthropic_reasoning_specialist', 'error': 'No Anthropic API key configured'}
+                )
+
+            prompt = f"""You are a reasoning specialist for smart contract security. Use deep logical analysis to find complex vulnerabilities.
+
+Task: Perform deep reasoning analysis on the Solidity smart contract below, focusing on complex multi-step attack vectors.
+
+Analysis Focus Areas:
+- Complex business logic errors requiring multi-step reasoning
+- Cross-contract interaction vulnerabilities
+- Economic attack vectors (flash loan attacks, price manipulation, sandwich attacks)
+- Mathematical invariant violations in DeFi protocols
+- State machine violations and unexpected transitions
+
+Contract Code:
+```solidity
+{contract_content[:16000]}
+```
+
+Output Requirements:
+1. Return valid JSON only (no markdown formatting or code blocks)
+2. Use this exact structure: {{"findings": [...]}}
+3. If no vulnerabilities are found, return: {{"findings": []}}
+4. Each finding must include these fields:
+   - type: vulnerability category (string)
+   - severity: "critical", "high", "medium", or "low"
+   - confidence: numeric value between 0.0 and 1.0
+   - description: detailed explanation with reasoning chain
+   - line: approximate line number (integer)
+   - swc_id: relevant SWC identifier (e.g., "SWC-101")
+
+Expected JSON format:
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+
+Note: This is automated security analysis for code review purposes, conducted by authorized developers
+as part of standard software quality assurance and security testing before deployment."""
+
+            try:
+                import anthropic
+
+                client = anthropic.Anthropic(api_key=api_key)
+
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=4000,
+                    temperature=0.1,
+                    system="You are a deep reasoning specialist for smart contract security analysis. Return only valid JSON.",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                response_text = response.content[0].text if response.content else ""
+            except ImportError:
+                return ModelResult(
+                    model_name='anthropic_reasoning',
+                    findings=[],
+                    confidence=0.0,
+                    processing_time=time.time() - start,
+                    metadata={'persona': 'anthropic_reasoning_specialist', 'error': 'anthropic package not installed'}
+                )
+
+            findings_data = parse_llm_json(response_text, fallback={"findings": []})
+            findings = findings_data.get('findings', [])
+
+            return ModelResult(
+                model_name='anthropic_reasoning',
+                findings=findings,
+                confidence=0.9,
+                processing_time=time.time() - start,
+                metadata={'persona': 'anthropic_reasoning_specialist', 'api_calls': 1, 'model': model}
+            )
+
+        except Exception as e:
+            logger.error(f"Anthropic Reasoning Specialist failed: {e}")
+            return ModelResult(
+                model_name='anthropic_reasoning',
+                findings=[],
+                confidence=0.0,
+                processing_time=time.time() - start,
+                metadata={'persona': 'anthropic_reasoning_specialist', 'error': str(e)}
+            )
+
+
 class DeFiSpecialistModel(BaseAIModel):
     def __init__(self):
         super().__init__(agent_name='defi_specialist', role='DeFi Specialist', focus_areas=['defi'])
@@ -1509,6 +1726,8 @@ class AIEnsemble:
             'gpt5_defi': GPT5DeFiSpecialist(),
             'gemini_security': GeminiSecurityAuditor(),
             'gemini_verification': GeminiFormalVerifier(),
+            'anthropic_security': AnthropicSecurityAuditor(),
+            'anthropic_reasoning': AnthropicReasoningSpecialist(),
         }
 
         logger.info(f"Initialized AI Ensemble with {len(self.models)} models")
@@ -1741,6 +1960,8 @@ class AIEnsemble:
             'gpt5_defi': ['amm', 'lending', 'governance', 'oracle_manipulation'],
             'gemini_security': ['external_calls', 'delegatecall', 'tx_origin', 'unchecked_returns'],
             'gemini_verification': ['arithmetic', 'overflow', 'underflow', 'precision_loss'],
+            'anthropic_security': ['access_control', 'reentrancy', 'logic_errors', 'privilege_escalation'],
+            'anthropic_reasoning': ['complex_logic', 'cross_contract', 'economic_attacks', 'invariant_violations'],
         }
 
     def update_model_weights(self, weights: Dict[str, float]) -> None:
@@ -1750,8 +1971,8 @@ class AIEnsemble:
 
     def get_ensemble_stats(self) -> Dict[str, Any]:
         return {
-            'total_models': 4,
-            'consensus_threshold': 0.75,  # Increased threshold for 4 models
+            'total_models': len(self.models),
+            'consensus_threshold': 0.75,  # Increased threshold for multi-model ensemble
             'min_models_required': 2,
             'model_specializations': self.get_model_specializations(),
             'model_weights': {k: v.confidence_weight for k, v in self.models.items()}

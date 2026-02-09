@@ -1,329 +1,252 @@
-# Aether - Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories 
-## A Smart Contract Security Analysis and PoC Generation Framework 
+# Aether v2.0 — Smart Contract Security Analysis Framework
 
-Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and optionally validating those tests on mainnet forks. It combines static analysis, prompt-driven LLM analysis, and AI-ensemble reasoning with reporting and persistence.
+**Version 2.0** | [What's New in v2.0](#whats-new-in-v20) | [Changelog](#changelog)
 
-**Enhanced PoC Generation**: Aether now features advanced AST-based contract analysis, iterative compilation fixes, and production-ready LLM prompts that generate exploits suitable for bug bounty submissions.
+Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines static analysis (Slither), prompt-driven LLM analysis, AI-ensemble reasoning, and advanced false-positive filtering into a single guided workflow.
 
-**Advanced False Positive Filtering** ✨: Aether includes a production-ready multi-stage validation system that reduces false positives from 66% to ~30-35%, improving accuracy from 33% to 65-70%. Features include:
-- **Governance Detection**: Identifies onlyOwner/onlyGovernor protected parameters
-- **Deployment Analysis**: Verifies code paths are actually used in production
-- **Built-in Protection Checks**: Recognizes Solidity 0.8+ auto-protection and SafeMath usage
-- **Governance-Aware LLM Validation**: Enhanced prompts with 4-stage validation checklist
-- **Accuracy Tracking**: Monitors submission outcomes and bounty earnings
-- **Smart Caching**: 2x faster analysis with intelligent result caching
+## What's New in v2.0
 
-**Move Vulnerability Database Integration** 🔄: Aether now incorporates patterns from the [Move Vulnerability Database](https://github.com/MoveMaverick/move-vulnerability-database) (128 Critical/High findings from 77 audits), adapted for Solidity/EVM analysis:
-- **Business Logic Detection**: Backwards validation, self-comparison bugs, reward calculation errors
-- **State Management**: Missing state updates, inconsistent tracking, desynchronization issues
-- **Data Inconsistency**: Loop variables not updated, sorting violations, array length mismatches
-- **Centralization Risks**: Excessive permissions, unlimited minting/burning, missing multisig
-- **Looping Issues**: Infinite loops, termination errors, unbounded iterations
-- **Enhanced Input Validation**: Token address validation, identifier checks, signature validation
+**Interactive Menu-Driven TUI** — Aether v2.0 replaces the command-memorization workflow with a guided interactive experience. Just run `python aether.py` (or `python main.py` with no arguments) and you get:
 
-## Scope and Capabilities
+```
+╔══════════════════════════════════════════════════════════════╗
+║               A E T H E R   v 2 . 0                          ║
+║      Smart Contract Security Analysis Framework              ║
+╚══════════════════════════════════════════════════════════════╝
 
-- Static analysis
-  - Slither integration when available
-  - Enhanced pattern-based detectors in `core/enhanced_vulnerability_detector.py`
+  [1]  New Audit            Start a new security audit
+  [2]  Resume Audit         Continue an in-progress audit
+  [3]  Audit History        Browse past audits & results
+  [4]  Generate PoCs        Create Foundry exploit proofs
+  [5]  Reports              Generate/view audit reports
+  [6]  Fetch Contract       Fetch from blockchain explorers
+  [7]  Settings             Configure API keys, models, tools
+  [8]  Console              Launch advanced Metasploit-style console
+  [0]  Exit
 
-- LLM analysis
-  - `core/enhanced_llm_analyzer.py` performs structured, validation-oriented analysis
-  - Requires `OPENAI_API_KEY` and/or `GEMINI_API_KEY`
-  - Strict JSON output and post-processing to reduce false positives
-
-- **False Positive Filtering & Validation** ✨
-  - **Multi-stage validation pipeline** (`core/validation_pipeline.py`) with 4 filtering stages:
-    - Built-in protection check (Solidity 0.8+, SafeMath)
-    - Governance control detection (onlyOwner, onlyGovernor)
-    - Deployment verification (checks if features are actually used)
-    - Local validation detection (require statements, bounds checks)
-  - **Governance detector** (`core/governance_detector.py`) identifies access-controlled parameters
-  - **Deployment analyzer** (`core/deployment_analyzer.py`) verifies production code paths
-  - **Enhanced LLM validation** (`core/llm_false_positive_filter.py`) with governance-aware prompts
-  - **Accuracy tracking** (`core/accuracy_tracker.py`) monitors submission outcomes and earnings
-  - **Smart caching** (`core/analysis_cache.py`) for 2x faster repeated analysis
-  - **163 comprehensive tests** ensuring reliability and accuracy
-
-- AI ensemble
-  - `core/ai_ensemble.py` coordinates multiple specialized agents, aggregates results, and attempts consensus
-  - Requires API keys and model availability
-
-- GitHub audit workflow
-  - `core/github_auditor.py` clones repositories, detects frameworks, discovers contracts, and coordinates analysis
-  - Interactive scope selection via `core/scope_manager.py`
-  - Audit results persisted via `core/database_manager.AetherDatabase` to `~/.aether/aether_github_audit.db`
-
-- Foundry integration and PoC generation
-  - **AST-based contract analysis** for 100% accurate function and modifier extraction
-  - **Enhanced LLM prompts** with production-ready exploit generation for $100k+ bounties
-  - **Iterative compilation feedback loop** that fixes errors automatically using LLM
-  - **Vulnerability-aware contract context** extraction based on vulnerability type
-  - LLM-based Foundry tests via `core/llm_foundry_generator.py`
-  - Enhanced Foundry validation and submission formatting via `core/enhanced_foundry_integration.py`
-  - Optional exploit testing and fork verification via `core/exploit_tester.py` and the `fork-verify` command (implemented by `core/fork_verifier.py`)
-
-- Reporting
-  - Markdown/JSON/HTML report generation from audit data
-  - GitHub audit reporting via `core/github_audit_report_generator.py`
-
-- Persistence
-  - Two SQLite databases are used:
-    - `~/.aether/aetheraudit.db` for engine-driven results
-    - `~/.aether/aether_github_audit.db` for GitHub audit workflow
-
-
-## Quick Setup (Recommended)
-
-**New users:** Run the automated installer for a guided setup experience:
-
-```bash
-python setup.py
+  Select: _
 ```
 
-This interactive installer will:
-- ✓ Check system requirements (Python 3.11+)
-- ✓ Install Foundry (forge/anvil) if needed
-- ✓ Set up Python virtual environment
-- ✓ Install all Python dependencies
-- ✓ Configure API keys with validation
-- ✓ Create configuration files
-- ✓ Verify everything works
+- **Guided audit wizard** — walks you through source selection, feature toggles, and output config
+- **Resume audits** — pick up exactly where you left off on any in-progress GitHub audit
+- **Audit history** — browse all past audits across local and GitHub sources, with details and re-audit options
+- **Integrated PoC generation** — select project, scope, severity, and generate Foundry exploits in one flow
+- **Report generation** — choose project, scope, format (markdown/json/html/all) from a menu
+- **Multi-chain contract fetching** — select network, paste address or URL, optionally audit immediately
+- **Settings management** — full setup wizard, API key config, model selection, triage tuning
+- **Power-user CLI preserved** — all `python main.py <command>` workflows still work for scripting and CI/CD
 
-**Non-interactive mode** (for CI/CD):
+**Three-Provider LLM Support**: OpenAI (GPT-5/5.3), Google Gemini (2.5/3.0), and Anthropic Claude (Sonnet 4.5/Opus 4.6) for maximum flexibility and redundancy.
+
+**Enhanced PoC Generation**: AST-based contract analysis, iterative compilation fixes, and production-ready LLM prompts generating exploits suitable for bug bounty submissions.
+
+**Advanced False Positive Filtering**: Multi-stage validation reduces false positives from 66% to ~30-35%, improving accuracy from 33% to 65-70%:
+- Governance detection (onlyOwner/onlyGovernor protected parameters)
+- Deployment analysis (verifies code paths are actually used in production)
+- Built-in protection checks (Solidity 0.8+ auto-protection, SafeMath)
+- Governance-aware LLM validation with 4-stage checklist
+- Accuracy tracking with submission outcomes and bounty earnings
+- Smart caching for 2x faster repeated analysis
+
+**Move Vulnerability Database Integration**: Patterns from 128 Critical/High findings across 77 audits, adapted for Solidity/EVM:
+- Business logic, state management, data inconsistency, centralization, looping issues, and enhanced input validation
+
+---
+
+## Quick Start
+
+### 1. Setup
+
+```bash
+python setup.py          # Interactive installer (recommended)
+```
+
+### 2. Launch Aether
+
+```bash
+python aether.py         # Interactive menu (recommended)
+python main.py           # Same thing — launches menu when no args given
+```
+
+That's it. The menu guides you through everything.
+
+### Non-interactive / CI mode
+
 ```bash
 python setup.py --non-interactive
+python main.py audit ./contracts --enhanced --ai-ensemble --llm-validation -o ./output
 ```
+
+---
 
 ## Requirements
 
-- **Python 3.11+** (currently tested with Python 3.12.8)
-- **Node.js 22+** (required for Hardhat/npm-based projects)
-  - If using NVM: `nvm install 22 && nvm use 22`
-  - Hardhat projects require Node 22.10.0 or later
-- **Foundry (forge/anvil)** installed and on PATH for Foundry-related features
-- **solc-select** for multiple Solidity compiler versions (supports 0.4.x through 0.8.x)
+- **Python 3.11+** (tested with 3.12.8)
+- **Node.js 22+** (for Hardhat/npm-based projects)
+- **Foundry (forge/anvil)** on PATH for PoC generation and validation
+- **solc-select** for multiple Solidity compiler versions
 - **Optional: Slither** for static analysis integration (v0.10.0 recommended)
 - **API keys for LLM features:**
   - `OPENAI_API_KEY` (for GPT models)
   - `GEMINI_API_KEY` (for Gemini models)
+  - `ANTHROPIC_API_KEY` (for Claude models)
   - `ETHERSCAN_API_KEY` (optional, for fetching verified contracts)
 
 ## Manual Setup
 
-If you prefer manual installation or the automated setup fails:
-
-### Install system tools:
+If you prefer manual installation:
 
 ```bash
-# Foundry (required for PoC generation)
-curl -L https://foundry.paradigm.xyz | bash
-foundryup
-
-# Add Foundry to PATH if needed
+# Foundry
+curl -L https://foundry.paradigm.xyz | bash && foundryup
 export PATH="$PATH:$HOME/.foundry/bin"
 
-# Slither (optional but recommended for static analysis)
+# Slither (optional)
 pip install slither-analyzer==0.10.0
 
-# solc-select (required for multiple Solidity versions)
+# solc-select
 pip install solc-select
-
-# Install common Solidity compiler versions
 solc-select install 0.4.26 0.8.0 0.8.19 0.8.20 latest
-```
 
-### Install Python dependencies:
-
-```bash
-python -m venv venv
-source venv/bin/activate
+# Python dependencies
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-
 ## Configuration
 
-### Automated Configuration
-
-The `setup.py` installer will guide you through configuring all API keys.
-
-### Manual Configuration
-
-Set environment variables:
+The setup wizard (`python setup.py`) handles everything, or configure manually:
 
 ```bash
-# Required for LLM features
 export OPENAI_API_KEY=sk-...
-export GEMINI_API_KEY=gsk-...
-
-# Optional
-export AETHER_LOG_LEVEL=INFO
+export GEMINI_API_KEY=...
+export ANTHROPIC_API_KEY=...
 ```
 
-Or copy the example environment file and fill in your keys:
+Or copy and edit the example env file:
 
 ```bash
 cp env.example .env
-# Edit .env with your API keys
 ```
 
-Database locations:
+Configuration is stored in `~/.aether/config.yaml`. Use **[7] Settings** in the interactive menu to manage it.
 
+Database locations:
 - Engine results: `~/.aether/aetheraudit.db`
 - GitHub audit workflow: `~/.aether/aether_github_audit.db`
 
-To reset the GitHub audit database:
+---
+
+## Interactive Menu Guide
+
+### [1] New Audit
+
+The guided wizard walks you through:
+1. **Source selection** — Local file/directory, GitHub URL, or block explorer URL/address
+2. **Target input** — path, URL, or address with validation
+3. **Feature selection** — checkboxes for Enhanced mode, AI Ensemble, LLM Validation, Foundry PoC, Enhanced Reports (sensible defaults pre-checked)
+4. **Output directory** — with sensible default
+5. **Confirm & run**
+
+### [2] Resume Audit
+
+Shows a table of all in-progress GitHub audits with project name, scope, progress (N/M contracts), and last update time. Select one to resume exactly where you left off.
+
+### [3] Audit History
+
+Unified view of all past audits from both databases (local + GitHub). Select any entry for a submenu: view scopes & details, generate PoCs, or re-audit.
+
+### [4] Generate PoCs
+
+Select a project, configure max items, minimum severity, and consensus-only filtering, then generate Foundry exploit proofs.
+
+### [5] Reports
+
+Select project, scope, and format (markdown/json/html/all) to generate audit reports.
+
+### [6] Fetch Contract
+
+Pick a network from 10+ supported chains, enter an address or paste an explorer URL, fetch the verified source code, and optionally audit it immediately.
+
+### [7] Settings
+
+- Run full setup wizard
+- View current configuration
+- Reconfigure API keys only
+- Reconfigure model selections only
+- Edit triage settings (severity, confidence, max findings)
+
+### [8] Console
+
+Launches the advanced Metasploit-style interactive console. Type `exit` to return to the main menu.
+
+---
+
+## CLI Reference (Power-User Mode)
+
+All subcommands remain available for scripting, CI/CD, and power users:
 
 ```bash
-rm ~/.aether/aether_github_audit.db
-```
-
-
-## CLI Overview
-
-The primary entrypoint is `python main.py`. Key subcommands implemented in `main.py` and `cli/main.py`:
-
-- `audit` — Analyze a local contract path or a GitHub repository URL
-- `report` — Generate reports from the GitHub audit database
-- `generate-foundry` — Generate Foundry PoCs from a structured results file or report
-- `foundry` — Run Foundry validation with PoC generation for bug bounty submissions
-- `fork-verify` — Run generated Foundry tests against an Anvil fork
-- `exploit-test` — Test generated exploit code against audited contracts (database-backed)
-- `console` — Interactive console
-- `config` — Manage configuration settings
-- `fetch`, `db`, `version` — Utilities
-
-Use `python main.py <command> --help` for full options.
-
-
-## Usage Examples
-
-### 1) Audit a local contract directory
-
-```bash
+# Audit local contracts
 python main.py audit ./contracts --enhanced --ai-ensemble --llm-validation -o ./output
-```
 
-Notes:
-- `--enhanced` enables the enhanced audit engine.
-- `--ai-ensemble` activates experimental multi-agent analysis if API keys are configured.
-- `--llm-validation` adds LLM-based validation and triage.
-
-### 2) Audit a GitHub repository with interactive scoping
-
-```bash
+# Audit a GitHub repository
 python main.py audit https://github.com/owner/repo --interactive-scope --github-token <token>
-```
 
-Notes:
-- Contracts are discovered and presented for interactive selection.
-- Results are persisted to `~/.aether/aether_github_audit.db`.
+# Generate Foundry PoCs
+python main.py generate-foundry --from-results ./output/results.json --out ./output/pocs
+python main.py generate-foundry --project-id 1 --scope-id 2 --only-consensus
 
-### 3) Generate reports from the GitHub audit database
-
-```bash
-python main.py report --format markdown --output ./output/reports --list-projects
-python main.py report --format json --project-id 1 -o ./output/reports
-```
-
-You can list projects or scopes before generating a report:
-
-```bash
+# Generate reports
+python main.py report --format markdown --project-id 1 -o ./output/reports
 python main.py report --list-projects
 python main.py report --list-scopes 1
-```
 
-### 4) Generate Foundry PoCs from results
+# Foundry validation
+python main.py foundry ./contracts -o ./output --verbose
 
-```bash
-# Preferred: from a structured results.json produced by prior analysis
-python main.py generate-foundry --from-results ./output/results.json --out ./output/pocs --max-items 20 --only-consensus
+# Fork verification
+python main.py fork-verify ./output --rpc-url <url>
 
-# Fallback: from a markdown report (limited parsing)
-python main.py generate-foundry --from-report ./output/report.md --out ./output/pocs
-```
-
-LLM-based PoC generation is the default. Ensure `OPENAI_API_KEY` (and/or `GEMINI_API_KEY`) is set for best results. Template-only mode (no LLM) is available but not recommended except for offline/CI smoke runs:
-
-```bash
-python scripts/generate_foundry_pocs.py \
-  --results ./output/results.json \
-  --contract ./contracts/MyContract.sol \
-  --output ./output/pocs \
-  --template-only
-```
-
-**Enhanced PoC Generation Features:**
-- **AST-based analysis** provides 100% accurate contract function extraction
-- **Production-ready prompts** generate exploits suitable for $100k+ bug bounty submissions
-- **Iterative compilation fixes** automatically resolve compilation errors using LLM feedback
-- **Vulnerability-specific attack chains** for different vulnerability types (access control, reentrancy, oracle manipulation, etc.)
-- **Enhanced contract context** provides vulnerability-focused analysis around vulnerable code locations
-
-### 5) Run Foundry validation directly
-
-```bash
-python main.py foundry ./contracts/MyContract.sol -o ./output/foundry
-```
-
-### 6) Verify PoCs on a mainnet fork
-
-```bash
-# Start Anvil locally (in another terminal) or provide an RPC URL to fork-verify
-anvil --fork-url https://eth-mainnet.g.alchemy.com/v2/<key>
-
-# Verify generated tests against a fork
-python main.py fork-verify ./output/pocs --rpc-url https://eth-mainnet.g.alchemy.com/v2/<key> --block 19000000
-```
-
-### 7) Exploit testing across audited findings (database-backed)
-
-```bash
+# Exploit testing
 python main.py exploit-test <project_name>
+
+# Fetch contracts from block explorers
+python main.py fetch 0x1234... --network polygon -o ./contracts
+
+# Console
+python main.py console
+
+# Configuration
+python main.py config --show
+python main.py config --set-etherscan-key YOUR_KEY
+python main.py config --list-networks
+
+# Database management
+python main.py db --stats
+python main.py db --list-audits
+
+# Version
+python main.py version
 ```
 
-This uses findings persisted by the GitHub audit workflow and attempts PoC generation and execution.
+Use `python main.py <command> --help` for full options on any subcommand.
 
-### 8) Using the Advanced Validation System
+---
 
-The validation system automatically runs during audits with `--llm-validation`, but you can also use it programmatically:
+## Scope and Capabilities
 
-```python
-from pathlib import Path
-from core.validation_pipeline import validate_vulnerability
-from core.immunefi_formatter import ImmunefFormatter
-from core.accuracy_tracker import AccuracyTracker
+- **Static analysis** — Slither integration + 60+ pattern-based detectors
+- **LLM analysis** — Structured, validation-oriented analysis with OpenAI, Gemini, and Claude; automatic provider fallback
+- **AI ensemble** — Multi-agent coordination with consensus-based reasoning (6 agents: 2 OpenAI, 2 Gemini, 2 Anthropic)
+- **False positive filtering** — 4-stage validation pipeline with governance, deployment, and LLM-based filtering
+- **GitHub audit workflow** — Clone repos, detect frameworks, discover contracts, interactive scope selection, persistent state
+- **Foundry PoC generation** — AST-based analysis, iterative compilation feedback, production-ready exploit prompts
+- **Multi-chain contract fetching** — 10+ EVM networks + Solana support
+- **Reporting** — Markdown, JSON, HTML report generation from audit data
+- **Persistence** — Two SQLite databases for engine results and GitHub audit workflow
 
-# Validate a single vulnerability
-result = validate_vulnerability(
-    vulnerability={
-        'vulnerability_type': 'integer_overflow',
-        'description': 'Potential overflow in balance calculation',
-        'line': 42,
-        'code_snippet': 'balance += amount;'
-    },
-    contract_code=source_code,
-    project_path=Path('./contracts')
-)
-
-if result['is_false_positive']:
-    print(f"❌ Filtered: {result['reasoning']}")
-else:
-    # Generate Immunefi report for real vulnerabilities
-    formatter = ImmunefFormatter()
-    report = formatter.generate_report(vulnerability, deployment_info)
-    formatter.save_report(report, 'immunefi_submission.md')
-    
-    # Track submission outcome
-    tracker = AccuracyTracker()
-    tracker.record_submission(vulnerability, 'accepted', bounty_amount=15000)
-```
-
-See `examples/use_validation_system.py` for more examples.
-
-
-## Output and Directories
+## Output Directories
 
 - `./output/` — General output root
 - `./output/reports/` — Generated reports
@@ -333,78 +256,76 @@ See `examples/use_validation_system.py` for more examples.
 
 ## Troubleshooting
 
-- Foundry not found
-  - Ensure `forge`/`anvil` are installed and on `PATH` (`foundryup` and `export PATH="$PATH:$HOME/.foundry/bin"`).
-
-- Slither not found
-  - Install with `pip install slither-analyzer==0.10.0`. If unavailable, the pipeline skips Slither.
-  - Note: Slither may not be detected by the dependency checker if installed outside PATH, but should still work.
-
-- solc not found or wrong version
-  - Install solc-select: `pip install solc-select`
-  - Install required versions: `solc-select install 0.4.26 0.8.0 0.8.19 0.8.20 latest`
-  - Switch versions as needed: `solc-select use 0.8.19`
-
-- LLM features not working
-  - Verify `OPENAI_API_KEY` and/or `GEMINI_API_KEY` are set.
-  - Some ensemble models may be unavailable in your account/region. The system falls back where possible.
-
-- Database not found
-  - For GitHub reports, ensure the audit workflow has been run and `~/.aether/aether_github_audit.db` exists.
+- **Foundry not found** — Ensure `forge`/`anvil` are installed and on `PATH` (`foundryup` and `export PATH="$PATH:$HOME/.foundry/bin"`)
+- **Slither not found** — Install with `pip install slither-analyzer==0.10.0`. If unavailable, the pipeline skips Slither
+- **solc not found** — Install `solc-select` and required versions: `solc-select install 0.8.20 latest`
+- **LLM features not working** — Verify API keys are set. Some models may be unavailable in your account/region; the system falls back automatically
+- **Database not found** — For GitHub reports, ensure the audit workflow has been run first
+- **Menu not appearing** — Run `pip install questionary rich` if missing
 
 
-## Development Notes
+## Tests
 
-- Code paths used by the CLI:
-  - Main entrypoint: `main.py`
-  - CLI coordinator: `cli/main.py`
-  - Enhanced audit engine: `core/enhanced_audit_engine.py`
-  - LLM analyzer: `core/enhanced_llm_analyzer.py`
-  - AI ensemble: `core/ai_ensemble.py` (experimental)
-  - GitHub auditor: `core/github_auditor.py`
-  - **Enhanced Foundry generation**: `core/foundry_poc_generator.py` (AST analysis, iterative fixes, production-ready prompts)
-  - Foundry generation and validation: `core/llm_foundry_generator.py`, `core/enhanced_foundry_integration.py`
-  - Exploit testing: `core/exploit_tester.py`
-  - **Validation system** ✨:
-    - `core/validation_pipeline.py` - Multi-stage false positive filtering
-    - `core/governance_detector.py` - Governance control detection
-    - `core/deployment_analyzer.py` - Deployment verification
-    - `core/llm_false_positive_filter.py` - Enhanced LLM validation with governance awareness
-    - `core/immunefi_formatter.py` - Professional bug bounty report generation
-    - `core/accuracy_tracker.py` - Submission tracking and metrics
-    - `core/analysis_cache.py` - Smart caching for performance
-  - Reporting: `core/report_generator.py`, `core/github_audit_report_generator.py`
-  - Persistence: `core/database_manager.py`
+```bash
+python -m pytest tests/                                    # All tests
+python -m pytest tests/test_enhanced_detectors.py -v       # Single file
+python -m pytest tests/ -k "governance" -v                 # Pattern match
+python -m pytest tests/ --cov=core --cov-report=html       # With coverage
+```
 
-- **Comprehensive test suite** for enhanced features:
-  - `tests/test_poc_generator_enhancements.py` - AST analysis and enhanced prompts
-  - `tests/test_iterative_compilation_fixes.py` - Compilation feedback loop
-  - `tests/test_enhanced_llm_integration.py` - LLM integration improvements
-  - `tests/test_poc_generator_improvements.py` - Integration testing
-  - **Validation system tests** ✨ (163 tests):
-    - `tests/test_governance_detector.py` - Governance detection (32 tests)
-    - `tests/test_deployment_analyzer.py` - Deployment analysis (20 tests)
-    - `tests/test_validation_pipeline.py` - Pipeline integration (24 tests)
-    - `tests/test_immunefi_formatter.py` - Report generation (35 tests)
-    - `tests/test_accuracy_tracker.py` - Metrics tracking (18 tests)
-    - `tests/test_analysis_cache.py` - Caching system (25 tests)
-    - `tests/test_false_positive_reduction_integration.py` - End-to-end integration (9 tests)
-  - **Move integration tests** 🔄 (46 tests):
-    - `tests/test_move_detector_integration.py` - Integration validation (15 tests)
-    - `tests/test_business_logic_detector.py` - Business logic detection (8 tests)
-    - `tests/test_state_management_detector.py` - State management (5 tests)
-    - `tests/test_centralization_detector.py` - Centralization risks (7 tests)
-    - `tests/test_looping_detector.py` - Looping issues (6 tests)
-    - `tests/test_data_inconsistency_detector.py` - Data inconsistency (5 tests)
 
-- Known inconsistencies and caveats:
-  - AI ensemble is experimental and subject to change.
-  - Some modules print colored output or symbols; functionality does not depend on them.
+## Architecture
+
+### Entry Points
+- `aether.py` — Primary entry point, launches interactive menu TUI
+- `main.py` — CLI dispatcher; no args launches menu, subcommands for direct access
+- `cli/interactive_menu.py` — Interactive menu engine (AetherInteractiveMenu class)
+- `cli/main.py` — AetherCLI class (~2600 lines) orchestrating all command implementations
+- `cli/console.py` — Metasploit-style interactive console
+
+### Core Layers
+- **Detection** — `core/enhanced_vulnerability_detector.py` + specialized detectors (DeFi, MEV, oracle, arithmetic, gas, business logic, state management, centralization, looping, data inconsistency)
+- **Validation** — `core/validation_pipeline.py` (4-stage pipeline), `core/governance_detector.py`, `core/deployment_analyzer.py`, `core/llm_false_positive_filter.py`
+- **LLM & AI** — `core/enhanced_llm_analyzer.py`, `core/ai_ensemble.py`, `core/enhanced_prompts.py`
+- **PoC Generation** — `core/foundry_poc_generator.py` (AST-based, ~8000 lines), `core/llm_foundry_generator.py`, `core/enhanced_foundry_integration.py`
+- **Persistence** — `core/database_manager.py` (DatabaseManager + AetherDatabase), `core/analysis_cache.py`, `core/accuracy_tracker.py`
+- **Integrations** — `core/github_auditor.py`, `core/etherscan_fetcher.py`, `core/basescan_fetcher.py`, `core/exploit_tester.py`, `core/fork_verifier.py`
+
+### Flow-Based Execution
+Audit flows defined in YAML configs (`configs/`). Enhanced audit pipeline:
+`FileReaderNode → StaticAnalysisNode → LLMAnalysisNode → EnhancedExploitabilityNode → [FixGeneratorNode → ValidationNode] → ReportNode`
+
+
+## Changelog
+
+### v2.0 — Interactive Menu TUI
+- Interactive menu-driven TUI as the primary interface (`python aether.py`)
+- `python main.py` without arguments now launches the interactive menu
+- Guided audit wizard with source selection, feature checkboxes, and confirmation
+- Resume audit capability for in-progress GitHub audits
+- Unified audit history browser across local and GitHub databases
+- Integrated PoC generation and report workflows from menu
+- Multi-chain contract fetching with optional immediate audit
+- Settings management (setup wizard, API keys, models, triage) from menu
+- Console launch/return from menu
+- Version bumped to 2.0.0
+
+### v1.5 — Three-Provider LLM Support & Enhanced Analysis
+- Anthropic Claude integration (Sonnet 4.5, Opus 4.6, Haiku 4.5) as third LLM provider
+- 6-agent AI ensemble: 2 OpenAI + 2 Gemini + 2 Anthropic specialist agents
+- Automatic cross-provider fallback for maximum availability
+- Updated OpenAI models (GPT-5.3) and Google Gemini models (3.0 Flash/Pro)
+- Anthropic Security Auditor agent for deep access control and reentrancy analysis
+- Anthropic Reasoning Specialist agent leveraging extended thinking for complex vulnerabilities
+- Setup wizard updated with Anthropic API key configuration and model selection
+- Fixed broken generate-foundry CLI command (restored LLMFoundryGenerator module)
+- Fixed indentation bug in output directory handling for generate-foundry
+- All 22 previously-broken foundry generator tests now passing
 
 
 ## License
 
-AetherAudit is distributed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+Aether is distributed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
 
 ## Author
 

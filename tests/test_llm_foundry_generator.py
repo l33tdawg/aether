@@ -7,18 +7,13 @@ Tests the new vulnerability-specific exploit and test generation features.
 
 import sys
 import os
-sys.path.insert(0, '/Users/l33tdawg/nodejs-projects/bugbounty')
 
 import unittest
 from unittest.mock import Mock, patch, MagicMock
 import tempfile
 from pathlib import Path
 
-try:
-    from core.llm_foundry_generator import LLMFoundryGenerator, TestGenerationResult
-except ImportError as e:
-    print(f"Import error: {e}")
-    sys.exit(1)
+from core.llm_foundry_generator import LLMFoundryGenerator, TestGenerationResult
 
 
 class TestLLMFoundryGenerator(unittest.TestCase):

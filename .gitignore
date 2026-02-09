@@ -32,6 +32,9 @@ ENV/
 .venv/
 .env
 
+# Claude Code
+.claude/
+
 # IDEs and editors
 .vscode/
 .idea/

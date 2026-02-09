@@ -22,11 +22,14 @@ class EnhancedLLMAnalyzer:
         self.api_key = api_key
         if not self.api_key:
             self.api_key = os.getenv("OPENAI_API_KEY")
-        
+
         # Try to get Gemini API key
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
-        
-        if not self.api_key or not self.gemini_api_key:
+
+        # Try to get Anthropic API key
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+
+        if not self.api_key or not self.gemini_api_key or not self.anthropic_api_key:
             # Try config manager for stored keys
             try:
                 from core.config_manager import ConfigManager
@@ -37,10 +40,13 @@ class EnhancedLLMAnalyzer:
                 if not self.gemini_api_key and getattr(cm.config, 'gemini_api_key', ''):
                     self.gemini_api_key = cm.config.gemini_api_key
                     os.environ['GEMINI_API_KEY'] = self.gemini_api_key
+                if not self.anthropic_api_key and getattr(cm.config, 'anthropic_api_key', ''):
+                    self.anthropic_api_key = cm.config.anthropic_api_key
+                    os.environ['ANTHROPIC_API_KEY'] = self.anthropic_api_key
             except Exception:
                 pass
-        
-        self.has_api_key = bool(self.api_key) or bool(self.gemini_api_key)
+
+        self.has_api_key = bool(self.api_key) or bool(self.gemini_api_key) or bool(self.anthropic_api_key)
         
         # Get model from config if not specified (supports mixed OpenAI/Gemini)
         if model:
@@ -53,12 +59,15 @@ class EnhancedLLMAnalyzer:
             except Exception:
                 self.model = 'gpt-5-chat-latest'  # Fallback
         
-        # Updated fallback models to include Gemini
-        self.fallback_models = ["gemini-2.5-flash", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
-        
+        # Updated fallback models to include Gemini and Anthropic
+        self.fallback_models = ["claude-sonnet-4-5-20250929", "gemini-2.5-flash", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+
         # Context limits for different models
         # NOTE: These are COMBINED input + output limits
         self.model_context_limits = {
+            # GPT-5.3 models (next-gen)
+            "gpt-5.3-chat-latest": 400000,  # 400k tokens combined
+            "gpt-5.3-mini": 400000,         # 400k tokens combined
             # GPT-5 models (400K combined input+output, better retrieval from large inputs)
             "gpt-5-chat-latest": 400000,  # 400k tokens combined
             "gpt-5-pro": 400000,          # 400k tokens combined
@@ -76,17 +85,36 @@ class EnhancedLLMAnalyzer:
             "gpt-4-turbo": 128000,    # 128k tokens combined
             "gpt-4": 8192,            # 8k tokens combined
             "gpt-3.5-turbo": 16384,   # 16k tokens combined
-            # Gemini models (2M combined)
+            # Gemini 3 models
+            "gemini-3.0-flash": 2000000,  # 2M tokens combined
+            "gemini-3.0-pro": 2000000,    # 2M tokens combined
+            # Gemini 2.5 models (2M combined)
             "gemini-2.5-flash": 2000000,  # 2M tokens combined
+            "gemini-2.5-pro": 2000000,    # 2M tokens combined
+            # Gemini 1.5 models
             "gemini-1.5-pro": 2000000,    # 2M tokens combined
             "gemini-1.5-flash": 1000000,  # 1M tokens combined
+            # Anthropic Claude models (200K context)
+            "claude-opus-4-6": 200000,            # 200k tokens
+            "claude-sonnet-4-5-20250929": 200000,  # 200k tokens
+            "claude-haiku-4-5-20251001": 200000,   # 200k tokens
         }
 
         if self.api_key:
             self.client = OpenAI(api_key=self.api_key)
         else:
             self.client = None
-            
+
+        if self.anthropic_api_key:
+            try:
+                import anthropic
+                self.anthropic_client = anthropic.Anthropic(api_key=self.anthropic_api_key)
+            except ImportError:
+                self.anthropic_client = None
+                print("⚠️  anthropic package not installed - Claude features disabled")
+        else:
+            self.anthropic_client = None
+
         if not self.has_api_key:
             print("⚠️  No API keys found in environment or config - LLM features disabled")
 
@@ -144,9 +172,12 @@ class EnhancedLLMAnalyzer:
         # Reserve space for output based on model capabilities
         is_gpt5 = self.model.startswith('gpt-5')
         is_gemini = self.model.startswith('gemini-')
-        
+        is_anthropic = self.model.startswith('claude-')
+
         if is_gemini:
             reserved_tokens = 12000  # 12K for thinking + output
+        elif is_anthropic:
+            reserved_tokens = 8000   # 8K for output (Claude's strong analysis)
         elif is_gpt5:
             reserved_tokens = 8000   # 8K for output (GPT-5's superior retrieval)
         else:
@@ -341,14 +372,18 @@ Before reporting any vulnerability, verify:
         
         for current_model in models_to_try:
             try:
-                # Check if this is a Gemini model
+                # Check if this is a Gemini or Anthropic model
                 is_gemini = current_model.startswith('gemini-')
-                
+                is_anthropic = current_model.startswith('claude-')
+
                 # Skip if we don't have the right API key
                 if is_gemini and not self.gemini_api_key:
                     print(f"⚠️  Skipping {current_model} - no Gemini API key")
                     continue
-                elif not is_gemini and not self.api_key:
+                elif is_anthropic and not self.anthropic_api_key:
+                    print(f"⚠️  Skipping {current_model} - no Anthropic API key")
+                    continue
+                elif not is_gemini and not is_anthropic and not self.api_key:
                     print(f"⚠️  Skipping {current_model} - no OpenAI API key")
                     continue
                 
@@ -362,6 +397,8 @@ Before reporting any vulnerability, verify:
                 is_gpt5 = current_model.startswith('gpt-5')
                 if is_gemini:
                     max_completion_tokens = 12000  # 12K for thinking + output
+                elif is_anthropic:
+                    max_completion_tokens = 8000   # 8K for output (Claude's strong analysis)
                 elif is_gpt5:
                     max_completion_tokens = 8000   # 8K for output (GPT-5's better retrieval allows aggressive input)
                 else:
@@ -381,6 +418,9 @@ Before reporting any vulnerability, verify:
                 if is_gemini:
                     # Use Google Gemini API
                     response_text = await self._call_gemini_api(current_model, truncated_prompt, max_completion_tokens)
+                elif is_anthropic:
+                    # Use Anthropic Claude API
+                    response_text = await self._call_anthropic_api(current_model, truncated_prompt, max_completion_tokens)
                 else:
                     # Use OpenAI API
                     response_text = await self._call_openai_api(current_model, truncated_prompt, max_completion_tokens)
@@ -498,6 +538,30 @@ Before reporting any vulnerability, verify:
             
             return None
             
+        except Exception as e:
+            raise e
+
+    async def _call_anthropic_api(self, model: str, prompt: str, max_tokens: int) -> Optional[str]:
+        """Call Anthropic Claude API."""
+        try:
+            if not self.anthropic_client:
+                return None
+
+            response = self.anthropic_client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=0.1,
+                system="You are an expert smart contract security auditor. Provide accurate, validated analysis.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+            )
+
+            if response.content and len(response.content) > 0:
+                return response.content[0].text
+
+            return None
+
         except Exception as e:
             raise e
 

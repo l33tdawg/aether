@@ -100,9 +100,9 @@ def fetch_available_models(api_key: str) -> Dict[str, List[str]]:
         print(f"⚠️  Could not fetch models from API: {e}")
         # Fallback to known models
         return {
-            'gpt5_models': ['gpt-5-chat-latest', 'gpt-5-pro', 'gpt-5-mini', 'gpt-5-nano'],
+            'gpt5_models': ['gpt-5.3-chat-latest', 'gpt-5.3-mini', 'gpt-5-chat-latest', 'gpt-5-pro', 'gpt-5-mini', 'gpt-5-nano'],
             'gpt4_models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
-            'all_models': ['gpt-5-chat-latest', 'gpt-5-pro', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo']
+            'all_models': ['gpt-5.3-chat-latest', 'gpt-5.3-mini', 'gpt-5-chat-latest', 'gpt-5-pro', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo']
         }
 
 def fetch_available_gemini_models(api_key: str) -> Dict[str, List[str]]:
@@ -149,10 +149,50 @@ def fetch_available_gemini_models(api_key: str) -> Dict[str, List[str]]:
     
     # Fallback to known models
     return {
-        'gemini_2_5_models': ['gemini-2.5-flash', 'gemini-2.5-pro'],
+        'gemini_2_5_models': ['gemini-3.0-flash', 'gemini-3.0-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'],
         'gemini_1_5_models': ['gemini-1.5-flash', 'gemini-1.5-pro'],
-        'all_models': ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']
+        'all_models': ['gemini-3.0-flash', 'gemini-3.0-pro', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']
     }
+
+
+def fetch_available_anthropic_models(api_key: str) -> Dict[str, List[str]]:
+    """Fetch available Anthropic Claude models.
+
+    Returns a dict with categorized models:
+    - claude_4_models: List of Claude 4.x models
+    - all_models: All available Claude models
+    """
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=api_key)
+
+        # Anthropic doesn't have a models.list() endpoint, use known models
+        # Try a minimal call to verify the key works
+        client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=5,
+            messages=[{"role": "user", "content": "test"}],
+        )
+
+        # Key is valid, return known models
+        return {
+            'claude_4_models': ['claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001'],
+            'all_models': ['claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001']
+        }
+    except ImportError:
+        print("⚠️  anthropic package not installed")
+        return {
+            'claude_4_models': ['claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001'],
+            'all_models': ['claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001']
+        }
+    except Exception as e:
+        print(f"⚠️  Could not validate Anthropic API key: {e}")
+        # Fallback to known models
+        return {
+            'claude_4_models': ['claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001'],
+            'all_models': ['claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001']
+        }
 
 
 class AetherSetup:
@@ -235,7 +275,13 @@ class AetherSetup:
             table.add_row("Gemini API Key", "✓ Configured", f"{gemini_key[:10]}...")
         else:
             table.add_row("Gemini API Key", "✗ Not set", "-")
-        
+
+        anthropic_key = getattr(self.existing_config, 'anthropic_api_key', '')
+        if anthropic_key:
+            table.add_row("Anthropic API Key", "✓ Configured", f"{anthropic_key[:10]}...")
+        else:
+            table.add_row("Anthropic API Key", "✗ Not set", "-")
+
         etherscan_key = getattr(self.existing_config, 'etherscan_api_key', '')
         if etherscan_key:
             table.add_row("Etherscan API Key", "✓ Configured", f"{etherscan_key[:10]}...")
@@ -248,17 +294,23 @@ class AetherSetup:
         generation_provider = getattr(self.existing_config, 'generation_provider', 'openai')
         
         # Get the active model for each task
-        if validation_provider == 'openai':
+        if validation_provider == 'anthropic':
+            validation_model = getattr(self.existing_config, 'anthropic_validation_model', 'claude-sonnet-4-5-20250929')
+        elif validation_provider == 'openai':
             validation_model = getattr(self.existing_config, 'openai_validation_model', 'gpt-5-chat-latest')
         else:
             validation_model = getattr(self.existing_config, 'gemini_validation_model', 'gemini-2.5-flash')
-        
-        if analysis_provider == 'openai':
+
+        if analysis_provider == 'anthropic':
+            analysis_model = getattr(self.existing_config, 'anthropic_analysis_model', 'claude-opus-4-6')
+        elif analysis_provider == 'openai':
             analysis_model = getattr(self.existing_config, 'openai_analysis_model', 'gpt-5-chat-latest')
         else:
             analysis_model = getattr(self.existing_config, 'gemini_analysis_model', 'gemini-2.5-flash')
-        
-        if generation_provider == 'openai':
+
+        if generation_provider == 'anthropic':
+            generation_model = getattr(self.existing_config, 'anthropic_generation_model', 'claude-sonnet-4-5-20250929')
+        elif generation_provider == 'openai':
             generation_model = getattr(self.existing_config, 'openai_generation_model', 'gpt-5-mini')
         else:
             generation_model = getattr(self.existing_config, 'gemini_generation_model', 'gemini-2.5-flash')
@@ -344,10 +396,13 @@ class AetherSetup:
         if not self.api_keys:
             existing_openai = getattr(self.existing_config, 'openai_api_key', '')
             existing_gemini = getattr(self.existing_config, 'gemini_api_key', '')
+            existing_anthropic = getattr(self.existing_config, 'anthropic_api_key', '')
             if existing_openai:
                 self.api_keys['OPENAI_API_KEY'] = existing_openai
             if existing_gemini:
                 self.api_keys['GEMINI_API_KEY'] = existing_gemini
+            if existing_anthropic:
+                self.api_keys['ANTHROPIC_API_KEY'] = existing_anthropic
         
         while True:
             self.console.print("\n[bold]Model Selection Manager[/bold]")
@@ -357,11 +412,13 @@ class AetherSetup:
             tasks = ['validation', 'analysis', 'generation']
             for task in tasks:
                 provider = getattr(self.existing_config, f'{task}_provider', 'openai')
-                if provider == 'openai':
+                if provider == 'anthropic':
+                    model = getattr(self.existing_config, f'anthropic_{task}_model', 'N/A')
+                elif provider == 'openai':
                     model = getattr(self.existing_config, f'openai_{task}_model', 'N/A')
                 else:
                     model = getattr(self.existing_config, f'gemini_{task}_model', 'N/A')
-                
+
                 self.console.print(f"  {task.title()}: [cyan]{provider}[/cyan] / [yellow]{model}[/yellow]")
             
             self.console.print("\n[bold]Select task to reconfigure:[/bold]")
@@ -411,82 +468,104 @@ class AetherSetup:
     
     def _configure_single_task_model(self, task_name: str) -> bool:
         """Configure model for a single task type.
-        
+
         Args:
             task_name: One of 'validation', 'analysis', or 'generation'
         """
         has_openai = self.api_keys.get('OPENAI_API_KEY')
         has_gemini = self.api_keys.get('GEMINI_API_KEY')
-        
-        if not has_openai and not has_gemini:
+        has_anthropic = self.api_keys.get('ANTHROPIC_API_KEY')
+
+        if not has_openai and not has_gemini and not has_anthropic:
             self.console.print("[red]No API keys configured![/red]")
             return False
-        
+
         # Fetch available models
         available_openai = None
         available_gemini = None
-        
+        available_anthropic = None
+
         if has_openai:
             with self.console.status("[bold green]Fetching OpenAI models..."):
                 available_openai = fetch_available_models(self.api_keys['OPENAI_API_KEY'])
-        
+
         if has_gemini:
             with self.console.status("[bold green]Fetching Gemini models..."):
                 available_gemini = fetch_available_gemini_models(self.api_keys['GEMINI_API_KEY'])
-        
+
+        if has_anthropic:
+            with self.console.status("[bold green]Fetching Anthropic models..."):
+                available_anthropic = fetch_available_anthropic_models(self.api_keys['ANTHROPIC_API_KEY'])
+
         task_desc = {
             'validation': 'false positive filtering - needs critical accuracy',
             'analysis': 'vulnerability detection - balanced quality',
             'generation': 'PoC/test generation - can use faster model'
         }
-        
+
         self.console.print(f"\n[bold]Configure {task_name.title()} Model[/bold] (for {task_desc[task_name]})")
-        
+
         # Choose provider
         provider = None
-        if has_openai and has_gemini:
-            provider_choices = ["openai", "gemini"]
+        provider_choices = []
+        if has_openai:
+            provider_choices.append("openai")
+        if has_gemini:
+            provider_choices.append("gemini")
+        if has_anthropic:
+            provider_choices.append("anthropic")
+
+        if len(provider_choices) > 1:
             current_provider = getattr(self.existing_config, f'{task_name}_provider', 'openai')
-            
+
             self.console.print(f"\n  Current: [cyan]{current_provider}[/cyan]")
             provider = select_with_arrows(
-                "Select provider (↑↓ arrows, Enter to confirm)",
+                "Select provider (use arrow keys, Enter to confirm)",
                 provider_choices,
-                default=current_provider
+                default=current_provider if current_provider in provider_choices else provider_choices[0]
             )
             self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
-        elif has_openai:
-            provider = "openai"
+        elif len(provider_choices) == 1:
+            provider = provider_choices[0]
             self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
-        elif has_gemini:
-            provider = "gemini"
-            self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
-        
+
         # Select model from chosen provider
         if provider == "openai" and available_openai:
             choice_list = available_openai['gpt5_models'][:10] + available_openai['gpt4_models'][:5]
             current_model = getattr(self.existing_config, f'openai_{task_name}_model', choice_list[0])
-            
+
             self.console.print(f"\n  Current: [yellow]{current_model}[/yellow]")
             model = select_with_arrows(
-                "Select OpenAI model (↑↓ arrows, Enter to confirm)",
+                "Select OpenAI model (use arrow keys, Enter to confirm)",
                 choice_list,
                 default=current_model if current_model in choice_list else choice_list[0]
             )
             self.api_keys[f'{task_name.upper()}_MODEL'] = model
-            
+
         elif provider == "gemini" and available_gemini:
             choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
             current_model = getattr(self.existing_config, f'gemini_{task_name}_model', choice_list[0])
-            
+
             self.console.print(f"\n  Current: [yellow]{current_model}[/yellow]")
             model = select_with_arrows(
-                "Select Gemini model (↑↓ arrows, Enter to confirm)",
+                "Select Gemini model (use arrow keys, Enter to confirm)",
                 choice_list,
                 default=current_model if current_model in choice_list else choice_list[0]
             )
             self.api_keys[f'GEMINI_{task_name.upper()}_MODEL'] = model
-        
+
+        elif provider == "anthropic" and available_anthropic:
+            choice_list = available_anthropic['claude_4_models']
+            current_model = getattr(self.existing_config, f'anthropic_{task_name}_model', choice_list[0])
+
+            self.console.print(f"\n  Current: [yellow]{current_model}[/yellow]")
+            model = select_with_arrows(
+                "Select Anthropic model (use arrow keys, Enter to confirm)",
+                choice_list,
+                default=current_model if current_model in choice_list else choice_list[0]
+            )
+            self.api_keys[f'ANTHROPIC_{task_name.upper()}_MODEL'] = model
+
         return True
     
     def _configure_ensemble_agents(self) -> bool:
@@ -499,7 +578,9 @@ class AetherSetup:
             ('gpt5_security', 'GPT-5 Security Auditor', 'Security vulnerabilities (access control, reentrancy, etc.)'),
             ('gpt5_defi', 'GPT-5 DeFi Specialist', 'DeFi protocols (AMM, lending, oracle manipulation)'),
             ('gemini_security', 'Gemini Security Hunter', 'Security patterns (external calls, delegatecall, etc.)'),
-            ('gemini_verification', 'Gemini Formal Verifier', 'Formal verification (arithmetic, overflow, precision)')
+            ('gemini_verification', 'Gemini Formal Verifier', 'Formal verification (arithmetic, overflow, precision)'),
+            ('anthropic_security', 'Anthropic Security Auditor', 'Deep security analysis (Claude Opus 4.6)'),
+            ('anthropic_reasoning', 'Anthropic Reasoning Specialist', 'Extended reasoning for complex vulnerabilities'),
         ]
         
         self.console.print("[bold cyan]Current Agent Models:[/bold cyan]")
@@ -511,42 +592,57 @@ class AetherSetup:
         # Fetch available models
         has_openai = self.api_keys.get('OPENAI_API_KEY')
         has_gemini = self.api_keys.get('GEMINI_API_KEY')
-        
+        has_anthropic = self.api_keys.get('ANTHROPIC_API_KEY')
+
         available_openai = None
         available_gemini = None
-        
+        available_anthropic = None
+
         if has_openai:
             with self.console.status("[bold green]Fetching OpenAI models..."):
                 available_openai = fetch_available_models(self.api_keys['OPENAI_API_KEY'])
-        
+
         if has_gemini:
             with self.console.status("[bold green]Fetching Gemini models..."):
                 available_gemini = fetch_available_gemini_models(self.api_keys['GEMINI_API_KEY'])
-        
+
+        if has_anthropic:
+            with self.console.status("[bold green]Fetching Anthropic models..."):
+                available_anthropic = fetch_available_anthropic_models(self.api_keys['ANTHROPIC_API_KEY'])
+
         # Configure each agent
         for agent_key, agent_name, agent_focus in agents:
             self.console.print(f"\n[bold]{agent_name}[/bold]")
             self.console.print(f"[dim]Focus: {agent_focus}[/dim]")
-            
+
             current_model = getattr(self.existing_config, f'agent_{agent_key}_model', 'N/A')
             self.console.print(f"Current: [yellow]{current_model}[/yellow]")
-            
+
             # Determine which provider this agent uses
             is_gemini_agent = 'gemini' in agent_key
-            
-            if is_gemini_agent and available_gemini:
-                # Gemini agent - select from Gemini models
-                choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
+            is_anthropic_agent = 'anthropic' in agent_key
+
+            if is_anthropic_agent and available_anthropic:
+                # Anthropic agent - select from Claude models
+                choice_list = available_anthropic['claude_4_models']
                 model = select_with_arrows(
-                    f"Select Gemini model for {agent_name} (↑↓ arrows, Enter to confirm)",
+                    f"Select Anthropic model for {agent_name} (use arrow keys, Enter to confirm)",
                     choice_list,
                     default=current_model if current_model in choice_list else choice_list[0]
                 )
-            elif not is_gemini_agent and available_openai:
+            elif is_gemini_agent and available_gemini:
+                # Gemini agent - select from Gemini models
+                choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
+                model = select_with_arrows(
+                    f"Select Gemini model for {agent_name} (use arrow keys, Enter to confirm)",
+                    choice_list,
+                    default=current_model if current_model in choice_list else choice_list[0]
+                )
+            elif not is_gemini_agent and not is_anthropic_agent and available_openai:
                 # GPT-5 agent - select from OpenAI models
                 choice_list = available_openai['gpt5_models'][:10] + available_openai['gpt4_models'][:5]
                 model = select_with_arrows(
-                    f"Select OpenAI model for {agent_name} (↑↓ arrows, Enter to confirm)",
+                    f"Select OpenAI model for {agent_name} (use arrow keys, Enter to confirm)",
                     choice_list,
                     default=current_model if current_model in choice_list else choice_list[0]
                 )
@@ -628,7 +724,7 @@ What this installer will do:
   ✓ Install Foundry (forge/anvil) if needed
   ✓ Set up Python virtual environment
   ✓ Install Python dependencies
-  ✓ Configure API keys (OpenAI, Gemini, Etherscan)
+  ✓ Configure API keys (OpenAI, Gemini, Anthropic, Etherscan)
   ✓ Create configuration files
   ✓ Verify everything works
 
@@ -828,16 +924,19 @@ Let's get started!
         if self.existing_config and not self.reconfigure_all and not self.reconfigure_keys:
             existing_openai = getattr(self.existing_config, 'openai_api_key', '')
             existing_gemini = getattr(self.existing_config, 'gemini_api_key', '')
-            
-            if existing_openai or existing_gemini:
+            existing_anthropic = getattr(self.existing_config, 'anthropic_api_key', '')
+
+            if existing_openai or existing_gemini or existing_anthropic:
                 self.console.print("  [green]✓ API keys already configured[/green]")
-                
+
                 if self.interactive and not Confirm.ask("  Reconfigure API keys?", default=False):
                     # Use existing keys
                     if existing_openai:
                         self.api_keys['OPENAI_API_KEY'] = existing_openai
                     if existing_gemini:
                         self.api_keys['GEMINI_API_KEY'] = existing_gemini
+                    if existing_anthropic:
+                        self.api_keys['ANTHROPIC_API_KEY'] = existing_anthropic
                     if getattr(self.existing_config, 'etherscan_api_key', ''):
                         self.api_keys['ETHERSCAN_API_KEY'] = self.existing_config.etherscan_api_key
                     
@@ -912,6 +1011,35 @@ Let's get started!
         else:
             self.console.print("  [yellow]Skipped Gemini key configuration[/yellow]")
         
+        # Anthropic API Key
+        self.console.print("\n[bold]Anthropic API Key[/bold] (for Claude models)")
+        existing_anthropic = getattr(self.existing_config, 'anthropic_api_key', '') if self.existing_config else ''
+        anthropic_key = existing_anthropic or os.getenv('ANTHROPIC_API_KEY', '')
+
+        if anthropic_key:
+            self.console.print(f"  Found existing key: {anthropic_key[:10]}...")
+
+            if self.interactive and not Confirm.ask("Use this key?", default=True):
+                anthropic_key = ''
+
+        if not anthropic_key and self.interactive:
+            anthropic_key = Prompt.ask("  Enter Anthropic API key (or press Enter to skip)", default="")
+
+        if anthropic_key:
+            with self.console.status("[bold green]Validating Anthropic key..."):
+                is_valid, message = validator.validate_anthropic_key(anthropic_key)
+
+            if is_valid:
+                self.console.print(f"  ✓ Anthropic key validated: {message}")
+                self.api_keys['ANTHROPIC_API_KEY'] = anthropic_key
+            else:
+                self.console.print(f"  ✗ Anthropic key validation failed: {message}")
+
+                if self.interactive and Confirm.ask("  Use anyway?", default=False):
+                    self.api_keys['ANTHROPIC_API_KEY'] = anthropic_key
+        else:
+            self.console.print("  [yellow]Skipped Anthropic key configuration[/yellow]")
+
         # Etherscan API Key (optional)
         self.console.print("\n[bold]Etherscan API Key[/bold] (optional, for fetching verified contracts)")
         existing_etherscan = getattr(self.existing_config, 'etherscan_api_key', '') if self.existing_config else ''
@@ -951,67 +1079,84 @@ Let's get started!
         if self.existing_config and not self.reconfigure_all and not self.reconfigure_models:
             existing_openai = getattr(self.existing_config, 'openai_api_key', '')
             existing_gemini = getattr(self.existing_config, 'gemini_api_key', '')
-            
-            if existing_openai or existing_gemini:
+            existing_anthropic = getattr(self.existing_config, 'anthropic_api_key', '')
+
+            if existing_openai or existing_gemini or existing_anthropic:
                 self.console.print("\n[bold]Model Selection[/bold]")
                 self.console.print("  [green]✓ Models already configured[/green]")
-                
+
                 if self.interactive and not Confirm.ask("  Reconfigure models?", default=False):
                     # Use existing model selections
                     if existing_openai:
                         self.api_keys['VALIDATION_MODEL'] = getattr(self.existing_config, 'openai_validation_model', 'gpt-5-chat-latest')
                         self.api_keys['ANALYSIS_MODEL'] = getattr(self.existing_config, 'openai_analysis_model', 'gpt-5-chat-latest')
                         self.api_keys['GENERATION_MODEL'] = getattr(self.existing_config, 'openai_generation_model', 'gpt-5-mini')
-                    
+
                     if existing_gemini:
                         self.api_keys['GEMINI_VALIDATION_MODEL'] = getattr(self.existing_config, 'gemini_validation_model', 'gemini-2.5-flash')
                         self.api_keys['GEMINI_ANALYSIS_MODEL'] = getattr(self.existing_config, 'gemini_analysis_model', 'gemini-2.5-flash')
                         self.api_keys['GEMINI_GENERATION_MODEL'] = getattr(self.existing_config, 'gemini_generation_model', 'gemini-2.5-flash')
-                    
+
+                    if existing_anthropic:
+                        self.api_keys['ANTHROPIC_VALIDATION_MODEL'] = getattr(self.existing_config, 'anthropic_validation_model', 'claude-sonnet-4-5-20250929')
+                        self.api_keys['ANTHROPIC_ANALYSIS_MODEL'] = getattr(self.existing_config, 'anthropic_analysis_model', 'claude-opus-4-6')
+                        self.api_keys['ANTHROPIC_GENERATION_MODEL'] = getattr(self.existing_config, 'anthropic_generation_model', 'claude-sonnet-4-5-20250929')
+
                     return True
         
         # Model Selection
         has_openai = self.api_keys.get('OPENAI_API_KEY')
         has_gemini = self.api_keys.get('GEMINI_API_KEY')
-        
-        if has_openai or has_gemini:
+        has_anthropic = self.api_keys.get('ANTHROPIC_API_KEY')
+
+        if has_openai or has_gemini or has_anthropic:
             self.console.print("\n[bold]Model Selection[/bold] (Choose provider and model per task)")
             self.console.print("\n[cyan]You can mix providers:[/cyan]")
-            self.console.print("  Example: Use Gemini for validation (2M context) + OpenAI for generation")
-            
+            self.console.print("  Example: Use Gemini for validation (2M context) + OpenAI for generation + Anthropic for analysis")
+
         # Fetch available models
         available_openai = None
         available_gemini = None
-        
+        available_anthropic = None
+
         if has_openai:
             with self.console.status("[bold green]Fetching available OpenAI models..."):
                 available_openai = fetch_available_models(self.api_keys['OPENAI_API_KEY'])
-            
+
             # Display available models
             if available_openai['gpt5_models']:
                 self.console.print("\n[bold cyan]Available GPT-5 Models:[/bold cyan] (400K context, superior retrieval)")
                 for model in available_openai['gpt5_models'][:5]:  # Show top 5
                     self.console.print(f"  • {model}")
-            
+
             if available_openai['gpt4_models']:
                 self.console.print("\n[bold cyan]Available GPT-4 Models:[/bold cyan] (128K context)")
                 for model in available_openai['gpt4_models'][:5]:  # Show top 5
                     self.console.print(f"  • {model}")
-        
+
         if has_gemini:
             with self.console.status("[bold green]Fetching available Gemini models..."):
                 available_gemini = fetch_available_gemini_models(self.api_keys['GEMINI_API_KEY'])
-            
+
             if available_gemini['gemini_2_5_models']:
                 self.console.print("\n[bold cyan]Available Gemini 2.5 Models:[/bold cyan] (2M context, thinking mode)")
                 for model in available_gemini['gemini_2_5_models']:
                     self.console.print(f"  • {model}")
-            
+
             if available_gemini['gemini_1_5_models']:
                 self.console.print("\n[bold cyan]Available Gemini 1.5 Models:[/bold cyan] (1M context)")
                 for model in available_gemini['gemini_1_5_models']:
                     self.console.print(f"  • {model}")
-            
+
+        if has_anthropic:
+            with self.console.status("[bold green]Fetching available Anthropic models..."):
+                available_anthropic = fetch_available_anthropic_models(self.api_keys['ANTHROPIC_API_KEY'])
+
+            if available_anthropic['claude_4_models']:
+                self.console.print("\n[bold cyan]Available Claude Models:[/bold cyan] (200K context, extended thinking)")
+                for model in available_anthropic['claude_4_models']:
+                    self.console.print(f"  • {model}")
+
             if self.interactive:
                 # Configure each task type with provider + model selection
                 for task_name, task_desc in [
@@ -1021,36 +1166,31 @@ Let's get started!
                 ]:
                     self.console.print(f"\n[bold]{task_name.title()} Task[/bold] (for {task_desc})")
                     
-                    # Choose provider if both are available
-                    if has_openai and has_gemini:
-                        provider_choices = []
-                        provider_display = []
-                        
-                        if has_openai:
-                            provider_choices.append("openai")
-                            provider_display.append("OpenAI (GPT-5: 400K context, superior retrieval)")
-                        if has_gemini:
-                            provider_choices.append("gemini")
-                            provider_display.append("Gemini (2.5: 2M context, thinking mode)")
-                        
-                        default_provider = "gemini" if task_name == "validation" and "gemini" in provider_choices else "openai"
-                        
+                    # Choose provider if multiple are available
+                    provider_choices = []
+                    if has_openai:
+                        provider_choices.append("openai")
+                    if has_gemini:
+                        provider_choices.append("gemini")
+                    if has_anthropic:
+                        provider_choices.append("anthropic")
+
+                    if len(provider_choices) > 1:
+                        default_provider = "gemini" if task_name == "validation" and "gemini" in provider_choices else "openai" if "openai" in provider_choices else provider_choices[0]
+
                         provider = select_with_arrows(
-                            f"Select provider for {task_name} (↑↓ arrows, Enter to confirm)",
+                            f"Select provider for {task_name} (use arrow keys, Enter to confirm)",
                             provider_choices,
                             default=default_provider
                         )
-                        
+
                         self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
-                    elif has_openai:
-                        provider = "openai"
-                        self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
-                    elif has_gemini:
-                        provider = "gemini"
+                    elif len(provider_choices) == 1:
+                        provider = provider_choices[0]
                         self.api_keys[f'{task_name.upper()}_PROVIDER'] = provider
                     else:
                         continue
-                    
+
                     # Select model from chosen provider
                     if provider == "openai" and available_openai:
                         choice_list = available_openai['gpt5_models'][:10] + available_openai['gpt4_models'][:5]
@@ -1058,21 +1198,24 @@ Let's get started!
                         if task_name == 'generation' and available_openai['gpt5_models']:
                             # Prefer mini for generation
                             default_model = next((m for m in available_openai['gpt5_models'] if 'mini' in m), default_model)
-                        default_idx = choice_list.index(default_model) if default_model in choice_list else 0
+                    elif provider == "anthropic" and available_anthropic:
+                        choice_list = available_anthropic['claude_4_models']
+                        default_model = 'claude-opus-4-6' if task_name == 'analysis' else 'claude-sonnet-4-5-20250929'
                     else:  # gemini
                         choice_list = available_gemini['gemini_2_5_models'] + available_gemini['gemini_1_5_models']
                         default_model = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
-                        default_idx = choice_list.index(default_model) if default_model in choice_list else 0
-                    
+
                     model = select_with_arrows(
-                        f"Select {provider} model for {task_name} (↑↓ arrows, Enter to confirm)",
+                        f"Select {provider} model for {task_name} (use arrow keys, Enter to confirm)",
                         choice_list,
                         default=default_model if default_model in choice_list else choice_list[0]
                     )
-                    
+
                     # Store both provider and model
                     if provider == "openai":
                         self.api_keys[f'{task_name.upper()}_MODEL'] = model
+                    elif provider == "anthropic":
+                        self.api_keys[f'ANTHROPIC_{task_name.upper()}_MODEL'] = model
                     else:
                         self.api_keys[f'GEMINI_{task_name.upper()}_MODEL'] = model
                 
@@ -1080,7 +1223,9 @@ Let's get started!
                 self.console.print(f"\n  ✓ Model configuration:")
                 for task in ['validation', 'analysis', 'generation']:
                     provider = self.api_keys.get(f'{task.upper()}_PROVIDER', 'openai')
-                    if provider == 'openai':
+                    if provider == 'anthropic':
+                        model = self.api_keys.get(f'ANTHROPIC_{task.upper()}_MODEL', 'N/A')
+                    elif provider == 'openai':
                         model = self.api_keys.get(f'{task.upper()}_MODEL', 'N/A')
                     else:
                         model = self.api_keys.get(f'GEMINI_{task.upper()}_MODEL', 'N/A')
@@ -1093,15 +1238,22 @@ Let's get started!
                     self.api_keys['GENERATION_PROVIDER'] = 'openai'
                     self.api_keys['VALIDATION_MODEL'] = available_openai['gpt5_models'][0] if available_openai['gpt5_models'] else available_openai['all_models'][0]
                     self.api_keys['ANALYSIS_MODEL'] = available_openai['gpt5_models'][0] if available_openai['gpt5_models'] else available_openai['all_models'][0]
-                    self.api_keys['GENERATION_MODEL'] = next((m for m in available_openai['gpt5_models'] if 'mini' in m), 
+                    self.api_keys['GENERATION_MODEL'] = next((m for m in available_openai['gpt5_models'] if 'mini' in m),
                                                               available_openai['gpt5_models'][0] if available_openai['gpt5_models'] else available_openai['all_models'][0])
+                elif has_anthropic and available_anthropic:
+                    self.api_keys['VALIDATION_PROVIDER'] = 'anthropic'
+                    self.api_keys['ANALYSIS_PROVIDER'] = 'anthropic'
+                    self.api_keys['GENERATION_PROVIDER'] = 'anthropic'
+                    self.api_keys['ANTHROPIC_VALIDATION_MODEL'] = 'claude-sonnet-4-5-20250929'
+                    self.api_keys['ANTHROPIC_ANALYSIS_MODEL'] = 'claude-opus-4-6'
+                    self.api_keys['ANTHROPIC_GENERATION_MODEL'] = 'claude-sonnet-4-5-20250929'
                 elif has_gemini and available_gemini:
                     self.api_keys['VALIDATION_PROVIDER'] = 'gemini'
                     self.api_keys['ANALYSIS_PROVIDER'] = 'gemini'
                     self.api_keys['GENERATION_PROVIDER'] = 'gemini'
                     self.api_keys['GEMINI_VALIDATION_MODEL'] = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
                     self.api_keys['GEMINI_ANALYSIS_MODEL'] = available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0]
-                    self.api_keys['GEMINI_GENERATION_MODEL'] = next((m for m in available_gemini['gemini_2_5_models'] if 'flash' in m), 
+                    self.api_keys['GEMINI_GENERATION_MODEL'] = next((m for m in available_gemini['gemini_2_5_models'] if 'flash' in m),
                                                                     available_gemini['gemini_2_5_models'][0] if available_gemini['gemini_2_5_models'] else available_gemini['all_models'][0])
         
         # Summary
@@ -1138,6 +1290,8 @@ Let's get started!
                     config_manager.config.openai_api_key = value
                 elif key == 'GEMINI_API_KEY':
                     config_manager.config.gemini_api_key = value
+                elif key == 'ANTHROPIC_API_KEY':
+                    config_manager.config.anthropic_api_key = value
                 elif key == 'ETHERSCAN_API_KEY':
                     config_manager.config.etherscan_api_key = value
                 # Provider selections
@@ -1161,6 +1315,13 @@ Let's get started!
                     config_manager.config.gemini_analysis_model = value
                 elif key == 'GEMINI_GENERATION_MODEL':
                     config_manager.config.gemini_generation_model = value
+                # Anthropic model selections
+                elif key == 'ANTHROPIC_VALIDATION_MODEL':
+                    config_manager.config.anthropic_validation_model = value
+                elif key == 'ANTHROPIC_ANALYSIS_MODEL':
+                    config_manager.config.anthropic_analysis_model = value
+                elif key == 'ANTHROPIC_GENERATION_MODEL':
+                    config_manager.config.anthropic_generation_model = value
                 # AI Ensemble agent model selections
                 elif key == 'AGENT_GPT5_SECURITY_MODEL':
                     config_manager.config.agent_gpt5_security_model = value
@@ -1170,6 +1331,10 @@ Let's get started!
                     config_manager.config.agent_gemini_security_model = value
                 elif key == 'AGENT_GEMINI_VERIFICATION_MODEL':
                     config_manager.config.agent_gemini_verification_model = value
+                elif key == 'AGENT_ANTHROPIC_SECURITY_MODEL':
+                    config_manager.config.agent_anthropic_security_model = value
+                elif key == 'AGENT_ANTHROPIC_REASONING_MODEL':
+                    config_manager.config.agent_anthropic_reasoning_model = value
             
             # Save configuration
             config_manager.save_config()
@@ -1194,6 +1359,7 @@ Let's get started!
             ("Import: rich", lambda: test_import('rich')[0]),
             ("Import: web3", lambda: test_import('web3')[0]),
             ("Import: openai", lambda: test_import('openai')[0]),
+            ("Import: anthropic", lambda: test_import('anthropic')[0]),
             ("Config file exists", lambda: self.config_file.exists()),
         ]
         

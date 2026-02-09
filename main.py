@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-AetherAudit + AetherFuzz: Agentic Smart Contract Auditing & Fuzzing Framework
+Aether v2.0 — Smart Contract Security Analysis Framework
 
-Main entry point for the CLI interface.
+Interactive menu-driven TUI with full CLI support.
+Run without arguments for the interactive menu, or use subcommands for direct access.
 """
 
 import warnings
@@ -50,9 +51,10 @@ def check_basic_setup(skip_check: bool = False) -> bool:
     # Check for LLM API keys (required for AI features)
     has_openai = bool(os.getenv('OPENAI_API_KEY'))
     has_gemini = bool(os.getenv('GEMINI_API_KEY'))
-    
+    has_anthropic = bool(os.getenv('ANTHROPIC_API_KEY'))
+
     # Also check config file if not in environment
-    if not has_openai or not has_gemini:
+    if not has_openai or not has_gemini or not has_anthropic:
         try:
             from core.config_manager import ConfigManager
             config_manager = ConfigManager()
@@ -64,11 +66,15 @@ def check_basic_setup(skip_check: bool = False) -> bool:
                 has_gemini = True
                 # Load it into environment for use by engines
                 os.environ['GEMINI_API_KEY'] = config_manager.config.gemini_api_key
+            if not has_anthropic and getattr(config_manager.config, 'anthropic_api_key', ''):
+                has_anthropic = True
+                # Load it into environment for use by engines
+                os.environ['ANTHROPIC_API_KEY'] = config_manager.config.anthropic_api_key
         except Exception:
             pass
-    
-    if not has_openai and not has_gemini:
-        warnings.append("No LLM API keys configured (OPENAI_API_KEY or GEMINI_API_KEY)")
+
+    if not has_openai and not has_gemini and not has_anthropic:
+        warnings.append("No LLM API keys configured (OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY)")
         warnings.append("  LLM-powered analysis will be unavailable")
     
     # Check config directory
@@ -109,13 +115,17 @@ def main():
     shutdown_handler = get_shutdown_handler()
     
     parser = argparse.ArgumentParser(
-        description="AetherAudit + AetherFuzz: Agentic Smart Contract Auditing & Fuzzing Framework",
+        description="Aether v2.0 — Smart Contract Security Analysis Framework",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  aether audit contracts/MyToken.sol --flow configs/audit.yaml
-  aether fuzz contracts/MyToken.sol --max-runs 1000
-  aether run contracts/MyToken.sol --end-to-end
+Run without arguments to launch the interactive menu.
+
+CLI examples (power-user mode):
+  python main.py audit contracts/MyToken.sol --enhanced --ai-ensemble
+  python main.py audit https://github.com/owner/repo --interactive-scope
+  python main.py generate-foundry --from-results ./output/results.json
+  python main.py report --format markdown --project-id 1
+  python main.py console
         """
     )
     
@@ -278,8 +288,9 @@ Examples:
     args = parser.parse_args()
 
     if not args.command:
-        parser.print_help()
-        return 1
+        # No subcommand → launch interactive menu
+        from cli.interactive_menu import main as interactive_main
+        return interactive_main()
     
     # Run pre-flight setup check (unless skipped or running certain commands)
     skip_check_commands = ['version', 'config']  # Commands that don't need full setup
