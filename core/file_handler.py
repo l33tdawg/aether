@@ -11,8 +11,8 @@ from typing import Optional
 
 def get_tool_env() -> dict:
     """
-    Get environment variables configured for external tools (Foundry, Slither, Mythril).
-    Ensures tools like forge, slither, and mythril are in PATH.
+    Get environment variables configured for external tools (Foundry, etc.).
+    Ensures tools like forge are in PATH.
     """
     env = os.environ.copy()
     

@@ -96,6 +96,49 @@ class BaseAIModel:
             return content
         return content[:max_content]
 
+    def _track_openai_usage(self, response, model: str) -> None:
+        """Record OpenAI token usage from a chat completion response."""
+        try:
+            if hasattr(response, 'usage') and response.usage:
+                from core.llm_usage_tracker import LLMUsageTracker
+                LLMUsageTracker.get_instance().record(
+                    "openai", model,
+                    response.usage.prompt_tokens or 0,
+                    response.usage.completion_tokens or 0,
+                    f"ai_ensemble.{self.agent_name}",
+                )
+        except Exception:
+            pass
+
+    def _track_gemini_usage(self, result_dict: dict, model: str) -> None:
+        """Record Gemini token usage from a REST API response dict."""
+        try:
+            usage_meta = result_dict.get('usageMetadata', {})
+            if usage_meta:
+                from core.llm_usage_tracker import LLMUsageTracker
+                LLMUsageTracker.get_instance().record(
+                    "gemini", model,
+                    usage_meta.get('promptTokenCount', 0),
+                    usage_meta.get('candidatesTokenCount', 0),
+                    f"ai_ensemble.{self.agent_name}",
+                )
+        except Exception:
+            pass
+
+    def _track_anthropic_usage(self, response, model: str) -> None:
+        """Record Anthropic token usage from a messages response."""
+        try:
+            if hasattr(response, 'usage') and response.usage:
+                from core.llm_usage_tracker import LLMUsageTracker
+                LLMUsageTracker.get_instance().record(
+                    "anthropic", model,
+                    response.usage.input_tokens or 0,
+                    response.usage.output_tokens or 0,
+                    f"ai_ensemble.{self.agent_name}",
+                )
+        except Exception:
+            pass
+
     def _validate_finding_schema(self, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Validate and filter findings that are missing required fields.
 
@@ -324,14 +367,16 @@ If you cannot prove exploitability, DO NOT report it.
             client = openai.OpenAI(api_key=api_key)
 
             try:
+                model = _get_analysis_model()
                 response = client.chat.completions.create(
-                    model=_get_analysis_model(),
+                    model=model,
                     messages=[
                         {"role": "system", "content": self._get_persona_prompt()},
                         {"role": "user", "content": prompt}
                     ],
                     max_completion_tokens=4000
                 )
+                self._track_openai_usage(response, model)
             except Exception as e:
                 # Fallback to gpt-4o if gpt-5-pro fails
                 if 'model_not_found' in str(e).lower() or 'not available' in str(e).lower():
@@ -343,6 +388,7 @@ If you cannot prove exploitability, DO NOT report it.
                         ],
                         max_tokens=2000
                     )
+                    self._track_openai_usage(response, "gpt-4o")
                 else:
                     raise
 
@@ -516,13 +562,15 @@ If optimization saves < 200 gas or is in external library, DO NOT report it.
             client = openai.OpenAI(api_key=api_key)
 
             try:
+                model = _get_analysis_model()
                 response = client.chat.completions.create(
-                    model=_get_analysis_model(),
+                    model=model,
                     messages=[
                         {"role": "system", "content": self._get_persona_prompt()},
                         {"role": "user", "content": prompt}
                     ],
                 )
+                self._track_openai_usage(response, model)
             except Exception as e:
                 # Fallback to gpt-4o if gpt-5-pro fails
                 if 'model_not_found' in str(e).lower() or 'not available' in str(e).lower():
@@ -534,6 +582,7 @@ If optimization saves < 200 gas or is in external library, DO NOT report it.
                         ],
                         max_tokens=2000
                     )
+                    self._track_openai_usage(response, "gpt-4o")
                 else:
                     raise
 
@@ -708,6 +757,7 @@ If issue is style/documentation/preference with no security impact, DO NOT repor
                 max_tokens=2000
                 # Removed temperature - using default value for compatibility
             )
+            self._track_openai_usage(response, "gpt-4o-mini")
 
             response_text = response.choices[0].message.content
             logger.debug(f"Best Practices Expert raw response length: {len(response_text)}")
@@ -849,6 +899,7 @@ Return only valid JSON, no markdown formatting.
                         {"role": "user", "content": prompt}
                     ]
                 )
+                self._track_openai_usage(response, model)
             except Exception as e:
                 # Fallback to gpt-4o if gpt-5-mini fails
                 if 'model_not_found' in str(e).lower() or 'not available' in str(e).lower():
@@ -861,6 +912,7 @@ Return only valid JSON, no markdown formatting.
                         ],
                         max_tokens=2000
                     )
+                    self._track_openai_usage(response, model)
                 else:
                     raise
 
@@ -971,6 +1023,7 @@ Return only valid JSON, no markdown formatting.
                         {"role": "user", "content": prompt}
                     ]
                 )
+                self._track_openai_usage(response, model)
             except Exception as e:
                 # Fallback to gpt-4o if gpt-5-mini fails
                 if 'model_not_found' in str(e).lower() or 'not available' in str(e).lower():
@@ -983,6 +1036,7 @@ Return only valid JSON, no markdown formatting.
                         ],
                         max_tokens=2000
                     )
+                    self._track_openai_usage(response, model)
                 else:
                     raise
 
@@ -1142,12 +1196,13 @@ as part of standard software quality assurance and security testing before deplo
                         )
 
             result = response.json()
+            self._track_gemini_usage(result, model)
             findings = []
             try:
                 candidates = result.get('candidates') or []
                 if candidates:
                     candidate = candidates[0]
-                    
+
                     # Check if response was blocked mid-generation by safety filters
                     finish_reason = candidate.get('finishReason', '')
                     if finish_reason == 'SAFETY':
@@ -1195,6 +1250,7 @@ Return only JSON, no markdown."""
                             retry_response = requests.post(url, json=retry_payload, timeout=60)
                             retry_response.raise_for_status()
                             result = retry_response.json()
+                            self._track_gemini_usage(result, model)
                             candidates = result.get('candidates') or []
                             if not candidates:
                                 logger.error(f"[Gemini Security] Retry also failed - no candidates")
@@ -1418,12 +1474,13 @@ as part of standard software quality assurance and security testing before deplo
                         )
 
             result = response.json()
+            self._track_gemini_usage(result, model)
             findings = []
             try:
                 candidates = result.get('candidates') or []
                 if candidates:
                     candidate = candidates[0]
-                    
+
                     # Check if response was blocked mid-generation by safety filters
                     finish_reason = candidate.get('finishReason', '')
                     if finish_reason == 'SAFETY':
@@ -1471,6 +1528,7 @@ Return only JSON, no markdown."""
                             retry_response = requests.post(url, json=retry_payload, timeout=60)
                             retry_response.raise_for_status()
                             result = retry_response.json()
+                            self._track_gemini_usage(result, model)
                             candidates = result.get('candidates') or []
                             if not candidates:
                                 logger.error(f"[Gemini Verifier] Retry also failed - no candidates")
@@ -1652,6 +1710,7 @@ as part of standard software quality assurance and security testing before deplo
                     system="You are an expert smart contract security auditor. Return only valid JSON.",
                     messages=[{"role": "user", "content": prompt}],
                 )
+                self._track_anthropic_usage(response, model)
 
                 response_text = response.content[0].text if response.content else ""
             except ImportError:
@@ -1775,6 +1834,7 @@ as part of standard software quality assurance and security testing before deplo
                     system="You are a deep reasoning specialist for smart contract security analysis. Return only valid JSON.",
                     messages=[{"role": "user", "content": prompt}],
                 )
+                self._track_anthropic_usage(response, model)
 
                 response_text = response.content[0].text if response.content else ""
             except ImportError:

@@ -68,7 +68,6 @@ class ReportGenerator:
         
         # Add tools used section
         content += """### Analysis Tools
-- **Slither:** Static analysis for Solidity vulnerabilities
 - **Enhanced Detectors:** Pattern-based vulnerability detection
 - **AI Ensemble:** Multi-model AI-powered analysis
 - **LLM Validation:** False positive filtering
@@ -327,8 +326,6 @@ The contract **{contract_name}** passed all security checks with no findings.
         vulns = []
         
         # Build candidate list in priority order: confirmed > llm_validated > suspected
-        if audit.get('slither', {}).get('vulnerabilities'):
-            vulns += audit['slither']['vulnerabilities']
         if audit.get('mythril', {}).get('vulnerabilities'):
             vulns += audit['mythril']['vulnerabilities']
         if audit.get('pattern_analysis', {}).get('vulnerabilities'):
@@ -497,10 +494,6 @@ SWC: {swc}
 
         # Build combined list and split confirmed vs suspected
         all_vulns = []
-        if audit_results.get('slither', {}).get('vulnerabilities'):
-            for v in audit_results['slither']['vulnerabilities']:
-                v['status'] = v.get('status', 'confirmed')
-                all_vulns.append(v)
         if audit_results.get('mythril', {}).get('vulnerabilities'):
             for v in audit_results['mythril']['vulnerabilities']:
                 v['status'] = v.get('status', 'confirmed')
@@ -512,19 +505,6 @@ SWC: {swc}
 
         confirmed = [v for v in all_vulns if v.get('status') == 'confirmed']
         suspected = [v for v in all_vulns if v.get('status') != 'confirmed']
-
-        # Slither results
-        slither = audit_results.get('slither', {})
-        if slither.get('vulnerabilities'):
-            content += "#### Slither Findings\n\n"
-            for vuln in slither['vulnerabilities']:
-                content += f"""**{vuln.get('title', 'Unknown')}**
-- Severity: {vuln.get('severity', 'Unknown').title()}
- - Status: Confirmed
-- Location: {vuln.get('file', 'Unknown')}:{vuln.get('line', 'Unknown')}
-- Description: {vuln.get('description', 'No description')[:100]}...
-
-"""
 
         # Mythril results
         mythril = audit_results.get('mythril', {})

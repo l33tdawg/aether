@@ -13,7 +13,7 @@ from core.defi_vulnerability_detector import DeFiVulnerabilityDetector
 
 
 class StaticAnalysisNode(BaseNode):
-    """Node for running static analysis tools like Slither and Mythril."""
+    """Node for running static analysis using pattern-based detectors."""
 
     async def execute(self, context: Dict[str, Any]) -> NodeResult:
         """Execute static analysis on contract files."""
@@ -32,7 +32,7 @@ class StaticAnalysisNode(BaseNode):
 
             # Get configuration for this node
             config = self.config or {}
-            tools = config.get('tools', ['slither'])
+            tools = config.get('tools', [])
 
             all_vulnerabilities = []
             tool_results = {}
@@ -118,20 +118,7 @@ class StaticAnalysisNode(BaseNode):
             # Combine pattern and DeFi results
             all_vulnerabilities = pattern_results + defi_results
 
-            # Run each enabled tool
-            print(f"🔧 Running tools: {tools}")
-            for tool in tools:
-                print(f"🔍 Running {tool} analysis...")
-                if tool == 'slither':
-                    results = await self._run_slither(contract_files[0][0])  # Use first file
-                    tool_results['slither'] = results
-                    vuln_count = len(results.get('vulnerabilities', []))
-                    print(f"✅ Slither found {vuln_count} vulnerabilities")
-                    for v in results.get('vulnerabilities', []):
-                        v['status'] = 'confirmed'
-                    all_vulnerabilities.extend(results.get('vulnerabilities', []))
-                # Mythril removed due to Python 3.12 compatibility issues
-                # Use Slither as primary static analysis tool
+            # Pattern-based detectors are the primary static analysis
 
             print(f"📊 Total vulnerabilities from tools: {len(all_vulnerabilities)}")
 
@@ -175,186 +162,9 @@ class StaticAnalysisNode(BaseNode):
                 error=str(e)
             )
 
-    async def _run_slither(self, contract_path: str) -> Dict[str, Any]:
-        """Run Slither static analysis."""
-        try:
-            import tempfile
-            import shutil
-            import os
-
-            # Create a temporary directory for the Foundry project
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-
-                # Initialize git repo
-                subprocess.run(['git', 'init'], cwd=temp_dir, capture_output=True)
-
-                # Create foundry.toml with remappings and solc version
-                foundry_toml = temp_path / "foundry.toml"
-                foundry_toml.write_text("""
-[profile.default]
-src = "src"
-out = "out"
-libs = ["lib"]
-remappings = [
-  "@openzeppelin/=lib/openzeppelin-contracts/",
-  "@uniswap/v2-core/=lib/v2-core/"
-]
-solc_version = "0.7.5"
-""".strip())
-
-                # Create src directory and copy contract
-                src_dir = temp_path / "src"
-                src_dir.mkdir()
-                contract_file = Path(contract_path)
-                final_contract_path = src_dir / contract_file.name
-                shutil.copy2(contract_path, final_contract_path)
-
-                # Setup environment
-                env = os.environ.copy()
-                env['PATH'] = f"/Users/l33tdawg/.foundry/bin:{env.get('PATH', '')}"
-
-                # Install forge-std
-                subprocess.run(
-                    ['forge', 'install', 'foundry-rs/forge-std'],
-                    cwd=temp_dir,
-                    capture_output=True,
-                    env=env,
-                    timeout=30
-                )
-
-                # Install OpenZeppelin - try v4 first, then v3
-                oz_versions = ['OpenZeppelin/openzeppelin-contracts@v4.9.0', 'OpenZeppelin/openzeppelin-contracts@v3.4.2']
-                oz_installed = False
-                for oz_version in oz_versions:
-                    result = subprocess.run(
-                        ['forge', 'install', oz_version],
-                        cwd=temp_dir,
-                        capture_output=True,
-                        text=True,
-                        env=env,
-                        timeout=30
-                    )
-                    if result.returncode == 0:
-                        oz_installed = True
-                        break
-
-                # Try to build with Foundry
-                build_result = subprocess.run(
-                    ['forge', 'build', '--force'],
-                    cwd=temp_dir,
-                    capture_output=True,
-                    text=True,
-                    env=env,
-                    timeout=60
-                )
-
-                # If build failed, try running slither without forge (direct analysis)
-                if build_result.returncode != 0:
-                    # Try direct slither analysis without compilation
-                    print(f"⚠️  Foundry build failed, trying direct Slither analysis...")
-                    cmd = [
-                        'slither',
-                        str(final_contract_path),
-                        '--json', '-',
-                        '--exclude-dependencies',
-                        '--exclude-informational'
-                    ]
-                    
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=60,
-                        env=env
-                    )
-                    
-                    if result.returncode in [0, 255] and result.stdout.strip().startswith('{'):
-                        try:
-                            data = json.loads(result.stdout)
-                            vulnerabilities = self._parse_slither_output(data)
-                            return {
-                                'vulnerabilities': vulnerabilities,
-                                'success': True,
-                                'output': f'Direct analysis (no compilation): {len(vulnerabilities)} issues'
-                            }
-                        except json.JSONDecodeError:
-                            pass
-                    
-                    # If all else fails, return empty
-                    return {
-                        'vulnerabilities': [],
-                        'success': False,
-                        'error': f'Slither analysis skipped - build failed: {build_result.stderr[:100]}'
-                    }
-
-                # Run slither on the compiled project
-                cmd = [
-                    'slither',
-                    str(final_contract_path),
-                    '--json', '-',
-                    '--exclude-dependencies',
-                    '--exclude-informational',
-                    '--compile-force-framework', 'foundry'
-                ]
-
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                    env=env,
-                    cwd=temp_dir
-                )
-
-                # Slither returns 255 when it finds vulnerabilities but still produces valid JSON
-                if result.returncode == 0 or result.returncode == 255:
-                    try:
-                        if result.stdout.strip().startswith('{'):
-                            data = json.loads(result.stdout)
-                            vulnerabilities = self._parse_slither_output(data)
-                            return {
-                                'vulnerabilities': vulnerabilities,
-                                'success': True,
-                                'output': result.stdout
-                            }
-                        else:
-                            return {
-                                'vulnerabilities': [],
-                                'success': False,
-                                'error': 'Slither output is not JSON'
-                            }
-                    except json.JSONDecodeError as e:
-                        return {
-                            'vulnerabilities': [],
-                            'success': False,
-                            'error': f'Failed to parse slither JSON output: {e}'
-                        }
-                else:
-                    return {
-                        'vulnerabilities': [],
-                        'success': False,
-                        'error': f'Slither analysis failed with code {result.returncode}: {result.stderr[:100]}'
-                    }
-
-        except subprocess.TimeoutExpired:
-            return {
-                'vulnerabilities': [],
-                'success': False,
-                'error': 'Slither analysis timed out'
-            }
-        except FileNotFoundError:
-            return {
-                'vulnerabilities': [],
-                'success': False,
-                'error': 'Slither not found. Install: pip install slither-analyzer'
-            }
-        except Exception as e:
-            return {
-                'vulnerabilities': [],
-                'success': False,
-                'error': str(e)
-            }
+    async def _run_mythril_placeholder(self, contract_path: str) -> Dict[str, Any]:
+        """Placeholder - Mythril removed due to Python 3.12 compatibility."""
+        return {'vulnerabilities': [], 'success': False, 'error': 'Mythril not available'}
 
     async def _run_mythril(self, contract_path: str) -> Dict[str, Any]:
         """Run Mythril symbolic execution with enhanced PoC generation."""
@@ -1041,33 +851,6 @@ contract GenericPoC is Test {{
         
         return vulnerabilities
 
-    def _parse_slither_output(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Parse Slither JSON output into standardized format."""
-        vulnerabilities = []
-
-        # Handle the actual slither JSON structure
-        results = data.get('results', {})
-        detectors = results.get('detectors', [])
-
-        for detector in detectors:
-            # Each detector has elements array with vulnerability info
-            for element in detector.get('elements', []):
-                vulnerabilities.append({
-                    'title': detector.get('check', 'Unknown'),
-                    'description': detector.get('description', ''),
-                    'severity': detector.get('impact', 'Medium').lower(),
-                    'confidence': detector.get('confidence', 'Medium').lower(),
-                    'file': element.get('source_mapping', {}).get('filename_relative', '') if element.get('source_mapping') else '',
-                    'line': element.get('source_mapping', {}).get('lines', [0])[0] if element.get('source_mapping') else 0,
-                    'column': element.get('source_mapping', {}).get('starting_column', 0) if element.get('source_mapping') else 0,
-                    'tool': 'slither',
-                    'category': detector.get('check', 'unknown'),
-                    'swc_id': detector.get('id', ''),
-                    'elements': [element]
-                })
-
-        return vulnerabilities
-
     def _parse_mythril_output(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Parse Mythril JSON output into standardized format."""
         vulnerabilities = []
@@ -1473,7 +1256,7 @@ class ValidationNode(BaseNode):
 
             # Get configuration
             config = self.config or {}
-            retest_tools = config.get('retest_tools', ['slither'])
+            retest_tools = config.get('retest_tools', [])
 
             validation_results = []
 

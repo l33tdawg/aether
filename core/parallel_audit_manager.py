@@ -227,6 +227,8 @@ class ParallelAuditManager:
         table.add_column("Status", width=10, justify="center")
         table.add_column("Phase", min_width=16)
         table.add_column("Findings", width=8, justify="right")
+        table.add_column("LLM Calls", width=10, justify="right")
+        table.add_column("Cost", width=10, justify="right")
         table.add_column("Time", width=8, justify="right")
 
         done_count = 0
@@ -269,14 +271,23 @@ class ParallelAuditManager:
             else:
                 time_text = "-"
 
+            # LLM stats
+            llm_calls_text = str(status.llm_calls) if status.llm_calls > 0 else "-"
+            cost_text = f"${status.llm_cost:.3f}" if status.llm_cost > 0 else "-"
+
             table.add_row(
                 str(i),
                 status.contract_name,
                 status_text,
                 phase_text,
                 finds_text,
+                llm_calls_text,
+                cost_text,
                 time_text,
             )
+
+        # Total cost across all statuses
+        total_cost = sum(s.llm_cost for s in self._statuses.values())
 
         # Summary footer
         queued_count = len(self._statuses) - done_count - running_count - failed_count
@@ -290,6 +301,8 @@ class ParallelAuditManager:
         if queued_count > 0:
             parts.append(f"[dim]{queued_count} queued[/dim]")
         parts.append(f"{total_findings} total findings")
+        if total_cost > 0:
+            parts.append(f"[yellow]${total_cost:.4f} total cost[/yellow]")
         summary = "  ".join(parts)
 
         if self._cancelled:

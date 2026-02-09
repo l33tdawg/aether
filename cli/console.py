@@ -33,12 +33,6 @@ class ToolManager:
     """Manages detection and installation of security analysis tools."""
 
     REQUIRED_TOOLS = {
-        'slither': {
-            'description': 'Static analysis tool for Solidity',
-            'install_cmd': 'pip install slither-analyzer',
-            'check_cmd': 'slither --version',
-            'version_pattern': r'Slither (\d+\.\d+\.\d+)'
-        },
         'mythril': {
             'description': 'Symbolic execution tool for EVM bytecode',
             'install_cmd': 'pip install mythril',
@@ -229,13 +223,6 @@ class AetherConsole(cmd.Cmd):
                 'options': {
                     'CONTRACT': {'value': None, 'required': True, 'description': 'Path to Solidity contract'},
                     'PATTERNS': {'value': 'all', 'required': False, 'description': 'Comma-separated pattern categories'}
-                }
-            },
-            'slither': {
-                'description': 'Slither static analysis integration',
-                'options': {
-                    'CONTRACT': {'value': None, 'required': True, 'description': 'Path to Solidity contract'},
-                    'EXCLUDE_DEPS': {'value': True, 'required': False, 'description': 'Exclude dependency analysis'}
                 }
             },
             'mythril': {
@@ -456,8 +443,6 @@ class AetherConsole(cmd.Cmd):
                     await self._run_fuzz(options)
                 elif module_name == 'pattern':
                     await self._run_pattern(options)
-                elif module_name == 'slither':
-                    await self._run_slither(options)
                 elif module_name == 'mythril':
                     await self._run_mythril(options)
 
@@ -512,35 +497,6 @@ class AetherConsole(cmd.Cmd):
 
         for vuln in vulnerabilities:
             self.console.print(f"  • {vuln['title']} ({vuln['severity']})")
-
-    async def _run_slither(self, options):
-        """Run Slither analysis."""
-        contract_path = options.get('CONTRACT')
-        if not contract_path:
-            raise ValueError("CONTRACT option is required")
-
-        # Check if Slither is available
-        tools = self.tool_manager.detect_tools()
-        if not tools.get('slither', {}).get('installed', False):
-            if Confirm.ask("Slither not found. Install it?", default=True):
-                self.tool_manager.install_tool('slither')
-            else:
-                raise ValueError("Slither is required for this module")
-
-        # Run Slither
-        import subprocess
-        cmd = ['slither', contract_path, '--json', '-']
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            try:
-                data = json.loads(result.stdout)
-                detectors = data.get('results', {}).get('detectors', [])
-                self.console.print(f"[green]Slither found {len(detectors)} issues[/green]")
-            except:
-                self.console.print("[yellow]Could not parse Slither output[/yellow]")
-        else:
-            self.console.print(f"[red]Slither failed: {result.stderr}[/red]")
 
     async def _run_mythril(self, options):
         """Run Mythril analysis."""

@@ -37,7 +37,6 @@ class AuditPhase(Enum):
 PHASE_MARKERS: Dict[str, AuditPhase] = {
     "Starting enhanced AetherAudit": AuditPhase.STARTING,
     "Starting AetherAudit": AuditPhase.STARTING,
-    "Running Slither": AuditPhase.STATIC_ANALYSIS,
     "Running enhanced static": AuditPhase.STATIC_ANALYSIS,
     "enhanced pattern-based": AuditPhase.STATIC_ANALYSIS,
     "Building call graph": AuditPhase.STATIC_ANALYSIS,
@@ -70,6 +69,25 @@ _FINDINGS_RE = re.compile(
 )
 
 
+TOTAL_PHASES = 12  # QUEUED through COMPLETED/FAILED
+
+_PHASE_INDEX = {
+    AuditPhase.QUEUED: 0,
+    AuditPhase.STARTING: 1,
+    AuditPhase.STATIC_ANALYSIS: 2,
+    AuditPhase.LLM_ANALYSIS: 3,
+    AuditPhase.AI_ENSEMBLE: 4,
+    AuditPhase.DEEP_DIVE: 5,
+    AuditPhase.CROSS_CONTRACT: 6,
+    AuditPhase.VALIDATION: 7,
+    AuditPhase.FOUNDRY: 8,
+    AuditPhase.REPORTING: 9,
+    AuditPhase.SAVING: 10,
+    AuditPhase.COMPLETED: 11,
+    AuditPhase.FAILED: 11,
+}
+
+
 @dataclass
 class ContractAuditStatus:
     """Thread-safe per-contract progress tracker."""
@@ -82,6 +100,10 @@ class ContractAuditStatus:
     end_time: Optional[float] = None
     error: Optional[str] = None
     last_message: str = ""
+    llm_calls: int = 0
+    llm_cost: float = 0.0
+    llm_tokens_input: int = 0
+    llm_tokens_output: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def set_phase(self, phase: AuditPhase) -> None:
@@ -136,6 +158,25 @@ class ContractAuditStatus:
     def is_done(self) -> bool:
         with self._lock:
             return self.phase in (AuditPhase.COMPLETED, AuditPhase.FAILED)
+
+    @property
+    def phase_index(self) -> int:
+        with self._lock:
+            return _PHASE_INDEX.get(self.phase, 0)
+
+    def sync_llm_stats(self) -> None:
+        """Pull latest totals from the global LLM usage tracker."""
+        try:
+            from core.llm_usage_tracker import LLMUsageTracker
+            tracker = LLMUsageTracker.get_instance()
+            with self._lock:
+                self.llm_calls = tracker.call_count
+                self.llm_cost = tracker.total_cost
+                summary = tracker.get_summary()
+                self.llm_tokens_input = summary["total_input_tokens"]
+                self.llm_tokens_output = summary["total_output_tokens"]
+        except Exception:
+            pass
 
 
 class ThreadDemuxWriter:
@@ -195,6 +236,9 @@ class ThreadDemuxWriter:
         for line in complete_lines:
             if line.strip():
                 status.update_from_line(line)
+
+        # Sync LLM stats from global tracker (lightweight read)
+        status.sync_llm_stats()
 
         return len(data)
 

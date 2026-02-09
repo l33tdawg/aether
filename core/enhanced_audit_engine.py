@@ -83,7 +83,14 @@ class EnhancedAetherAuditEngine:
         """
         print("🚀 Starting enhanced AetherAudit...", flush=True)
         start_time = time.time()
-        
+
+        # Reset LLM usage tracker for this audit run
+        try:
+            from core.llm_usage_tracker import LLMUsageTracker
+            LLMUsageTracker.reset()
+        except Exception:
+            pass
+
         try:
             # Step 1: Read contract files
             contract_files = self._read_contract_files(contract_path, selected_contracts=selected_contracts)
@@ -216,36 +223,7 @@ class EnhancedAetherAuditEngine:
         all_vulnerabilities = []
         total_lines = 0
         
-        # STAGE 1: Run Slither static analysis
-        print("   📊 Running Slither static analysis...", flush=True)
-        slither_findings = self._run_slither_analysis(contract_files)
-        
-        # Convert Slither findings (dicts) to VulnerabilityMatch objects
-        from core.enhanced_vulnerability_detector import VulnerabilityMatch
-        for finding in slither_findings:
-            if isinstance(finding, dict):
-                # Convert dict to VulnerabilityMatch object
-                vuln_match = VulnerabilityMatch(
-                    vulnerability_type=finding.get('vulnerability_type', finding.get('type', 'Unknown')),
-                    severity=finding.get('severity', 'medium'),
-                    confidence=finding.get('confidence', 0.7),
-                    line_number=finding.get('line_number', finding.get('line', 0)),
-                    description=finding.get('description', ''),
-                    code_snippet=finding.get('code_snippet', ''),
-                    swc_id=finding.get('swc_id', ''),
-                    category=finding.get('category', 'slither_finding'),
-                    context=finding.get('context', {}),
-                    validation_status='validated'  # Slither findings are pre-validated
-                )
-                all_vulnerabilities.append(vuln_match)
-            else:
-                # Already a VulnerabilityMatch object
-                all_vulnerabilities.append(finding)
-        
-        if slither_findings:
-            print(f"   📊 Slither total: {len(slither_findings)} findings across all contracts", flush=True)
-        
-        # STAGE 2: Run our enhanced pattern-based detectors
+        # STAGE 1: Run enhanced pattern-based detectors
         print("   🔎 Running enhanced pattern-based detectors...", flush=True)
         
         # NEW: Build call graph across all contracts for better cross-contract analysis
@@ -394,47 +372,6 @@ class EnhancedAetherAuditEngine:
             'contract_count': len(contract_files),
             'statistics': self.stats.copy()
         }
-
-    def _run_slither_analysis(self, contract_files: List[Dict[str, Any]]) -> List[Any]:
-        """Run Slither static analysis on contract files."""
-        try:
-            from core.vulnerability_detector import SlitherIntegration
-            slither = SlitherIntegration()
-            
-            if not slither.slither_available:
-                print("   ⚠️  Slither unavailable - using enhanced detectors only", flush=True)
-                return []
-            
-            all_findings = []
-            for contract_file in contract_files:
-                try:
-                    # Prefer the actual on-disk file path for correct imports and layout
-                    real_path = contract_file.get('path')
-                    if real_path and os.path.exists(real_path):
-                        findings = slither.analyze_with_slither(real_path)
-                        all_findings.extend(findings)
-                    else:
-                        # Fallback: still support temp-path analysis if file isn't on disk
-                        import tempfile
-                        from pathlib import Path
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
-                            f.write(contract_file['content'])
-                            temp_path = f.name
-                        try:
-                            findings = slither.analyze_with_slither(temp_path)
-                            all_findings.extend(findings)
-                        finally:
-                            Path(temp_path).unlink(missing_ok=True)
-                
-                except Exception as e:
-                    print(f"   ⚠️  Slither analysis failed for {contract_file['name']}: {e}", flush=True)
-                    continue
-            
-            return all_findings
-        
-        except Exception as e:
-            print(f"   ⚠️  Could not run Slither analysis: {e}", flush=True)
-            return []
 
     def _extract_code_snippet(self, contract_content: str, line_number: int, context_lines: int = 5) -> str:
         """Extract code snippet around a specific line number for LLM verification."""
@@ -1504,8 +1441,12 @@ class EnhancedAetherAuditEngine:
             recall_score = accuracy_score      # Simplified
             f1_score = 2 * (precision_score * recall_score) / max(precision_score + recall_score, 0.001)
 
-            # Count LLM calls (simplified estimate)
-            llm_calls = max(total_findings * 2, 1)  # Rough estimate
+            # Get actual LLM call count from usage tracker
+            try:
+                from core.llm_usage_tracker import LLMUsageTracker
+                llm_calls = max(LLMUsageTracker.get_instance().call_count, 1)
+            except Exception:
+                llm_calls = max(total_findings * 2, 1)
             cache_hits = 0  # Would need to track this
 
             return AuditMetrics(

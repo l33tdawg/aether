@@ -476,17 +476,25 @@ class AetherInteractiveMenu:
 
     def _run_local_audit(self, target: str, features: List[str], output_dir: str):
         try:
-            asyncio.run(
-                self.cli.run_audit(
-                    contract_path=target,
-                    output_dir=output_dir,
-                    enhanced="enhanced" in features,
-                    ai_ensemble="ai_ensemble" in features,
-                    llm_validation="llm_validation" in features,
-                    foundry="foundry" in features,
-                    enhanced_reports="enhanced_reports" in features,
-                )
+            from core.audit_dashboard import SingleAuditDashboard
+            from core.post_audit_summary import PostAuditSummary
+
+            dashboard = SingleAuditDashboard()
+            dashboard.run_audit_with_dashboard(
+                audit_fn=self.cli.run_audit,
+                contract_path=target,
+                output_dir=output_dir,
+                enhanced="enhanced" in features,
+                ai_ensemble="ai_ensemble" in features,
+                llm_validation="llm_validation" in features,
+                foundry="foundry" in features,
+                enhanced_reports="enhanced_reports" in features,
             )
+            status = dashboard.get_status()
+            if status:
+                PostAuditSummary.render(
+                    self.console, [status], status.elapsed or 0
+                )
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Audit interrupted.[/yellow]")
         except Exception as e:
@@ -585,6 +593,14 @@ class AetherInteractiveMenu:
             if summary.get("wall_time"):
                 mins, secs = divmod(int(summary["wall_time"]), 60)
                 self.console.print(f"[dim]Wall time: {mins}:{secs:02d}[/dim]")
+
+            # Post-audit LLM cost summary
+            from core.post_audit_summary import PostAuditSummary
+            PostAuditSummary.render(
+                self.console,
+                list(manager._statuses.values()),
+                summary.get("wall_time", 0),
+            )
 
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Parallel audit interrupted.[/yellow]")

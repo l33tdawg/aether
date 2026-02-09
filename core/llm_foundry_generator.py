@@ -256,7 +256,7 @@ fuzz = {{ runs = 256 }}
         # Extract contract functions (regex baseline)
         contract_functions = self._extract_contract_functions(contract_code)
 
-        # Apply overrides from ABI/Slither if provided
+        # Apply overrides from ABI/regex extraction if provided
         abi = None
         solc_override = None
         function_signatures = []

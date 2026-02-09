@@ -41,13 +41,6 @@ class DependencyDetector:
             'required': False,
             'warning': 'Node.js 22+ required for Hardhat projects. Run: ./scripts/setup_node.sh'
         },
-        'slither': {
-            'description': 'Slither static analyzer',
-            'check_cmd': ['slither', '--version'],
-            'version_pattern': r'(\d+\.\d+(?:\.\d+)?)',
-            'install_instructions': 'pip install slither-analyzer',
-            'required': False
-        },
         'solc': {
             'description': 'Solidity compiler',
             'check_cmd': ['solc', '--version'],

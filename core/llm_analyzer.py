@@ -131,6 +131,15 @@ class LLMAnalyzer:
                     max_tokens=8000  # Increased for GPT-4.1-mini's large context window
                 )
 
+                if hasattr(response, 'usage') and response.usage:
+                    from core.llm_usage_tracker import LLMUsageTracker
+                    LLMUsageTracker.get_instance().record(
+                        "openai", model_name,
+                        response.usage.prompt_tokens or 0,
+                        response.usage.completion_tokens or 0,
+                        "llm_analyzer",
+                    )
+
                 content = (response.choices[0].message.content or "").encode('utf-8', errors='ignore').decode('utf-8')
                 analysis_result = self._parse_llm_response(content)
 
@@ -231,13 +240,6 @@ class LLMAnalyzer:
         """
 
         # Add static analysis results with exploit focus
-        if static_results.get('slither'):
-            slither_vulns = static_results['slither'].get('vulnerabilities', [])
-            if slither_vulns:
-                prompt += "\nPotential Issues from Static Analysis:\n"
-                for vuln in slither_vulns[:5]:  # Focus on top issues
-                    prompt += f"- {vuln.get('title', 'Unknown')}: {vuln.get('description', '')[:150]}...\n"
-
         if static_results.get('mythril'):
             mythril_vulns = static_results['mythril'].get('vulnerabilities', [])
             if mythril_vulns:

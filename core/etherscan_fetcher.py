@@ -667,7 +667,7 @@ class EtherscanFetcher:
                                     f.write(file_data.get('content', ''))
                                 files_saved += 1
                             
-                            # Create foundry.toml with remappings for Slither compilation
+                            # Create foundry.toml with remappings for compilation
                             foundry_toml_path = os.path.join(contract_dir, 'foundry.toml')
                             if not os.path.exists(foundry_toml_path):
                                 # Extract Solidity version from contract metadata
@@ -824,7 +824,7 @@ solc = "{solc_version_str}"
                                 f.write(content)
                             files_saved += 1
                         
-                        # Create foundry.toml with remappings for Slither compilation
+                        # Create foundry.toml with remappings for compilation
                         foundry_toml_path = os.path.join(contract_dir, 'foundry.toml')
                         if not os.path.exists(foundry_toml_path):
                             # Extract Solidity version from contract metadata

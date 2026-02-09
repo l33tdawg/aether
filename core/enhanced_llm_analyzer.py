@@ -476,7 +476,16 @@ Before reporting any vulnerability, verify:
                 api_params["max_tokens"] = max_tokens
                 
             response = self.client.chat.completions.create(**api_params)
-            
+
+            if hasattr(response, 'usage') and response.usage:
+                from core.llm_usage_tracker import LLMUsageTracker
+                LLMUsageTracker.get_instance().record(
+                    "openai", model,
+                    response.usage.prompt_tokens or 0,
+                    response.usage.completion_tokens or 0,
+                    "enhanced_llm_analyzer",
+                )
+
             return response.choices[0].message.content
             
         except Exception as e:
@@ -515,7 +524,17 @@ Before reporting any vulnerability, verify:
                         raise e
             
             result = response.json()
-            
+
+            usage_meta = result.get('usageMetadata', {})
+            if usage_meta:
+                from core.llm_usage_tracker import LLMUsageTracker
+                LLMUsageTracker.get_instance().record(
+                    "gemini", model,
+                    usage_meta.get('promptTokenCount', 0),
+                    usage_meta.get('candidatesTokenCount', 0),
+                    "enhanced_llm_analyzer",
+                )
+
             # Parse Gemini response structure
             candidates = result.get('candidates') or []
             if candidates:
@@ -556,6 +575,15 @@ Before reporting any vulnerability, verify:
                     {"role": "user", "content": prompt}
                 ],
             )
+
+            if hasattr(response, 'usage') and response.usage:
+                from core.llm_usage_tracker import LLMUsageTracker
+                LLMUsageTracker.get_instance().record(
+                    "anthropic", model,
+                    response.usage.input_tokens or 0,
+                    response.usage.output_tokens or 0,
+                    "enhanced_llm_analyzer",
+                )
 
             if response.content and len(response.content) > 0:
                 return response.content[0].text

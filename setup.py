@@ -211,7 +211,6 @@ class AetherSetup:
         self.setup_status = {
             'python_version': False,
             'foundry': False,
-            'slither': False,
             'venv': False,
             'dependencies': False,
             'api_keys': False,
@@ -836,15 +835,6 @@ Let's get started!
                 return False
         else:
             self.setup_status['foundry'] = True
-        
-        # Check Slither (optional)
-        if not tools['slither']['installed']:
-            self.console.print("\n[yellow]Slither is optional but recommended for static analysis.[/yellow]")
-            
-            if self.interactive and Confirm.ask("Install Slither now?", default=True):
-                self.console.print("Slither will be installed with Python dependencies in the next step.")
-        else:
-            self.setup_status['slither'] = True
         
         return True
     

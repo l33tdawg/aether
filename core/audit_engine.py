@@ -265,7 +265,6 @@ class AetherAuditEngine:
 
         results = {
             'pattern_analysis': {'vulnerabilities': [], 'errors': []},
-            'slither': {'vulnerabilities': [], 'errors': []},
             'summary': {'total_vulnerabilities': 0, 'high_severity': 0}
         }
 
@@ -310,23 +309,6 @@ class AetherAuditEngine:
             results['pattern_analysis']['errors'].append(str(e))
             if self.verbose:
                 print(f"⚠️  Pattern analysis failed: {e}")
-
-        # Run Slither with proper integration
-        try:
-            print("🔍 Running Slither static analysis...")
-            slither_results = await self._run_slither(contract_path)
-            results['slither'] = slither_results
-            vuln_count = len(slither_results.get('vulnerabilities', []))
-            results['summary']['total_vulnerabilities'] += vuln_count
-            results['summary']['high_severity'] += len([
-                v for v in slither_results.get('vulnerabilities', [])
-                if v.get('severity', '').lower() in ['high', 'critical']
-            ])
-            print(f"✅ Slither found {vuln_count} vulnerabilities")
-        except Exception as e:
-            error_msg = f"Slither error: {str(e)}"
-            print(f"❌ {error_msg}")
-            results['slither']['errors'].append(error_msg)
 
         return results
 
@@ -374,7 +356,6 @@ class AetherAuditEngine:
 
             # Create static analysis results summary for LLM context
             static_results = {
-                'slither': {'vulnerabilities': [], 'errors': []},
                 'mythril': {'vulnerabilities': [], 'errors': []},
                 'pattern_analysis': {'vulnerabilities': vulnerabilities, 'errors': []}
             }

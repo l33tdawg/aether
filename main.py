@@ -8,9 +8,6 @@ Run without arguments for the interactive menu, or use subcommands for direct ac
 
 import warnings
 
-# Suppress pkg_resources deprecation warning from slither
-# This is a known issue in slither 0.10.0 that will be fixed in future versions
-# See: https://github.com/crytic/slither/issues
 warnings.filterwarnings("ignore", category=UserWarning, message=".*pkg_resources is deprecated.*")
 
 import argparse

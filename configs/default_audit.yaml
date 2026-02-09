@@ -5,16 +5,6 @@ flow:
   - node: ReportNode
 
 tools:
-  - name: slither
-    type: static_analysis
-    output_format: json
-    enabled: true
-    config:
-      exclude_dependencies: true
-      exclude_informational: true
-      timeout: 300
-
-  # mythril disabled (removed)
 
   - name: llm_gpt
     type: reasoning
@@ -38,7 +28,7 @@ node_configs:
     extract_metadata: true
 
   StaticAnalysisNode:
-    tools: [slither]
+    tools: []
     severity_threshold: medium
     output_format: structured
 

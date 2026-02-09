@@ -4,7 +4,6 @@ Main CLI implementation for AetherAudit + AetherFuzz.
 
 import warnings
 
-# Suppress pkg_resources deprecation warning from slither
 warnings.filterwarnings("ignore", category=UserWarning, message=".*pkg_resources is deprecated.*")
 
 import asyncio
@@ -34,9 +33,7 @@ from core.graceful_shutdown import register_database
 from core.exploit_tester import ExploitTester
 
 
-# Optional monkeypatch targets for tests. These placeholders allow tests to patch
-# Slither and AetherDatabase on this module path (cli.main.Slither / .AetherDatabase).
-Slither = None  # type: ignore
+# Optional monkeypatch target for tests.
 AetherDatabase = None  # type: ignore
 
 
@@ -736,57 +733,7 @@ class AetherCLI:
                 except Exception:
                     pass
 
-                # Use Slither (if available) to extract richer symbols
-                try:
-                    # Prefer test-monkeypatched Slither if present, else import
-                    patched = globals().get('Slither')
-                    if patched is not None:
-                        SlitherRef = patched
-                    else:
-                        try:
-                            from slither import Slither as _ImportedSlither  # type: ignore
-                        except Exception:
-                            _ImportedSlither = None  # type: ignore
-                        SlitherRef = _ImportedSlither
-                    if not SlitherRef:
-                        raise ImportError("Slither not available")
-
-                    s = SlitherRef(contract_file)
-                    fn_names = []
-                    fn_sigs = []
-                    ev_names = []
-                    mod_names = []
-                    for c in s.contracts:
-                        if c.name != contract_name:
-                            continue
-                        for f in c.functions_declared:
-                            # Limit to public/external for test calls
-                            vis = str(getattr(f, 'visibility', ''))
-                            if 'public' in vis or 'external' in vis:
-                                fn_names.append(f.name)
-                                try:
-                                    fn_sigs.append(f.signature_str)
-                                except Exception:
-                                    pass
-                        for e in getattr(c, 'events_declared', []) or []:
-                            ev_names.append(e.name)
-                        for m in getattr(c, 'modifiers_declared', []) or []:
-                            mod_names.append(m.name)
-                    if fn_names:
-                        context_overrides['contract_functions'] = sorted(set(fn_names))
-                    if fn_sigs:
-                        context_overrides['function_signatures'] = sorted(set(fn_sigs))
-                    elif context_overrides.get('contract_functions'):
-                        # Ensure signatures present even if Slither didn't provide
-                        context_overrides['function_signatures'] = list(context_overrides['contract_functions'])
-                    if ev_names:
-                        context_overrides['events'] = sorted(set(ev_names))
-                    if mod_names:
-                        context_overrides['modifiers'] = sorted(set(mod_names))
-                except Exception:
-                    pass
-
-                # Fallback: ensure at least a basic function list is provided to the generator
+                # Extract function names via regex
                 if 'contract_functions' not in context_overrides:
                     try:
                         import re as _re

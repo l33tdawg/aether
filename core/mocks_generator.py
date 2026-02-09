@@ -110,7 +110,7 @@ class MocksGenerator:
         while i < len(queue):
             imp = queue[i]
             i += 1
-            # Skip if resolvable by existing remaps (let forge/slither handle)
+            # Skip if resolvable by existing remaps (let forge handle)
             abs_path = self._resolve_import_path(imp)
             if abs_path:
                 write_and_queue(abs_path, imp)

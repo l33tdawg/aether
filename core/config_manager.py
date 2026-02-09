@@ -125,8 +125,6 @@ class AetherConfig:
     def __post_init__(self):
         if self.tools is None:
             self.tools = {
-                'slither': ToolConfig('slither', True, 300),
-                'mythril': ToolConfig('mythril', True, 600),
                 'pattern': ToolConfig('pattern', True, 60),
                 'llm': ToolConfig('llm', True, 120)
             }

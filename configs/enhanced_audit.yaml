@@ -12,16 +12,6 @@ flow:
   - node: ReportNode
 
 tools:
-  - name: slither
-    type: static_analysis
-    output_format: json
-    enabled: true
-    config:
-      exclude_dependencies: false
-      exclude_informational: false
-      timeout: 600
-
-  # mythril disabled (removed)
 
   - name: llm_gpt
     type: reasoning
@@ -50,7 +40,7 @@ node_configs:
     analyze_imports: true
 
   StaticAnalysisNode:
-    tools: [slither]
+    tools: []
     severity_threshold: low
     output_format: structured
     enhanced_mode: true
@@ -105,7 +95,7 @@ node_configs:
     validate_fixes: true
 
   ValidationNode:
-    retest_tools: [slither]
+    retest_tools: []
     validation_threshold: 0.8
     use_enhanced_detector: true
 
