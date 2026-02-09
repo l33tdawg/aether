@@ -243,26 +243,53 @@ class EnhancedAetherAuditEngine:
         self.context = getattr(self, 'context', {})
         self.context['delegation_flow'] = delegation_flow
         
+        # Initialize DeFi detector for semantic two-stage analysis
+        from core.defi_vulnerability_detector import DeFiVulnerabilityDetector
+        defi_detector = DeFiVulnerabilityDetector()
+
         for contract_file in contract_files:
             content = contract_file['content']
             total_lines += len(content.split('\n'))
-            
+
             # Set contract context for better analysis
             self.vulnerability_detector.set_contract_context({
                 'file_path': contract_file['path'],
                 'contract_name': contract_file['name'],
                 'total_lines': len(content.split('\n'))
             })
-            
+
             # Run enhanced vulnerability detection
             vulnerabilities = self.vulnerability_detector.analyze_contract(content)
-            
+
             # Add file context to vulnerabilities
             for vuln in vulnerabilities:
                 vuln.context['file_path'] = contract_file['path']
                 vuln.context['contract_name'] = contract_file['name']
-            
+
             all_vulnerabilities.extend(vulnerabilities)
+
+            # Run DeFi-specific detector (two-stage presence/absence analysis)
+            try:
+                defi_vulns = defi_detector.analyze_contract(contract_file['path'], content)
+                for dv in defi_vulns:
+                    all_vulnerabilities.append({
+                        'vulnerability_type': dv.vuln_type.value,
+                        'severity': dv.severity,
+                        'confidence': dv.confidence,
+                        'line_number': dv.line_number,
+                        'description': dv.description,
+                        'code_snippet': dv.code_snippet,
+                        'validation_status': 'validated',
+                        'context': {
+                            'file_path': contract_file['path'],
+                            'contract_name': contract_file['name'],
+                            'attack_vector': dv.attack_vector,
+                            'financial_impact': dv.financial_impact,
+                            'source': 'defi_detector',
+                        },
+                    })
+            except Exception as e:
+                logger.warning(f"DeFi detector failed for {contract_file['name']}: {e}")
         
         # NEW: Deduplicate vulnerabilities before filtering
         print("   🔄 Deduplicating vulnerabilities...", flush=True)
@@ -339,7 +366,7 @@ class EnhancedAetherAuditEngine:
             
             access_adjusted_vulns.append(vuln)
         
-        # Filter out false positives
+        # Filter out only explicit false positives; allow pending findings through
         validated_vulnerabilities = []
         for vuln in access_adjusted_vulns:
             # Handle both VulnerabilityMatch objects and dicts
@@ -351,11 +378,22 @@ class EnhancedAetherAuditEngine:
                 validation_status = getattr(vuln, 'validation_status', 'pending')
                 vuln_type = getattr(vuln, 'vulnerability_type', 'Unknown')
                 line_num = getattr(vuln, 'line_number', 0)
-            
-            if validation_status == "validated":
-                validated_vulnerabilities.append(vuln)
-            else:
+
+            if validation_status == "false_positive":
+                # Only drop findings explicitly marked as false positives
                 print(f"⚠️  Filtered false positive: {vuln_type} at line {line_num}")
+            else:
+                # Pass through both "validated" and "pending" findings
+                # Pending findings get a flag so the LLM can validate them downstream
+                if validation_status == "pending":
+                    if isinstance(vuln, dict):
+                        vuln['needs_llm_validation'] = True
+                    else:
+                        try:
+                            vuln.needs_llm_validation = True
+                        except AttributeError:
+                            pass
+                validated_vulnerabilities.append(vuln)
         
         # Calculate statistics
         self.stats['total_findings'] = len(all_vulnerabilities)
@@ -521,41 +559,101 @@ class EnhancedAetherAuditEngine:
             'context': {}
         }
 
+    def _has_risk_indicators(self, vuln: Dict[str, Any], contract_content: str) -> bool:
+        """Check if a vulnerability has contextual risk indicators that justify its severity.
+
+        Returns True if the finding is in a risky context (should NOT be downgraded).
+        """
+        import re
+        line_num = vuln.get('line_number', vuln.get('line', 0))
+        code_snippet = vuln.get('code_snippet', '')
+        description = vuln.get('description', '').lower()
+
+        # Get surrounding code context (20 lines around the finding)
+        lines = contract_content.split('\n')
+        start = max(0, line_num - 10)
+        end = min(len(lines), line_num + 10)
+        context_code = '\n'.join(lines[start:end])
+
+        # Check 1: Is this inside an unchecked{} block? (Solidity >= 0.8 safety bypass)
+        # Look for unchecked keyword in context
+        if 'unchecked' in context_code:
+            return True
+
+        # Check 2: Is the result used in value-affecting operations?
+        value_ops = [
+            r'\.transfer\s*\(', r'\.send\s*\(', r'\.call\{value',
+            r'_mint\s*\(', r'_burn\s*\(', r'mint\s*\(',
+            r'safeTransfer\s*\(', r'safeTransferFrom\s*\(',
+            r'balanceOf', r'totalSupply', r'totalAssets',
+            r'convertToShares', r'convertToAssets',
+            r'getAmountOut', r'getAmountsOut', r'swap\s*\(',
+        ]
+        for pattern in value_ops:
+            if re.search(pattern, context_code):
+                return True
+
+        # Check 3: Is there a price calculation or exchange rate?
+        price_indicators = ['price', 'rate', 'ratio', 'oracle', 'feed', 'reserves']
+        for indicator in price_indicators:
+            if indicator in context_code.lower():
+                return True
+
+        # Check 4: Is there NO require/revert guard on the operand?
+        # If there IS a guard, it's less risky
+        has_guard = bool(re.search(r'require\s*\(|revert\s+|if\s*\(.+\)\s*revert', context_code))
+
+        # Check 5: Description mentions high-impact patterns
+        high_impact_keywords = ['oracle', 'price', 'flash', 'liquidat', 'collateral',
+                                 'borrow', 'lend', 'vault', 'pool', 'swap', 'bridge']
+        for kw in high_impact_keywords:
+            if kw in description:
+                return True
+
+        # If no guard and no other risk indicators, it's likely lower risk
+        return False
+
     def _calibrate_vulnerability_severity(self, vuln: Any, contract_content: str) -> Dict[str, Any]:
-        """Calibrate vulnerability severity to prevent false positives."""
+        """Calibrate vulnerability severity with context-aware checks.
+
+        Instead of blanket downgrades, checks whether the finding is in a
+        risky context (unchecked blocks, value operations, price calculations)
+        before adjusting severity.
+        """
         # Ensure vuln is a normalized dict
         if not isinstance(vuln, dict):
             vuln = self._normalize_vulnerability_dict(vuln)
-        
+
         vuln_type = vuln.get('vulnerability_type', 'unknown')
         original_severity = vuln.get('severity', 'medium')
-        
+
         # Calibrate severity based on vulnerability type and context
         calibrated_severity = original_severity
-        
-        # Downgrade common false positives
+
+        # Context-aware calibration for types that CAN be false positives
         if vuln_type in ['division_by_zero', 'integer_underflow', 'bounds_checking_issue', 'missing_input_validation', 'external_manipulation']:
-            # These are often false positives in constants or loops
-            if original_severity in ['critical', 'high']:
-                calibrated_severity = 'low'
-            elif original_severity == 'medium':
-                calibrated_severity = 'low'
-        
+            # Only downgrade if NO risk indicators are present
+            if not self._has_risk_indicators(vuln, contract_content):
+                if original_severity in ['critical', 'high']:
+                    calibrated_severity = 'low'
+                elif original_severity == 'medium':
+                    calibrated_severity = 'low'
+            # If risk indicators present, preserve original severity
+
         elif vuln_type in ['parameter_validation_issue', 'malformed_input_handling', 'unvalidated_decoding']:
-            # These are often false positives in external interfaces
-            if original_severity in ['critical', 'high']:
-                calibrated_severity = 'medium'
-        
+            if not self._has_risk_indicators(vuln, contract_content):
+                if original_severity in ['critical', 'high']:
+                    calibrated_severity = 'medium'
+
         elif vuln_type in ['access_control']:
             # Access control issues need context validation
             if 'public' in contract_content.lower() and 'external' in contract_content.lower():
-                # If there are many public/external functions, downgrade severity
                 if original_severity == 'critical':
                     calibrated_severity = 'medium'
-        
+
         # Apply calibration (vuln is always a dict now)
         vuln['severity'] = calibrated_severity
-        
+
         return vuln
 
 # Learning system integration method removed - was simulated

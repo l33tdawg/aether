@@ -2128,16 +2128,14 @@ class AIEnsemble:
         return vuln_lower
 
     def _get_finding_key(self, finding: Dict[str, Any]) -> str:
-        """Generate a fuzzy key for finding similarity comparison.
+        """Generate a grouping key for finding deduplication.
 
-        Uses normalized vuln type and line number within +/-5 lines.
-        Severity within one level is considered similar.
+        Uses only the normalized vulnerability type. Actual similarity
+        (including line proximity) is handled by _findings_match_fuzzy()
+        which uses abs(line1 - line2) <= 5 without bucket boundary issues.
         """
         normalized_type = self._normalize_vuln_type(finding.get('type', ''))
-        line = finding.get('line', -1)
-        # Bucket line numbers into groups of 10 for fuzzy matching
-        line_bucket = (line // 10) * 10 if line >= 0 else -1
-        return f"{normalized_type}_{line_bucket}"
+        return normalized_type
 
     def _findings_match_fuzzy(self, f1: Dict[str, Any], f2: Dict[str, Any]) -> bool:
         """Check if two findings are similar enough to be considered the same issue."""
@@ -2155,6 +2153,32 @@ class AIEnsemble:
 
         return True
 
+    # Map agent names to their specialization categories for penalty weighting
+    _AGENT_SPECIALIZATIONS = {
+        'gpt5_security': ['access_control', 'reentrancy', 'overflow', 'external_calls'],
+        'gpt5_defi': ['amm', 'lending', 'governance', 'oracle_manipulation', 'flash_loan'],
+        'gemini_security': ['external_calls', 'delegatecall', 'unchecked_return'],
+        'gemini_verification': ['arithmetic', 'overflow', 'underflow', 'precision_loss', 'integer_overflow'],
+        'anthropic_security': ['access_control', 'reentrancy', 'logic_errors', 'privilege_escalation'],
+        'anthropic_reasoning': ['complex_logic', 'cross_contract', 'economic_attacks', 'invariant_violations'],
+        'defi_expert': ['flash_loan', 'oracle_manipulation', 'amm', 'lending'],
+    }
+
+    def _is_specialist_finding(self, finding: Dict[str, Any], models: List[str]) -> bool:
+        """Check if a single-agent finding matches that agent's specialization."""
+        if not models or len(models) != 1:
+            return False
+        agent_name = models[0]
+        specializations = self._AGENT_SPECIALIZATIONS.get(agent_name, [])
+        if not specializations:
+            return False
+        finding_type = self._normalize_vuln_type(finding.get('type', ''))
+        # Check if finding type matches any of the agent's specializations
+        for spec in specializations:
+            if spec in finding_type or finding_type in spec:
+                return True
+        return False
+
     def _merge_similar_findings(self, similar_findings: List[Dict[str, Any]], models: List[str] = None) -> Dict[str, Any]:
         """Merge similar findings into a consensus finding with agreement tracking."""
         # Take the finding with highest confidence as base
@@ -2170,8 +2194,13 @@ class AIEnsemble:
             confidence_boost = 0.1
             adjusted_confidence = min(1.0, avg_confidence + confidence_boost)
         else:
-            # Single agent only: penalize confidence
-            confidence_penalty = 0.15
+            # Single agent only: apply weighted penalty
+            # Reduced penalty (-0.05) if finding matches the agent's specialization
+            # Full penalty (-0.15) for non-specialist single-agent findings
+            if self._is_specialist_finding(base_finding, models):
+                confidence_penalty = 0.05
+            else:
+                confidence_penalty = 0.15
             adjusted_confidence = max(0.0, avg_confidence - confidence_penalty)
 
         # Update with consensus confidence

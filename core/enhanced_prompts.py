@@ -430,14 +430,28 @@ _FOCUS_AREA_PATTERNS = {
 
 
 def get_patterns_for_focus_areas(focus_areas: list) -> str:
-    """Get relevant zero-day patterns for a set of focus areas.
+    """Get relevant exploit patterns for a set of focus areas.
+
+    Uses the ExploitKnowledgeBase (50+ real-world patterns) when available,
+    falling back to the static ZERO_DAY_VULNERABILITY_PATTERNS.
 
     Args:
         focus_areas: List of focus area strings (e.g., ['access_control', 'reentrancy'])
 
     Returns:
-        String containing relevant patterns from ZERO_DAY_VULNERABILITY_PATTERNS
+        String containing relevant patterns formatted for LLM consumption
     """
+    # Try dynamic knowledge base first
+    try:
+        from core.exploit_knowledge_base import ExploitKnowledgeBase
+        kb = ExploitKnowledgeBase()
+        if focus_areas:
+            return kb.format_for_focus_areas(focus_areas)
+        return kb.format_for_prompt()
+    except Exception:
+        pass
+
+    # Fallback to static patterns
     if not focus_areas:
         return ZERO_DAY_VULNERABILITY_PATTERNS
 
@@ -472,6 +486,24 @@ def get_patterns_for_focus_areas(focus_areas: list) -> str:
             result_lines.append(line)
 
     return '\n'.join(result_lines)
+
+
+def get_patterns_for_archetype(archetype) -> str:
+    """Get exploit patterns relevant to a specific protocol archetype.
+
+    Args:
+        archetype: ProtocolArchetype enum value
+
+    Returns:
+        Formatted patterns string for LLM consumption
+    """
+    try:
+        from core.exploit_knowledge_base import ExploitKnowledgeBase
+        kb = ExploitKnowledgeBase()
+        patterns = kb.get_for_archetype(archetype)
+        return kb.format_for_prompt(patterns)
+    except Exception:
+        return ZERO_DAY_VULNERABILITY_PATTERNS
 
 
 # ============================================================================
