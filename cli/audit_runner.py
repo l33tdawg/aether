@@ -481,6 +481,7 @@ class AuditRunner:
                 fresh=fresh,
                 interactive_scope=False,
                 skip_scope_selector=True,
+                resume_scope_id=scope_id,
             )
 
             snapshot_after = tracker.snapshot()

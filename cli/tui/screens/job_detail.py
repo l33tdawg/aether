@@ -36,16 +36,15 @@ class JobDetailScreen(Screen):
     }
 
     JobDetailScreen #log-panel {
-        width: 70%;
+        width: 1fr;
         height: 100%;
-        padding: 0 1 0 0;
+        padding: 0;
     }
 
     JobDetailScreen #side-panel {
-        width: 30%;
+        width: 40;
         height: 100%;
-        padding: 0 0 0 1;
-        border-left: tall $border;
+        padding: 0 1;
     }
 
     JobDetailScreen #phase-bar {
@@ -58,24 +57,7 @@ class JobDetailScreen(Screen):
         padding: 1;
         border: tall $border;
         background: $surface;
-    }
-
-    JobDetailScreen #metadata .meta-title {
-        color: cyan;
-        text-style: bold;
-        margin-bottom: 1;
-    }
-
-    JobDetailScreen #metadata .meta-row {
-        height: 1;
-    }
-
-    JobDetailScreen #metadata .meta-label {
-        color: $text-muted;
-    }
-
-    JobDetailScreen #metadata .meta-value {
-        color: $text;
+        overflow-x: hidden;
     }
 
     JobDetailScreen .log-viewer {
@@ -163,6 +145,16 @@ class JobDetailScreen(Screen):
             self._refresh_timer.stop()
             self._refresh_timer = None
 
+    # Max visible chars for a value in the metadata panel
+    _META_MAX = 28
+
+    def _trunc(self, text: str, max_len: int | None = None) -> str:
+        """Truncate text to fit the metadata panel width."""
+        limit = max_len or self._META_MAX
+        if len(text) > limit:
+            return text[: limit - 1] + "\u2026"
+        return text
+
     def _build_metadata_text(self, job: AuditJob | None) -> str:
         """Build the Rich markup for the metadata panel."""
         if job is None:
@@ -174,33 +166,30 @@ class JobDetailScreen(Screen):
 
         # Status
         status_display = self._format_status(job.status)
-        lines.append(f"[bold]Status:[/]   {status_display}")
+        lines.append(f"[bold]Status:[/]  {status_display}")
 
         # Target
         target = job.target or "-"
-        if len(target) > 35:
-            target = "\u2026" + target[-34:]
-        lines.append(f"[bold]Target:[/]   {target}")
+        lines.append(f"[bold]Target:[/]  {self._trunc(target)}")
 
         # Job type
-        lines.append(f"[bold]Type:[/]     {job.job_type}")
+        lines.append(f"[bold]Type:[/]    {job.job_type}")
 
         lines.append("")
 
         # Findings
         findings = str(job.findings_count) if job.findings_count > 0 else "-"
-        lines.append(f"[bold]Findings:[/] {findings}")
+        lines.append(f"[bold]Finds:[/]   {findings}")
 
         # Cost
         cost_str = f"${job.cost_delta:.2f}" if job.cost_delta > 0 else "-"
-        lines.append(f"[bold]Cost:[/]     {cost_str}")
+        lines.append(f"[bold]Cost:[/]    {cost_str}")
 
         # LLM calls and cost from audit_status
         if job.audit_status:
             llm_calls = job.audit_status.llm_calls
             llm_cost = job.audit_status.llm_cost
-            lines.append(f"[bold]LLM Calls:[/] {llm_calls}")
-            lines.append(f"[bold]LLM Cost:[/]  ${llm_cost:.2f}")
+            lines.append(f"[bold]LLM:[/]     {llm_calls} calls, ${llm_cost:.2f}")
 
         lines.append("")
 
@@ -209,33 +198,30 @@ class JobDetailScreen(Screen):
         if elapsed is not None:
             minutes = int(elapsed) // 60
             seconds = int(elapsed) % 60
-            lines.append(f"[bold]Elapsed:[/]  {minutes}:{seconds:02d}")
+            lines.append(f"[bold]Elapsed:[/] {minutes}:{seconds:02d}")
         else:
-            lines.append("[bold]Elapsed:[/]  -")
+            lines.append("[bold]Elapsed:[/] -")
 
         # Phase progress
         if job.audit_status:
             phase_idx = job.audit_status.phase_index
-            lines.append(f"[bold]Phase:[/]    {job.audit_status.phase.value} ({phase_idx}/{TOTAL_PHASES})")
+            phase_name = self._trunc(job.audit_status.phase.value, 18)
+            lines.append(f"[bold]Phase:[/]   {phase_name} ({phase_idx}/{TOTAL_PHASES})")
 
         lines.append("")
 
         # Features
         if job.features:
             features_str = ", ".join(job.features)
-            if len(features_str) > 35:
-                features_str = features_str[:32] + "\u2026"
-            lines.append(f"[bold]Features:[/] {features_str}")
+            lines.append(f"[bold]Features:[/] {self._trunc(features_str)}")
         else:
             lines.append("[bold]Features:[/] -")
 
         # Error (only if present)
         if job.error:
             lines.append("")
-            error_display = job.error
-            if len(error_display) > 60:
-                error_display = error_display[:57] + "\u2026"
-            lines.append(f"[bold red]Error:[/]    [red]{error_display}[/]")
+            error_display = self._trunc(job.error)
+            lines.append(f"[bold red]Error:[/] [red]{error_display}[/]")
 
         # Child jobs (for parallel audits)
         if job.child_job_ids:

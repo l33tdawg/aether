@@ -816,7 +816,8 @@ class AetherCLI:
         dry_run: bool = False,
         github_token: Optional[str] = None,
         interactive_scope: bool = False,
-        skip_scope_selector: bool = False
+        skip_scope_selector: bool = False,
+        resume_scope_id: Optional[int] = None,
     ) -> int:
         auditor = GitHubAuditor()
         
@@ -838,7 +839,8 @@ class AetherCLI:
             verbose=verbose,
             dry_run=dry_run,
             github_token=github_token,
-            interactive_scope=interactive_scope and not skip_scope_selector
+            interactive_scope=interactive_scope and not skip_scope_selector,
+            resume_scope_id=resume_scope_id,
         )
 
         # Normalize URL consistently with RepositoryManager for DB/report flows

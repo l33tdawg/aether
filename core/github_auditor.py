@@ -37,6 +37,7 @@ class AuditOptions:
     dry_run: bool = False
     github_token: Optional[str] = None
     interactive_scope: bool = False
+    resume_scope_id: Optional[int] = None  # Set by TUI to bypass interactive scope menu
 
 
 @dataclass
@@ -185,8 +186,23 @@ class GitHubAuditor:
                 resume_scope_processed = False
                 current_scope_id: Optional[int] = None
                 rel_paths = []
-                
-                if project_id is not None and not options.scope:
+
+                # TUI resume: scope already chosen via Textual dialogs — skip interactive menu
+                if options.resume_scope_id is not None:
+                    scope_data = self.db.get_active_scope(project_id) if project_id else None
+                    if scope_data and int(scope_data.get('id', 0)) == options.resume_scope_id:
+                        current_scope_id = options.resume_scope_id
+                        rel_paths = scope_data.get('selected_contracts', [])
+                        if isinstance(rel_paths, str):
+                            import json as _json
+                            rel_paths = _json.loads(rel_paths)
+                        progress = self.db.recalculate_scope_progress(current_scope_id)
+                        total_audited = progress.get('total_audited', 0)
+                        total_selected = len(rel_paths)
+                        print(f"\nResuming with saved scope: {total_audited}/{total_selected} audited\n", flush=True)
+                        resume_scope_processed = True
+
+                elif project_id is not None and not options.scope:
                     resume_info = self.scope_manager.detect_and_handle_saved_scope(project_id, contract_dicts)
                     
                     if resume_info:
@@ -405,7 +421,24 @@ class GitHubAuditor:
                 
                 # Check if there's a saved scope (smart resume) - ALWAYS check, regardless of flags
                 resume_scope_processed = False  # Flag to prevent double-selection
-                if project_id is not None and not options.scope:
+
+                # TUI resume: scope already chosen via Textual dialogs — skip interactive menu
+                if options.resume_scope_id is not None:
+                    scope_data = self.db.get_active_scope(project_id) if project_id else None
+                    if scope_data and int(scope_data.get('id', 0)) == options.resume_scope_id:
+                        current_scope_id = options.resume_scope_id
+                        rel_paths = scope_data.get('selected_contracts', [])
+                        if isinstance(rel_paths, str):
+                            import json as _json
+                            rel_paths = _json.loads(rel_paths)
+                        progress = self.db.recalculate_scope_progress(current_scope_id)
+                        total_audited = progress.get('total_audited', 0)
+                        total_selected = len(rel_paths)
+                        contracts_analyzed = total_selected
+                        print(f"\nResuming with saved scope: {total_audited}/{total_selected} audited\n", flush=True)
+                        resume_scope_processed = True
+
+                elif project_id is not None and not options.scope:
                     resume_info = self.scope_manager.detect_and_handle_saved_scope(project_id, contract_info_list)
                     
                     if resume_info:
