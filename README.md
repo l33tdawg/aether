@@ -1,6 +1,6 @@
-# Aether v3.0 — Smart Contract Security Analysis Framework
+# Aether v3.2 — Smart Contract Security Analysis Framework
 
-**Version 3.0** | [What's New in v3.0](#whats-new-in-v30) | [Changelog](#changelog)
+**Version 3.2** | [What's New in v3.0](#whats-new-in-v30) | [Changelog](#changelog)
 
 Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines 60+ pattern-based static detectors, prompt-driven LLM analysis (GPT/Gemini/Claude), AI-ensemble reasoning, and advanced false-positive filtering into a single persistent full-screen TUI.
 
@@ -297,6 +297,12 @@ python -m pytest tests/ --cov=core --cov-report=html       # With coverage
 ---
 
 ## Changelog
+
+### v3.2 — Job Stats & UI Fixes
+- **Fixed job findings/cost/LLM stats always showing zero** — audit worker now captures the results dict from `run_audit()` to extract findings count; removed `LLMUsageTracker.reset()` that orphaned singleton references; all 4 worker types compute per-job stats from snapshot deltas
+- **Fixed UI repaint artifact on window switch** — replaced scrollable containers with plain `Container` + `overflow: hidden` in JobDetailScreen to prevent stale compositor frames
+- **Moved "Job Details" to border_title** for cleaner metadata panel rendering
+- Removed `CLAUDE.md` from git tracking
 
 ### v3.0 — Fully Inline Textual TUI
 - **Zero `app.suspend()` calls** — the TUI never drops to a raw terminal; every operation runs inline
