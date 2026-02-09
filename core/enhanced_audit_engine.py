@@ -84,12 +84,10 @@ class EnhancedAetherAuditEngine:
         print("🚀 Starting enhanced AetherAudit...", flush=True)
         start_time = time.time()
 
-        # Reset LLM usage tracker for this audit run
-        try:
-            from core.llm_usage_tracker import LLMUsageTracker
-            LLMUsageTracker.reset()
-        except Exception:
-            pass
+        # NOTE: Do NOT reset LLMUsageTracker here — the background AuditRunner
+        # uses snapshot-based deltas on the singleton.  Replacing the instance
+        # would orphan the reference held by the worker thread, causing all
+        # cost / LLM-stats to read as 0.
 
         try:
             # Step 1: Read contract files

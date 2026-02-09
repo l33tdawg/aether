@@ -221,7 +221,7 @@ class AuditRunner:
             from cli.main import AetherCLI
             cli = AetherCLI()
 
-            asyncio.run(
+            results = asyncio.run(
                 cli.run_audit(
                     contract_path=target,
                     output_dir=output_dir,
@@ -233,21 +233,45 @@ class AuditRunner:
                 )
             )
 
-            # Compute cost delta
+            # Compute cost delta from snapshot
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
 
-            findings = job.audit_status.findings_count if job.audit_status else 0
+            # Extract findings from the returned results dict
+            findings = 0
+            if isinstance(results, dict) and "error" not in results:
+                summary = results.get("summary", {})
+                if isinstance(summary, dict) and "total_vulnerabilities" in summary:
+                    findings = summary["total_vulnerabilities"]
+                elif "results" in results:
+                    vulns = results["results"]
+                    if isinstance(vulns, dict):
+                        vulns = vulns.get("vulnerabilities", [])
+                    if isinstance(vulns, list):
+                        findings = len(vulns)
+            # Fall back to stdout-parsed count if higher
+            if job.audit_status and job.audit_status.findings_count > findings:
+                findings = job.audit_status.findings_count
+
+            # Store per-job LLM stats from snapshot deltas
+            if job.audit_status:
+                calls_delta = snapshot_after["total_calls"] - snapshot_before["total_calls"]
+                job.audit_status.llm_calls = calls_delta
+                job.audit_status.llm_cost = cost_delta
+
             self._job_manager.complete_job(job.job_id, findings, cost_delta)
 
         except Exception as e:
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
+            # Store per-job LLM stats even on failure
+            if job.audit_status:
+                calls_delta = snapshot_after["total_calls"] - snapshot_before["total_calls"]
+                job.audit_status.llm_calls = calls_delta
+                job.audit_status.llm_cost = cost_delta
             self._job_manager.fail_job(job.job_id, str(e)[:200], cost_delta)
 
         finally:
-            if job.audit_status:
-                job.audit_status.sync_llm_stats()
             if self._demuxer:
                 self._demuxer.unregister()
             if self._stderr_demuxer:
@@ -326,16 +350,22 @@ class AuditRunner:
 
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
+            if job.audit_status:
+                calls_delta = snapshot_after["total_calls"] - snapshot_before["total_calls"]
+                job.audit_status.llm_calls = calls_delta
+                job.audit_status.llm_cost = cost_delta
             self._job_manager.complete_job(job.job_id, 0, cost_delta)
 
         except Exception as e:
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
+            if job.audit_status:
+                calls_delta = snapshot_after["total_calls"] - snapshot_before["total_calls"]
+                job.audit_status.llm_calls = calls_delta
+                job.audit_status.llm_cost = cost_delta
             self._job_manager.fail_job(job.job_id, str(e)[:200], cost_delta)
 
         finally:
-            if job.audit_status:
-                job.audit_status.sync_llm_stats()
             if self._demuxer:
                 self._demuxer.unregister()
             if self._stderr_demuxer:
@@ -405,16 +435,22 @@ class AuditRunner:
 
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
+            if job.audit_status:
+                calls_delta = snapshot_after["total_calls"] - snapshot_before["total_calls"]
+                job.audit_status.llm_calls = calls_delta
+                job.audit_status.llm_cost = cost_delta
             self._job_manager.complete_job(job.job_id, 0, cost_delta)
 
         except Exception as e:
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
+            if job.audit_status:
+                calls_delta = snapshot_after["total_calls"] - snapshot_before["total_calls"]
+                job.audit_status.llm_calls = calls_delta
+                job.audit_status.llm_cost = cost_delta
             self._job_manager.fail_job(job.job_id, str(e)[:200], cost_delta)
 
         finally:
-            if job.audit_status:
-                job.audit_status.sync_llm_stats()
             if self._demuxer:
                 self._demuxer.unregister()
             if self._stderr_demuxer:
@@ -487,17 +523,27 @@ class AuditRunner:
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
 
+            # Use stdout-parsed findings (GitHub audits don't return a results dict)
             findings = job.audit_status.findings_count if job.audit_status else 0
+
+            # Store per-job LLM stats from snapshot deltas
+            if job.audit_status:
+                calls_delta = snapshot_after["total_calls"] - snapshot_before["total_calls"]
+                job.audit_status.llm_calls = calls_delta
+                job.audit_status.llm_cost = cost_delta
+
             self._job_manager.complete_job(job.job_id, findings, cost_delta)
 
         except Exception as e:
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
+            if job.audit_status:
+                calls_delta = snapshot_after["total_calls"] - snapshot_before["total_calls"]
+                job.audit_status.llm_calls = calls_delta
+                job.audit_status.llm_cost = cost_delta
             self._job_manager.fail_job(job.job_id, str(e)[:200], cost_delta)
 
         finally:
-            if job.audit_status:
-                job.audit_status.sync_llm_stats()
             if self._demuxer:
                 self._demuxer.unregister()
             if self._stderr_demuxer:
