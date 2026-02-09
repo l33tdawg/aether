@@ -142,9 +142,6 @@ Flow nodes live in `core/nodes/`, validators in `core/validators/`, config in `c
 - Heavy use of asyncio throughout — async tests use `pytest-asyncio`
 - The AI ensemble feature is experimental
 - Slither fully removed in v2.1; pattern-based detectors + Foundry ABI + regex are the only analysis tools
-- **NEVER call `LLMUsageTracker.reset()` from inside audit/worker code** — the singleton pattern means external code (AuditRunner) holds references to the instance; `reset()` replaces it, orphaning those references and causing all snapshot deltas to read 0. Use snapshot-based deltas (before/after) instead.
-- **Always capture return values from `run_audit()`** — it returns a results dict with `summary.total_vulnerabilities`; discarding it forces reliance on fragile stdout regex parsing
-- **Per-job LLM stats** — compute from `tracker.snapshot()` deltas (total_calls, total_cost), not from `sync_llm_stats()` which reads global totals
 
 ## Deleted Files (v3.0)
 - `main.py` — CLI entry point (replaced by `aether.py` TUI)
