@@ -2,7 +2,7 @@
 Deep Analysis Engine — Multi-pass LLM analysis pipeline.
 
 Replaces single-shot "find bugs" prompts with a structured 6-pass pipeline
-that mirrors how elite auditors think:
+that mirrors how professional auditors approach code review:
 
     Pass 1: Protocol Understanding  (cheap model)
     Pass 2: Attack Surface Mapping  (cheap model)

@@ -6,7 +6,7 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
 
 ## What's New in v3.5
 
-**Elite-Level Deep Analysis Engine** — Aether v3.5 fundamentally transforms how the tool finds vulnerabilities, moving from a one-shot "find bugs" LLM call to a structured 6-pass pipeline that mirrors how elite auditors think: understand first, then systematically attack.
+**Deep Analysis Engine** — Aether v3.5 fundamentally transforms how the tool finds vulnerabilities, moving from a one-shot "find bugs" LLM call to a structured 6-pass pipeline that mirrors how professional auditors approach code review: understand first, then systematically attack.
 
 ### Deep Analysis Engine (6-Pass LLM Pipeline)
 
@@ -380,7 +380,7 @@ python -m pytest tests/ --cov=core --cov-report=html       # With coverage
 
 ## Changelog
 
-### v3.5 — Elite-Level Deep Analysis Engine
+### v3.5 — Deep Analysis Engine
 - **6-pass deep analysis pipeline** — replaces one-shot LLM calls with structured multi-pass reasoning: Protocol Understanding → Attack Surface Mapping → Invariant Violation Analysis → Cross-Function Interaction → Adversarial Modeling → Boundary & Edge Cases. Each pass receives accumulated context from prior passes. Passes 1-2 cached by content hash for fast re-audits
 - **Protocol archetype detection** — automatically identifies protocol type (ERC-4626 Vault, Lending Pool, DEX/AMM, Bridge, Staking, Governance, Oracle, NFT Marketplace, Token, Orderbook) with per-archetype vulnerability checklists drawn from real-world exploits
 - **Exploit knowledge base** — 50+ categorized exploit patterns across 9 categories (Inflation/Share, Reentrancy, Oracle, Governance, Bridge, Precision/Rounding, Access Control, Economic/DeFi, Logic) replacing the static 10-pattern list. Each pattern includes code indicators, missing protections, step-by-step exploit mechanism, real-world precedents with dollar amounts, and archetype applicability
