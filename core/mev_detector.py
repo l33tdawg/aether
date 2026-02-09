@@ -82,14 +82,14 @@ class MEVDetector:
                 {
                     "pattern": r"(swap|exchange|trade)\s*\([^)]*amountIn[^)]*amountOutMin[^)]*\)",
                     "severity": "medium",
-                    "confidence": 0.8,
-                    "description": "Trading function vulnerable to sandwich attacks",
-                    "attack_vector": "MEV sandwich attack",
+                    "confidence": 0.5,
+                    "description": "Trading function - checking for adequate sandwich attack protections",
+                    "attack_vector": "MEV sandwich attack via insufficient slippage controls",
                     "financial_impact": "Medium - MEV extraction from users",
                     "exploit_complexity": "High",
                     "mev_potential": "$1,000-$50,000 per attack",
                     "poc_suggestion": "Demonstrate sandwich attack with front-running",
-                    "fix_suggestion": "Add MEV protection mechanisms and slippage controls",
+                    "fix_suggestion": "Add MEV protection: enforce nonzero minAmountOut, add deadline check",
                     "mev_category": "Sandwich Attack",
                     "extraction_method": "Front-run + Back-run",
                     "target_protocol": "DEX",
@@ -97,192 +97,136 @@ class MEVDetector:
                     "mitigation_strategies": ["Private mempools", "Slippage protection", "MEV protection"],
                     "historical_examples": ["Uniswap Sandwich Attacks", "SushiSwap MEV Extraction"],
                     "gas_optimization": "High gas price for front-running",
-                    "mempool_monitoring": "Monitor for large trades"
+                    "mempool_monitoring": "Monitor for large trades",
+                    "required_protections": [
+                        r"amountOutMin\s*>\s*0|minAmountOut\s*>\s*0|require\s*\([^)]*amountOutMin",
+                        r"deadline|block\.timestamp\s*<=|expiry",
+                    ],
+                    "protection_reduces_confidence": [
+                        r"slippage|priceImpact|minAmountOut|amountOutMin",
+                    ],
                 },
-                {
-                    "pattern": r"(slippage|priceImpact|minAmountOut)",
-                    "severity": "low",
-                    "confidence": 0.6,
-                    "description": "Slippage protection mechanism",
-                    "attack_vector": "Slippage manipulation",
-                    "financial_impact": "Low - Slippage attacks",
-                    "exploit_complexity": "Low",
-                    "mev_potential": "$500-$5,000 per attack",
-                    "poc_suggestion": "Show slippage attack with price manipulation",
-                    "fix_suggestion": "Improve slippage protection and add dynamic pricing",
-                    "mev_category": "Slippage Attack",
-                    "extraction_method": "Price manipulation",
-                    "target_protocol": "DEX",
-                    "attack_prerequisites": ["Price manipulation", "Slippage tolerance"],
-                    "mitigation_strategies": ["Dynamic slippage", "Price impact limits", "TWAP pricing"]
-                }
             ],
-            
+
             "arbitrage_opportunity": [
                 {
                     "pattern": r"(getAmountOut|getAmountIn|getReserves)\s*\([^)]*\)",
-                    "severity": "medium",
-                    "confidence": 0.7,
-                    "description": "Price calculation function - potential for arbitrage",
-                    "attack_vector": "Cross-protocol arbitrage",
-                    "financial_impact": "Medium - Arbitrage opportunities",
+                    "severity": "low",
+                    "confidence": 0.4,
+                    "description": "Price calculation function - normal DeFi primitive, not a vulnerability by itself",
+                    "attack_vector": "Cross-protocol arbitrage (informational only)",
+                    "financial_impact": "Low - Arbitrage is a normal market mechanism",
                     "exploit_complexity": "High",
                     "mev_potential": "$1,000-$100,000 per opportunity",
-                    "poc_suggestion": "Demonstrate arbitrage with price differences",
-                    "fix_suggestion": "Add arbitrage protection and price synchronization",
+                    "poc_suggestion": "N/A - arbitrage opportunities are market features",
+                    "fix_suggestion": "Consider TWAP pricing for critical operations",
                     "mev_category": "Arbitrage",
                     "extraction_method": "Price difference exploitation",
                     "target_protocol": "DEX",
-                    "attack_prerequisites": ["Multiple protocol access", "Price discrepancies", "Arbitrage opportunity"],
-                    "mitigation_strategies": ["Cross-protocol validation", "Arbitrage limits", "Price synchronization"]
+                    "attack_prerequisites": ["Multiple protocol access", "Price discrepancies"],
+                    "mitigation_strategies": ["Cross-protocol validation", "TWAP pricing"],
+                    "required_protections": [],
+                    "protection_reduces_confidence": [
+                        r"twap|timeWeighted|observe\(|consult\(",
+                    ],
                 },
-                {
-                    "pattern": r"(getPrice|getRate|getExchangeRate)\s*\([^)]*\)",
-                    "severity": "medium",
-                    "confidence": 0.7,
-                    "description": "Price retrieval function - potential for arbitrage",
-                    "attack_vector": "Price arbitrage",
-                    "financial_impact": "Medium - Price arbitrage",
-                    "exploit_complexity": "Medium",
-                    "mev_potential": "$500-$25,000 per opportunity",
-                    "poc_suggestion": "Show price arbitrage between protocols",
-                    "fix_suggestion": "Add price validation and arbitrage protection",
-                    "mev_category": "Price Arbitrage",
-                    "extraction_method": "Price difference exploitation",
-                    "target_protocol": "Universal",
-                    "attack_prerequisites": ["Price discrepancies", "Arbitrage opportunity"],
-                    "mitigation_strategies": ["Price validation", "Arbitrage limits", "Price synchronization"]
-                }
             ],
-            
+
             "liquidation_front_run": [
                 {
                     "pattern": r"(liquidate|liquidationCall)\s*\([^)]*collateral[^)]*debt[^)]*\)",
-                    "severity": "high",
-                    "confidence": 0.8,
-                    "description": "Liquidation function - vulnerable to front-running",
+                    "severity": "medium",
+                    "confidence": 0.5,
+                    "description": "Liquidation function - checking for front-running protections",
                     "attack_vector": "Liquidation front-running",
-                    "financial_impact": "High - Unfair liquidations",
+                    "financial_impact": "Medium - Unfair liquidation extraction",
                     "exploit_complexity": "Medium",
                     "mev_potential": "$10,000-$250,000 per liquidation",
                     "poc_suggestion": "Demonstrate liquidation front-running",
-                    "fix_suggestion": "Add liquidation protection and front-running prevention",
+                    "fix_suggestion": "Add liquidation delay, batch liquidations, or private mempool submission",
                     "mev_category": "Liquidation Front-run",
                     "extraction_method": "Front-running liquidation",
                     "target_protocol": "Lending Protocol",
-                    "attack_prerequisites": ["Liquidation opportunity", "Front-running capability", "Gas optimization"],
-                    "mitigation_strategies": ["Liquidation protection", "Front-running prevention", "Gas optimization"]
+                    "attack_prerequisites": ["Liquidation opportunity", "Front-running capability"],
+                    "mitigation_strategies": ["Liquidation protection", "Batch liquidation", "Gas auction"],
+                    "required_protections": [
+                        r"liquidationDelay|batchLiquidat|liquidationQueue",
+                    ],
+                    "protection_reduces_confidence": [
+                        r"onlyKeeper|onlyLiquidator|whitelist",
+                    ],
                 },
-                {
-                    "pattern": r"(healthFactor|collateralRatio)\s*[<>=]\s*[0-9]",
-                    "severity": "medium",
-                    "confidence": 0.6,
-                    "description": "Health factor check - potential for front-running",
-                    "attack_vector": "Health factor front-running",
-                    "financial_impact": "Medium - Liquidation timing",
-                    "exploit_complexity": "Medium",
-                    "mev_potential": "$1,000-$50,000 per opportunity",
-                    "poc_suggestion": "Show health factor front-running",
-                    "fix_suggestion": "Add health factor validation and front-running protection",
-                    "mev_category": "Health Factor Front-run",
-                    "extraction_method": "Front-running health factor",
-                    "target_protocol": "Lending Protocol",
-                    "attack_prerequisites": ["Health factor monitoring", "Front-running capability"],
-                    "mitigation_strategies": ["Health factor validation", "Front-running protection"]
-                }
             ],
-            
+
             "governance_front_run": [
                 {
-                    "pattern": r"(propose|execute|vote)\s*\([^)]*\)",
-                    "severity": "high",
-                    "confidence": 0.8,
-                    "description": "Governance function - vulnerable to front-running",
-                    "attack_vector": "Governance front-running",
+                    "pattern": r"(propose|execute)\s*\([^)]*proposalId[^)]*\)",
+                    "severity": "medium",
+                    "confidence": 0.5,
+                    "description": "Governance function - checking for timelock and front-running protections",
+                    "attack_vector": "Governance front-running or flash-loan voting",
                     "financial_impact": "High - Governance manipulation",
                     "exploit_complexity": "High",
                     "mev_potential": "$10,000-$500,000 per attack",
                     "poc_suggestion": "Demonstrate governance front-running",
-                    "fix_suggestion": "Add governance protection and front-running prevention",
+                    "fix_suggestion": "Add timelock, voting delay, and snapshot-based voting power",
                     "mev_category": "Governance Front-run",
                     "extraction_method": "Front-running governance",
                     "target_protocol": "Governance Protocol",
-                    "attack_prerequisites": ["Governance access", "Front-running capability", "Voting power"],
-                    "mitigation_strategies": ["Governance protection", "Front-running prevention", "Voting delays"]
+                    "attack_prerequisites": ["Governance access", "Front-running capability"],
+                    "mitigation_strategies": ["Timelock", "Voting delay", "Snapshot voting"],
+                    "required_protections": [
+                        r"timelock|TimelockController|delay|votingDelay",
+                    ],
+                    "protection_reduces_confidence": [
+                        r"snapshot|getVotes\(.*blockNumber|getPastVotes",
+                    ],
                 },
-                {
-                    "pattern": r"(quorum|majority|threshold|votingPower)",
-                    "severity": "medium",
-                    "confidence": 0.6,
-                    "description": "Governance threshold - potential for front-running",
-                    "attack_vector": "Threshold front-running",
-                    "financial_impact": "Medium - Voting manipulation",
-                    "exploit_complexity": "Medium",
-                    "mev_potential": "$1,000-$50,000 per opportunity",
-                    "poc_suggestion": "Show threshold front-running",
-                    "fix_suggestion": "Add threshold validation and front-running protection",
-                    "mev_category": "Threshold Front-run",
-                    "extraction_method": "Front-running threshold",
-                    "target_protocol": "Governance Protocol",
-                    "attack_prerequisites": ["Threshold monitoring", "Front-running capability"],
-                    "mitigation_strategies": ["Threshold validation", "Front-running protection"]
-                }
             ],
-            
+
             "mev_extraction": [
                 {
                     "pattern": r"(swap|exchange|trade).*(swap|exchange|trade)",
-                    "severity": "medium",
-                    "confidence": 0.7,
-                    "description": "Multiple trading functions - potential for MEV extraction",
-                    "attack_vector": "MEV extraction",
-                    "financial_impact": "Medium - MEV extraction",
+                    "severity": "low",
+                    "confidence": 0.4,
+                    "description": "Multiple trading operations - check for atomic MEV protections",
+                    "attack_vector": "Multi-step MEV extraction",
+                    "financial_impact": "Low-Medium - MEV extraction",
                     "exploit_complexity": "High",
                     "mev_potential": "$1,000-$100,000 per extraction",
-                    "poc_suggestion": "Demonstrate MEV extraction",
-                    "fix_suggestion": "Add MEV protection and extraction prevention",
+                    "poc_suggestion": "Demonstrate multi-step MEV extraction",
+                    "fix_suggestion": "Add MEV protection and private transaction submission",
                     "mev_category": "MEV Extraction",
                     "extraction_method": "Multi-transaction MEV",
                     "target_protocol": "DEX",
-                    "attack_prerequisites": ["Multiple transaction access", "MEV opportunity", "Gas optimization"],
-                    "mitigation_strategies": ["MEV protection", "Extraction prevention", "Gas optimization"]
+                    "attack_prerequisites": ["Multiple transaction access", "MEV opportunity"],
+                    "mitigation_strategies": ["MEV protection", "Private mempool", "Flashbots"],
+                    "required_protections": [],
+                    "protection_reduces_confidence": [
+                        r"private|flashbots|mev.protect|commit.*reveal",
+                    ],
                 },
-                {
-                    "pattern": r"(getAmountOut|getAmountIn).*(getAmountOut|getAmountIn)",
-                    "severity": "medium",
-                    "confidence": 0.6,
-                    "description": "Multiple price calculations - potential for MEV",
-                    "attack_vector": "Price MEV extraction",
-                    "financial_impact": "Medium - Price MEV",
-                    "exploit_complexity": "Medium",
-                    "mev_potential": "$500-$25,000 per extraction",
-                    "poc_suggestion": "Show price MEV extraction",
-                    "fix_suggestion": "Add price MEV protection",
-                    "mev_category": "Price MEV",
-                    "extraction_method": "Price calculation MEV",
-                    "target_protocol": "DEX",
-                    "attack_prerequisites": ["Price calculation access", "MEV opportunity"],
-                    "mitigation_strategies": ["Price MEV protection", "Calculation limits"]
-                }
             ],
-            
+
             "flashbot_bypass": [
                 {
-                    "pattern": r"(private|flashbots|mev-protect)",
+                    "pattern": r"(block\.coinbase|tx\.gasprice\s*[><=])",
                     "severity": "low",
-                    "confidence": 0.5,
-                    "description": "Flashbot protection mechanism",
-                    "attack_vector": "Flashbot bypass",
-                    "financial_impact": "Low - Flashbot bypass",
+                    "confidence": 0.4,
+                    "description": "Block-level MEV indicator - informational",
+                    "attack_vector": "Miner/validator MEV extraction",
+                    "financial_impact": "Low - Validator MEV",
                     "exploit_complexity": "High",
                     "mev_potential": "$100-$5,000 per bypass",
-                    "poc_suggestion": "Show flashbot bypass",
-                    "fix_suggestion": "Improve flashbot protection",
-                    "mev_category": "Flashbot Bypass",
-                    "extraction_method": "Flashbot bypass",
+                    "poc_suggestion": "Show validator MEV extraction",
+                    "fix_suggestion": "Use commit-reveal or private transaction submission",
+                    "mev_category": "Validator MEV",
+                    "extraction_method": "Block-level MEV",
                     "target_protocol": "Universal",
-                    "attack_prerequisites": ["Flashbot access", "Bypass capability"],
-                    "mitigation_strategies": ["Enhanced flashbot protection", "Bypass prevention"]
+                    "attack_prerequisites": ["Validator access"],
+                    "mitigation_strategies": ["Commit-reveal", "Private mempool"],
+                    "required_protections": [],
+                    "protection_reduces_confidence": [],
                 }
             ]
         }
@@ -491,7 +435,16 @@ class MEVDetector:
 
     async def _validate_mev_vulnerability(self, vulnerability: MEVVulnerability, content: str) -> bool:
         """Validate MEV vulnerability with additional context checks."""
-        
+
+        # Check if the pattern has protection indicators that reduce confidence
+        # (These are defined per-pattern in the mev_patterns dict)
+        vuln_type_str = vulnerability.vuln_type.value
+        for pattern_group in self.mev_patterns.get(vuln_type_str, []):
+            for reduce_pattern in pattern_group.get("protection_reduces_confidence", []):
+                if re.search(reduce_pattern, content, re.IGNORECASE):
+                    vulnerability.confidence *= 0.4
+                    vulnerability.context["protection_indicator_found"] = reduce_pattern
+
         # Check for MEV protection patterns
         protection_patterns = {
             "sandwich_attack": [
@@ -529,7 +482,7 @@ class MEVDetector:
                     vulnerability.context["protection_found"] = pattern
         
         # Only report vulnerabilities with sufficient confidence
-        return vulnerability.confidence > 0.3
+        return vulnerability.confidence > 0.5
 
     async def _analyze_cross_protocol_mev(self, content: str, contract_path: str) -> List[MEVVulnerability]:
         """Analyze cross-protocol MEV patterns."""

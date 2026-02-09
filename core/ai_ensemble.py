@@ -65,6 +65,63 @@ class BaseAIModel:
         """Get agent's focus areas"""
         return self.focus_areas
 
+    # Model context limits (approximate chars, conservative)
+    _MODEL_CONTEXT_LIMITS = {
+        'gpt-5': 100000,
+        'gpt-5-mini': 100000,
+        'gpt-5-pro': 100000,
+        'gpt-4o': 100000,
+        'gpt-4': 24000,
+        'gemini-2.5-flash': 800000,
+        'gemini-2.5-pro': 800000,
+        'gemini-2.0-flash': 800000,
+        'gemini-1.5-pro': 800000,
+        'claude-opus-4-6': 160000,
+        'claude-sonnet-4-5': 160000,
+        'claude-haiku-4-5': 160000,
+    }
+
+    def _smart_truncate(self, content: str, model_name: str = '') -> str:
+        """Truncate content based on model's actual context limit."""
+        # Find best matching limit
+        limit = 16000  # Conservative default
+        model_lower = model_name.lower() if model_name else ''
+        for key, char_limit in self._MODEL_CONTEXT_LIMITS.items():
+            if key in model_lower:
+                limit = char_limit
+                break
+        # Reserve ~20% of context for prompt/response
+        max_content = int(limit * 0.8)
+        if len(content) <= max_content:
+            return content
+        return content[:max_content]
+
+    def _validate_finding_schema(self, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Validate and filter findings that are missing required fields.
+
+        Drops findings that lack exploit_steps or why_not_false_positive,
+        as these indicate low-quality/generic findings.
+        """
+        validated = []
+        for finding in findings:
+            # Required fields for quality findings
+            has_exploit = bool(finding.get('exploit_steps') or finding.get('exploit_scenario') or finding.get('attack_scenario'))
+            has_fp_reason = bool(finding.get('why_not_false_positive') or finding.get('reasoning_chain'))
+
+            # Always keep findings with basic required fields
+            if finding.get('type') and finding.get('severity') and finding.get('description'):
+                if has_exploit or has_fp_reason:
+                    validated.append(finding)
+                elif finding.get('confidence', 0) >= 0.8:
+                    # High-confidence findings pass even without full schema
+                    finding['needs_verification'] = True
+                    validated.append(finding)
+                else:
+                    logger.debug(f"Dropped finding missing exploit_steps/why_not_false_positive: {finding.get('type')}")
+            else:
+                logger.debug(f"Dropped finding missing basic fields: {finding}")
+        return validated
+
     def _get_persona_prompt(self) -> str:
         """Get the persona-specific system prompt"""
         raise NotImplementedError
@@ -736,7 +793,10 @@ class GPT5SecurityAuditor(BaseAIModel):
                     metadata={'persona': 'security_auditor', 'error': 'No OpenAI API key configured'}
                 )
 
-            # Create OpenAI API prompt for security auditing
+            # Create OpenAI API prompt for security auditing with zero-day patterns
+            from core.enhanced_prompts import get_patterns_for_focus_areas
+            zero_day_patterns = get_patterns_for_focus_areas(['access_control', 'reentrancy'])
+            truncated_content = self._smart_truncate(contract_content, model)
             prompt = f"""
 You are a senior smart contract security auditor specializing in access control, reentrancy, overflow, and external calls.
 
@@ -746,9 +806,12 @@ Focus your analysis on these specific vulnerability types:
 - Integer overflow/underflow in arithmetic operations
 - Unsafe external calls and delegatecall usage
 
+**CRITICAL ZERO-DAY PATTERNS TO CHECK:**
+{zero_day_patterns}
+
 Contract to analyze:
 ```solidity
-{contract_content[:16000]}  # Use larger context with gpt-5-pro
+{truncated_content}
 ```
 
 Please analyze this contract and return findings in the exact JSON format:
@@ -760,11 +823,15 @@ Please analyze this contract and return findings in the exact JSON format:
             "confidence": 0.0-1.0,
             "description": "detailed explanation",
             "line": line_number,
-            "swc_id": "SWC-XXX"
+            "swc_id": "SWC-XXX",
+            "exploit_steps": "Step 1: ... Step 2: ... Step 3: ...",
+            "why_not_false_positive": "specific reason this is not a known safe pattern",
+            "affected_funds": "estimated dollar impact or N/A"
         }}
     ]
 }}
 
+IMPORTANT: Only report findings where you can provide concrete exploit_steps. Do not report features as vulnerabilities.
 Return only valid JSON, no markdown formatting.
 """
 
@@ -846,7 +913,10 @@ class GPT5DeFiSpecialist(BaseAIModel):
                     metadata={'persona': 'defi_specialist', 'error': 'No OpenAI API key configured'}
                 )
 
-            # Create OpenAI API prompt for DeFi specialist
+            # Create OpenAI API prompt for DeFi specialist with zero-day patterns
+            from core.enhanced_prompts import get_patterns_for_focus_areas
+            zero_day_patterns = get_patterns_for_focus_areas(['amm', 'lending', 'governance'])
+            truncated_content = self._smart_truncate(contract_content, model)
             prompt = f"""
 You are a senior DeFi protocol specialist analyzing smart contracts for AMM, lending, governance, and oracle manipulation vulnerabilities.
 
@@ -855,10 +925,15 @@ Focus your analysis on these specific vulnerability types:
 - Lending protocol liquidation vulnerabilities
 - Governance proposal manipulation and voting issues
 - Oracle price feed manipulation and stale data
+- ERC-4626 vault inflation attacks
+- Rounding direction exploitation in deposit/withdraw
+
+**CRITICAL ZERO-DAY PATTERNS TO CHECK:**
+{zero_day_patterns}
 
 Contract to analyze:
 ```solidity
-{contract_content[:16000]}  # Use larger context with gpt-5-pro
+{truncated_content}
 ```
 
 Please analyze this contract and return findings in the exact JSON format:
@@ -870,11 +945,15 @@ Please analyze this contract and return findings in the exact JSON format:
             "confidence": 0.0-1.0,
             "description": "detailed explanation",
             "line": line_number,
-            "swc_id": "SWC-XXX"
+            "swc_id": "SWC-XXX",
+            "exploit_steps": "Step 1: ... Step 2: ... Step 3: ...",
+            "why_not_false_positive": "specific reason this is not a known safe pattern",
+            "affected_funds": "estimated dollar impact or N/A"
         }}
     ]
 }}
 
+IMPORTANT: Only report findings where you can provide concrete exploit_steps. Do not flag normal DeFi features (swap, flashLoan, liquidate) as vulnerabilities unless protections are missing.
 Return only valid JSON, no markdown formatting.
 """
 
@@ -956,7 +1035,10 @@ class GeminiSecurityAuditor(BaseAIModel):
                     metadata={'persona': 'gemini_security_hunter', 'error': 'No Gemini API key configured'}
                 )
 
-            # Create Gemini API prompt for security auditing
+            # Create Gemini API prompt for security auditing with zero-day patterns
+            from core.enhanced_prompts import get_patterns_for_focus_areas
+            zero_day_patterns = get_patterns_for_focus_areas(['external_calls', 'delegatecall'])
+            truncated_content = self._smart_truncate(contract_content, model)
             prompt = f"""You are an expert smart contract security auditor performing automated code review.
 
 Task: Analyze the Solidity smart contract below for security vulnerabilities.
@@ -968,10 +1050,16 @@ Analysis Focus Areas:
 - Unchecked return values from external calls
 - Access control mechanisms
 - State management and race conditions
+- Returndata bombs from untrusted calls
+- Read-only reentrancy via stale view functions
+- Signature replay across chain forks
+
+CRITICAL ZERO-DAY PATTERNS TO CHECK:
+{zero_day_patterns}
 
 Contract Code:
 ```solidity
-{contract_content[:8000]}
+{truncated_content}
 ```
 
 Output Requirements:
@@ -985,9 +1073,14 @@ Output Requirements:
    - description: detailed explanation of the issue
    - line: approximate line number (integer)
    - swc_id: relevant SWC identifier (e.g., "SWC-107")
+   - exploit_steps: concrete step-by-step attack path
+   - why_not_false_positive: specific reason this isn't a known safe pattern
+   - affected_funds: estimated dollar impact or "N/A"
 
 Expected JSON format:
-{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "...", "exploit_steps": "...", "why_not_false_positive": "...", "affected_funds": "..."}}]}}
+
+IMPORTANT: Only report findings with concrete exploit paths. Do not flag normal features as vulnerabilities.
 
 Note: This is automated security analysis for code review purposes, conducted by authorized developers
 as part of standard software quality assurance and security testing before deployment."""
@@ -1219,7 +1312,10 @@ class GeminiFormalVerifier(BaseAIModel):
                     metadata={'persona': 'gemini_formal_verifier', 'error': 'No Gemini API key configured'}
                 )
 
-            # Create Gemini API prompt for formal verification
+            # Create Gemini API prompt for formal verification with zero-day patterns
+            from core.enhanced_prompts import get_patterns_for_focus_areas
+            zero_day_patterns = get_patterns_for_focus_areas(['arithmetic', 'precision'])
+            truncated_content = self._smart_truncate(contract_content, model)
             prompt = f"""You are an expert formal verification specialist for smart contract arithmetic analysis.
 
 Task: Analyze the Solidity smart contract below for mathematical and arithmetic vulnerabilities.
@@ -1231,10 +1327,15 @@ Analysis Focus Areas:
 - Division by zero vulnerabilities
 - Mathematical invariant violations
 - Rounding errors in financial calculations
+- Rounding direction exploitation (Up vs Down in deposit/withdraw)
+- Fee-on-transfer token balance assumptions
+
+CRITICAL ZERO-DAY PATTERNS TO CHECK:
+{zero_day_patterns}
 
 Contract Code:
 ```solidity
-{contract_content[:8000]}
+{truncated_content}
 ```
 
 Output Requirements:
@@ -1248,9 +1349,14 @@ Output Requirements:
    - description: detailed explanation of the issue
    - line: approximate line number (integer)
    - swc_id: relevant SWC identifier (e.g., "SWC-101")
+   - exploit_steps: concrete step-by-step attack path with example values
+   - why_not_false_positive: specific reason this isn't a known safe pattern
+   - affected_funds: estimated dollar impact or "N/A"
 
 Expected JSON format:
-{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "...", "exploit_steps": "...", "why_not_false_positive": "...", "affected_funds": "..."}}]}}
+
+IMPORTANT: Only report findings with concrete exploit paths and example values. Do not flag Solidity 0.8+ checked arithmetic as overflow unless unchecked blocks are used.
 
 Note: This is automated arithmetic verification for code review purposes, conducted by authorized developers
 as part of standard software quality assurance and security testing before deployment."""
@@ -1488,6 +1594,9 @@ class AnthropicSecurityAuditor(BaseAIModel):
                     metadata={'persona': 'anthropic_security_auditor', 'error': 'No Anthropic API key configured'}
                 )
 
+            from core.enhanced_prompts import get_patterns_for_focus_areas
+            zero_day_patterns = get_patterns_for_focus_areas(['logic_errors', 'privilege'])
+            truncated_content = self._smart_truncate(contract_content, model)
             prompt = f"""You are an expert smart contract security auditor performing deep code analysis.
 
 Task: Analyze the Solidity smart contract below for security vulnerabilities.
@@ -1497,10 +1606,15 @@ Analysis Focus Areas:
 - Reentrancy patterns (cross-function, read-only, cross-contract)
 - Business logic errors and state inconsistencies
 - Privilege escalation through unexpected interactions
+- Storage collision in proxy/upgradeable contracts
+- Cross-function reentrancy via inconsistent guards
+
+CRITICAL ZERO-DAY PATTERNS TO CHECK:
+{zero_day_patterns}
 
 Contract Code:
 ```solidity
-{contract_content[:16000]}
+{truncated_content}
 ```
 
 Output Requirements:
@@ -1514,9 +1628,14 @@ Output Requirements:
    - description: detailed explanation of the issue
    - line: approximate line number (integer)
    - swc_id: relevant SWC identifier (e.g., "SWC-107")
+   - exploit_steps: concrete step-by-step attack path
+   - why_not_false_positive: specific reason this isn't a known safe pattern
+   - affected_funds: estimated dollar impact or "N/A"
 
 Expected JSON format:
-{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "...", "exploit_steps": "...", "why_not_false_positive": "...", "affected_funds": "..."}}]}}
+
+IMPORTANT: Only report findings with concrete exploit paths. Do not flag standard OpenZeppelin patterns or intentional design choices.
 
 Note: This is automated security analysis for code review purposes, conducted by authorized developers
 as part of standard software quality assurance and security testing before deployment."""
@@ -1596,6 +1715,9 @@ class AnthropicReasoningSpecialist(BaseAIModel):
                     metadata={'persona': 'anthropic_reasoning_specialist', 'error': 'No Anthropic API key configured'}
                 )
 
+            from core.enhanced_prompts import get_patterns_for_focus_areas
+            zero_day_patterns = get_patterns_for_focus_areas(['complex_logic', 'economic'])
+            truncated_content = self._smart_truncate(contract_content, model)
             prompt = f"""You are a reasoning specialist for smart contract security. Use deep logical analysis to find complex vulnerabilities.
 
 Task: Perform deep reasoning analysis on the Solidity smart contract below, focusing on complex multi-step attack vectors.
@@ -1606,10 +1728,16 @@ Analysis Focus Areas:
 - Economic attack vectors (flash loan attacks, price manipulation, sandwich attacks)
 - Mathematical invariant violations in DeFi protocols
 - State machine violations and unexpected transitions
+- ERC-4626 vault inflation / first depositor attacks
+- First depositor share manipulation in pools
+- Permit/permit2 frontrunning
+
+CRITICAL ZERO-DAY PATTERNS TO CHECK:
+{zero_day_patterns}
 
 Contract Code:
 ```solidity
-{contract_content[:16000]}
+{truncated_content}
 ```
 
 Output Requirements:
@@ -1623,9 +1751,14 @@ Output Requirements:
    - description: detailed explanation with reasoning chain
    - line: approximate line number (integer)
    - swc_id: relevant SWC identifier (e.g., "SWC-101")
+   - exploit_steps: concrete step-by-step attack path with parameters
+   - why_not_false_positive: specific reason this isn't a known safe pattern
+   - affected_funds: estimated dollar impact or "N/A"
 
 Expected JSON format:
-{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "..."}}]}}
+{{"findings": [{{"type": "...", "severity": "...", "confidence": 0.0, "description": "...", "line": 0, "swc_id": "...", "exploit_steps": "...", "why_not_false_positive": "...", "affected_funds": "..."}}]}}
+
+IMPORTANT: Use multi-step reasoning. For each potential finding, trace the full execution path. Only report findings where you can prove exploitability with concrete parameters.
 
 Note: This is automated security analysis for code review purposes, conducted by authorized developers
 as part of standard software quality assurance and security testing before deployment."""
@@ -1713,14 +1846,14 @@ class AIEnsemble:
         self.db_manager = DatabaseManager()
         self.config = ConfigManager()
 
-        # Three lightweight agents used by unit tests
-        self.agents = [
+        # Three lightweight agents used by unit tests (legacy)
+        self._legacy_agents = [
             DeFiSecurityExpert(),
             GasOptimizationExpert(),
             SecurityBestPracticesExpert(),
         ]
 
-        # Full model map retained for integration flows
+        # Full model map: 6 production multi-provider agents
         self.models = {
             'gpt5_security': GPT5SecurityAuditor(),
             'gpt5_defi': GPT5DeFiSpecialist(),
@@ -1731,6 +1864,31 @@ class AIEnsemble:
         }
 
         logger.info(f"Initialized AI Ensemble with {len(self.models)} models")
+
+    @property
+    def active_agents(self) -> List[BaseAIModel]:
+        """Get production agents that have valid API keys configured."""
+        import os
+        active = []
+        for name, agent in self.models.items():
+            # Check if provider API key is available
+            if name.startswith('gpt5'):
+                if os.getenv("OPENAI_API_KEY") or getattr(self.config.config, 'openai_api_key', None):
+                    active.append(agent)
+            elif name.startswith('gemini'):
+                if os.getenv("GEMINI_API_KEY") or getattr(self.config.config, 'gemini_api_key', None):
+                    active.append(agent)
+            elif name.startswith('anthropic'):
+                if os.getenv("ANTHROPIC_API_KEY") or getattr(self.config.config, 'anthropic_api_key', None):
+                    active.append(agent)
+            else:
+                active.append(agent)
+        return active
+
+    @property
+    def agents(self) -> List[BaseAIModel]:
+        """Backward-compatible property: returns legacy agents for tests."""
+        return self._legacy_agents
 
     async def analyze_with_ensemble(self, contract_content: str, contract_path: str = "") -> ConsensusResult:
         """Run all specialized agents and generate consensus results
@@ -1756,8 +1914,8 @@ class AIEnsemble:
         start_time = time.time()
 
         try:
-            # Prefer test-friendly agents when available; fallback to full models
-            sources = self.agents if getattr(self, 'agents', None) else list(self.models.values())
+            # Use production multi-provider agents; fallback to legacy agents if none have keys
+            sources = self.active_agents or self._legacy_agents
             tasks = [m.analyze_contract(contract_content, contract_path) for m in sources]
 
             # Execute all agent analyses concurrently
@@ -1794,10 +1952,15 @@ class AIEnsemble:
             # Generate consensus analysis
             consensus = self._generate_consensus(valid_results)
 
+            # Cross-validate high/critical findings using challenger agents
+            cross_validated_findings = await self._cross_validate_findings(
+                consensus['findings'], contract_content
+            )
+
             processing_time = time.time() - start_time
 
             return ConsensusResult(
-                consensus_findings=consensus['findings'],
+                consensus_findings=cross_validated_findings,
                 model_agreement=consensus['agreement'],
                 confidence_score=consensus['confidence'],
                 processing_time=processing_time,
@@ -1852,78 +2015,426 @@ class AIEnsemble:
         for agent_name, count in findings_by_agent.items():
             print(f"   - {agent_name}: {count} findings")
 
-        # NEW APPROACH: Instead of strict consensus, deduplicate findings and pass to LLM for verification
-        # This is better because different agents may describe the same vulnerability differently
+        # Deduplicate findings with fuzzy matching and model tracking
         deduplicated_findings = self._deduplicate_findings(all_findings, all_findings_with_models)
-        
+
         # Calculate agreement metrics
-        total_agents = len(self.models)
-        agreement_score = len(deduplicated_findings) / len(all_findings) if all_findings else 0.0
-        
+        # agreement = proportion of findings corroborated by 2+ agents
+        corroborated_count = sum(1 for f in deduplicated_findings if f.get('agreement_count', 1) >= 2)
+        agreement_score = corroborated_count / len(deduplicated_findings) if deduplicated_findings else 0.0
+
         # Weight by agent confidence
         avg_confidence = sum(r.confidence for r in results) / len(results) if results else 0.0
-        
+
         if deduplicated_findings:
-            print(f"✅ AI Ensemble: {len(deduplicated_findings)} deduplicated findings from {len(all_findings)} total")
+            multi_agent = [f for f in deduplicated_findings if f.get('agreement_count', 1) >= 2]
+            single_agent = [f for f in deduplicated_findings if f.get('agreement_count', 1) < 2]
+            print(f"✅ AI Ensemble: {len(deduplicated_findings)} unique findings from {len(all_findings)} total")
+            print(f"   Corroborated (2+ agents): {len(multi_agent)} findings")
+            print(f"   Single-agent (needs verification): {len(single_agent)} findings")
             print(f"   Agents contributing: {', '.join(findings_by_agent.keys())}")
         else:
-            print(f"ℹ️  AI Ensemble: All {len(all_findings)} findings appear to be duplicates")
-        
+            print(f"ℹ️  AI Ensemble: No findings after deduplication")
+
         return {
             'findings': deduplicated_findings,
             'agreement': min(agreement_score, 1.0),
             'confidence': min(avg_confidence, 1.0),
-            'all_findings': all_findings_with_models,  # Return all findings for downstream verification
-            'agent_count': total_agents,
+            'all_findings': all_findings_with_models,
+            'agent_count': len(results),
             'successful_agents': len([r for r in results if r.findings])
         }
 
-    def _get_finding_key(self, finding: Dict[str, Any]) -> str:
-        """Generate a key for finding similarity comparison"""
-        # Use type, severity, and line number for similarity
-        return f"{finding.get('type', '')}_{finding.get('severity', '')}_{finding.get('line', -1)}"
+    # Vulnerability type normalization map for fuzzy matching
+    _VULN_TYPE_ALIASES = {
+        'reentrancy': ['reentrancy', 'cross_function_reentrancy', 'read_only_reentrancy', 'cross_contract_reentrancy'],
+        'access_control': ['access_control', 'missing_access_control', 'privilege_escalation', 'unauthorized_access'],
+        'oracle_manipulation': ['oracle_manipulation', 'price_manipulation', 'stale_price', 'oracle_dependency'],
+        'flash_loan': ['flash_loan', 'flash_loan_attack', 'flash_loan_arbitrage'],
+        'integer_overflow': ['integer_overflow', 'overflow', 'underflow', 'arithmetic_error', 'integer_underflow'],
+        'precision_loss': ['precision_loss', 'rounding_error', 'rounding_direction', 'truncation'],
+        'front_running': ['front_running', 'frontrunning', 'mev', 'sandwich_attack'],
+        'delegatecall': ['delegatecall', 'unsafe_delegatecall', 'delegatecall_injection'],
+        'unchecked_return': ['unchecked_return', 'unchecked_call', 'unchecked_low_level_call'],
+        'storage_collision': ['storage_collision', 'storage_conflict', 'proxy_storage'],
+    }
 
-    def _merge_similar_findings(self, similar_findings: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Merge similar findings into a consensus finding"""
+    def _normalize_vuln_type(self, vuln_type: str) -> str:
+        """Normalize vulnerability type for fuzzy matching across agents."""
+        vuln_lower = vuln_type.lower().strip().replace(' ', '_').replace('-', '_')
+        for canonical, aliases in self._VULN_TYPE_ALIASES.items():
+            if vuln_lower in aliases or any(alias in vuln_lower for alias in aliases):
+                return canonical
+        return vuln_lower
+
+    def _get_finding_key(self, finding: Dict[str, Any]) -> str:
+        """Generate a fuzzy key for finding similarity comparison.
+
+        Uses normalized vuln type and line number within +/-5 lines.
+        Severity within one level is considered similar.
+        """
+        normalized_type = self._normalize_vuln_type(finding.get('type', ''))
+        line = finding.get('line', -1)
+        # Bucket line numbers into groups of 10 for fuzzy matching
+        line_bucket = (line // 10) * 10 if line >= 0 else -1
+        return f"{normalized_type}_{line_bucket}"
+
+    def _findings_match_fuzzy(self, f1: Dict[str, Any], f2: Dict[str, Any]) -> bool:
+        """Check if two findings are similar enough to be considered the same issue."""
+        # Type match (normalized)
+        type1 = self._normalize_vuln_type(f1.get('type', ''))
+        type2 = self._normalize_vuln_type(f2.get('type', ''))
+        if type1 != type2:
+            return False
+
+        # Line number within +/-5
+        line1 = f1.get('line', -1)
+        line2 = f2.get('line', -1)
+        if line1 >= 0 and line2 >= 0 and abs(line1 - line2) > 5:
+            return False
+
+        return True
+
+    def _merge_similar_findings(self, similar_findings: List[Dict[str, Any]], models: List[str] = None) -> Dict[str, Any]:
+        """Merge similar findings into a consensus finding with agreement tracking."""
         # Take the finding with highest confidence as base
         base_finding = max(similar_findings, key=lambda f: f.get('confidence', 0))
 
         # Average confidence across similar findings
         avg_confidence = sum(f.get('confidence', 0) for f in similar_findings) / len(similar_findings)
+        agreement_count = len(similar_findings)
+
+        # Agreement-based confidence adjustment
+        if agreement_count >= 2:
+            # Multiple agents agree: boost confidence
+            confidence_boost = 0.1
+            adjusted_confidence = min(1.0, avg_confidence + confidence_boost)
+        else:
+            # Single agent only: penalize confidence
+            confidence_penalty = 0.15
+            adjusted_confidence = max(0.0, avg_confidence - confidence_penalty)
 
         # Update with consensus confidence
         consensus_finding = base_finding.copy()
-        consensus_finding['confidence'] = avg_confidence
-        consensus_finding['consensus_count'] = len(similar_findings)
-        consensus_finding['model_count'] = len(similar_findings)
-        consensus_finding['consensus_confidence'] = min(1.0, avg_confidence)
+        consensus_finding['confidence'] = adjusted_confidence
+        consensus_finding['consensus_count'] = agreement_count
+        consensus_finding['model_count'] = agreement_count
+        consensus_finding['consensus_confidence'] = min(1.0, adjusted_confidence)
+        consensus_finding['agreement_count'] = agreement_count
         # Track which models agreed on this finding
-        consensus_finding['models'] = []
-        
+        consensus_finding['models'] = models or []
+        consensus_finding['needs_verification'] = agreement_count < 2
+
         return consensus_finding
 
     def _deduplicate_findings(self, all_findings: List[Dict[str, Any]], all_findings_with_models: List[Tuple[Dict, str]]) -> List[Dict[str, Any]]:
         """
-        Deduplicate findings using semantic similarity.
-        This is a simplified approach and would require a more sophisticated LLM call
-        to truly understand semantic similarity between findings.
-        For now, we'll use a basic key-based approach and then merge.
+        Deduplicate findings using fuzzy semantic similarity.
+        Groups findings by normalized type and approximate line number,
+        tracks which models contributed each finding.
         """
-        # Create a dictionary to hold findings with their keys
-        findings_by_key = {}
-        for finding in all_findings:
-            key = self._get_finding_key(finding)
-            if key not in findings_by_key:
-                findings_by_key[key] = finding
-            else:
-                # If a finding with the same key already exists, merge it
-                existing_finding = findings_by_key[key]
-                merged_finding = self._merge_similar_findings([existing_finding, finding])
-                findings_by_key[key] = merged_finding
+        # Build groups using fuzzy matching
+        groups: List[List[Tuple[Dict, str]]] = []
 
-        # Convert back to a list and sort by confidence (descending)
-        deduplicated_findings = sorted(list(findings_by_key.values()), key=lambda f: f.get('confidence', 0), reverse=True)
+        for finding, model_name in all_findings_with_models:
+            matched = False
+            for group in groups:
+                # Compare against first finding in group
+                if self._findings_match_fuzzy(group[0][0], finding):
+                    group.append((finding, model_name))
+                    matched = True
+                    break
+            if not matched:
+                groups.append([(finding, model_name)])
+
+        # Merge each group
+        deduplicated_findings = []
+        for group in groups:
+            findings_in_group = [f for f, _ in group]
+            models_in_group = list(set(m for _, m in group))
+            merged = self._merge_similar_findings(findings_in_group, models_in_group)
+            deduplicated_findings.append(merged)
+
+        # Sort by confidence (descending)
+        deduplicated_findings.sort(key=lambda f: f.get('confidence', 0), reverse=True)
         return deduplicated_findings
+
+    def _get_provider_for_agent(self, agent_name: str) -> str:
+        """Get the provider name for a given agent."""
+        if agent_name.startswith('gpt5') or agent_name in ('defi_expert', 'gas_expert', 'security_expert'):
+            return 'openai'
+        elif agent_name.startswith('gemini'):
+            return 'gemini'
+        elif agent_name.startswith('anthropic'):
+            return 'anthropic'
+        return 'unknown'
+
+    def _get_challenger_agents(self, finding_models: List[str], count: int = 2) -> List[BaseAIModel]:
+        """Select challenger agents from different providers than the finding's authors."""
+        finding_providers = set(self._get_provider_for_agent(m) for m in finding_models)
+        challengers = []
+        for name, agent in self.models.items():
+            provider = self._get_provider_for_agent(name)
+            if provider not in finding_providers:
+                challengers.append(agent)
+            if len(challengers) >= count:
+                break
+        # If not enough cross-provider challengers, use any available
+        if len(challengers) < count:
+            for name, agent in self.models.items():
+                if agent not in challengers and name not in finding_models:
+                    challengers.append(agent)
+                if len(challengers) >= count:
+                    break
+        return challengers[:count]
+
+    async def _cross_validate_findings(self, findings: List[Dict[str, Any]], contract_content: str) -> List[Dict[str, Any]]:
+        """Cross-validate high/critical findings using challenger agents from different providers.
+
+        Only cross-validates high/critical findings to control API costs.
+        Adjusts confidence based on challenger agreement.
+        """
+        from core.enhanced_prompts import CROSS_VALIDATION_PROMPT
+
+        high_crit_findings = [f for f in findings if f.get('severity', '').lower() in ('high', 'critical')]
+
+        if not high_crit_findings:
+            return findings
+
+        print(f"\n🔄 Cross-validating {len(high_crit_findings)} high/critical findings...")
+
+        # Build a map of finding index to finding for updating
+        finding_indices = {}
+        for i, f in enumerate(findings):
+            if f in high_crit_findings:
+                finding_indices[id(f)] = i
+
+        for finding in high_crit_findings:
+            finding_models = finding.get('models', [])
+            challengers = self._get_challenger_agents(finding_models)
+
+            if not challengers:
+                logger.warning("No challenger agents available for cross-validation")
+                continue
+
+            # Extract code context around the finding
+            line = finding.get('line', 0)
+            lines = contract_content.split('\n')
+            start = max(0, line - 10)
+            end = min(len(lines), line + 10)
+            code_context = '\n'.join(lines[start:end])
+
+            # Build challenge prompt
+            try:
+                prompt_text = CROSS_VALIDATION_PROMPT.format(
+                    finding_type=finding.get('type', 'unknown'),
+                    severity=finding.get('severity', 'unknown'),
+                    line=line,
+                    description=finding.get('description', ''),
+                    code_context=code_context,
+                    contract_content=contract_content[:8000],  # Limit for cost control
+                )
+            except Exception as e:
+                logger.warning(f"Failed to format cross-validation prompt: {e}")
+                continue
+
+            # Query challengers in parallel
+            challenge_tasks = []
+            for challenger in challengers:
+                challenge_tasks.append(
+                    challenger.analyze_contract(prompt_text, context={'mode': 'cross_validation'})
+                )
+
+            try:
+                challenge_results = await asyncio.gather(*challenge_tasks, return_exceptions=True)
+            except Exception as e:
+                logger.warning(f"Cross-validation gather failed: {e}")
+                continue
+
+            confirmations = 0
+            rejections = 0
+            for result in challenge_results:
+                if isinstance(result, Exception):
+                    continue
+                if isinstance(result, ModelResult):
+                    # Parse challenge response - look for validation indicators
+                    for cf in result.findings:
+                        desc = cf.get('description', '').lower()
+                        is_valid = cf.get('is_valid', None)
+                        if is_valid is True or 'confirmed' in desc or 'valid' in desc or 'real vulnerability' in desc:
+                            confirmations += 1
+                        elif is_valid is False or 'false positive' in desc or 'not a vulnerability' in desc or 'rejected' in desc:
+                            rejections += 1
+                    if not result.findings:
+                        # Empty findings from challenger = implicit rejection
+                        rejections += 1
+
+            # Adjust confidence based on cross-validation
+            idx = finding_indices.get(id(finding))
+            if idx is not None:
+                cv_metadata = {
+                    'cross_validated': True,
+                    'confirmations': confirmations,
+                    'rejections': rejections,
+                    'challengers': len(challengers),
+                }
+                findings[idx]['cross_validation'] = cv_metadata
+
+                if confirmations >= 2:
+                    # Strong confirmation
+                    findings[idx]['confidence'] = min(1.0, findings[idx].get('confidence', 0.5) + 0.15)
+                    print(f"   ✅ Finding '{finding.get('type')}' confirmed by {confirmations} challengers")
+                elif rejections >= 2:
+                    # Strong rejection - likely false positive
+                    findings[idx]['confidence'] = max(0.0, findings[idx].get('confidence', 0.5) - 0.25)
+                    findings[idx]['likely_false_positive'] = True
+                    print(f"   ❌ Finding '{finding.get('type')}' rejected by {rejections} challengers")
+                else:
+                    # Split decision - flag for manual review
+                    findings[idx]['needs_manual_review'] = True
+                    print(f"   ⚠️  Finding '{finding.get('type')}' split decision ({confirmations} confirm, {rejections} reject)")
+
+        return findings
+
+    async def deep_dive_analysis(self, findings: List[Dict[str, Any]], contract_content: str) -> List[Dict[str, Any]]:
+        """Deep-dive analysis on top findings using the Anthropic Reasoning Specialist.
+
+        For the top 5 highest-confidence findings, performs extended analysis
+        with full code path tracing and exploit parameter generation.
+        """
+        from core.enhanced_prompts import DEEP_DIVE_PROMPT
+
+        # Select top 5 findings by confidence
+        top_findings = sorted(findings, key=lambda f: f.get('confidence', 0), reverse=True)[:5]
+        if not top_findings:
+            return findings
+
+        # Prefer the Anthropic Reasoning Specialist for deep-dive
+        deep_agent = self.models.get('anthropic_reasoning')
+        if not deep_agent:
+            # Fallback to any available agent
+            active = self.active_agents
+            deep_agent = active[0] if active else None
+        if not deep_agent:
+            logger.warning("No agent available for deep-dive analysis")
+            return findings
+
+        print(f"\n🔬 Deep-dive analysis on top {len(top_findings)} findings...")
+
+        # Build index for updating
+        finding_index_map = {id(f): i for i, f in enumerate(findings)}
+
+        for finding in top_findings:
+            line = finding.get('line', 0)
+            lines = contract_content.split('\n')
+            start = max(0, line - 20)
+            end = min(len(lines), line + 20)
+            function_code = '\n'.join(lines[start:end])
+
+            try:
+                prompt_text = DEEP_DIVE_PROMPT.format(
+                    finding_type=finding.get('type', 'unknown'),
+                    severity=finding.get('severity', 'unknown'),
+                    line=line,
+                    description=finding.get('description', ''),
+                    confidence=finding.get('confidence', 0),
+                    function_code=function_code,
+                    contract_content=contract_content[:12000],
+                )
+            except Exception as e:
+                logger.warning(f"Failed to format deep-dive prompt: {e}")
+                continue
+
+            try:
+                result = await deep_agent.analyze_contract(prompt_text, context={'mode': 'deep_dive'})
+                if isinstance(result, ModelResult) and result.findings:
+                    # Use deep-dive result to update the finding
+                    dd_finding = result.findings[0]
+                    idx = finding_index_map.get(id(finding))
+                    if idx is not None:
+                        verified = dd_finding.get('verified', None)
+                        if verified is True:
+                            findings[idx]['deep_dive_verified'] = True
+                            adjusted = dd_finding.get('adjusted_confidence', finding.get('confidence'))
+                            findings[idx]['confidence'] = min(1.0, float(adjusted))
+                            print(f"   ✅ Deep-dive verified: {finding.get('type')}")
+                        elif verified is False:
+                            findings[idx]['deep_dive_verified'] = False
+                            findings[idx]['confidence'] = max(0.0, findings[idx].get('confidence', 0.5) - 0.2)
+                            print(f"   ❌ Deep-dive refuted: {finding.get('type')}")
+                        findings[idx]['deep_dive_metadata'] = dd_finding
+            except Exception as e:
+                logger.warning(f"Deep-dive analysis failed for finding: {e}")
+                continue
+
+        return findings
+
+    async def analyze_cross_contract_interactions(self, contract_files: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Analyze cross-contract interactions for vulnerabilities.
+
+        Only runs when multiple contracts are being audited. Identifies external
+        calls between contracts and analyzes each interaction point.
+        """
+        if len(contract_files) < 2:
+            return []
+
+        from core.enhanced_prompts import CROSS_CONTRACT_ANALYSIS_PROMPT
+
+        # Build contracts summary
+        contracts_summary = ""
+        for cf in contract_files[:5]:  # Limit to 5 contracts for cost control
+            contracts_summary += f"\n### {cf.get('name', 'Unknown')}:\n```solidity\n{cf.get('content', '')[:3000]}\n```\n"
+
+        # Identify interaction points (external calls between contracts)
+        import re
+        interaction_points = []
+        contract_names = [cf.get('name', '').replace('.sol', '') for cf in contract_files]
+        for cf in contract_files:
+            content = cf.get('content', '')
+            for other_name in contract_names:
+                if other_name and other_name != cf.get('name', '').replace('.sol', ''):
+                    # Look for references to other contracts
+                    pattern = rf'{other_name}\s*\(|I{other_name}\s*\(|{other_name}\.'
+                    matches = re.finditer(pattern, content)
+                    for m in matches:
+                        line_num = content[:m.start()].count('\n') + 1
+                        interaction_points.append(f"{cf.get('name')} -> {other_name} at line {line_num}: {m.group()}")
+
+        if not interaction_points:
+            return []
+
+        interactions_text = '\n'.join(interaction_points[:20])  # Limit
+
+        try:
+            prompt_text = CROSS_CONTRACT_ANALYSIS_PROMPT.format(
+                contracts_summary=contracts_summary,
+                interaction_points=interactions_text,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to format cross-contract prompt: {e}")
+            return []
+
+        # Use the best available agent
+        agent = self.models.get('anthropic_reasoning') or self.models.get('gpt5_security')
+        if not agent:
+            active = self.active_agents
+            agent = active[0] if active else None
+        if not agent:
+            return []
+
+        print(f"\n🔗 Analyzing {len(interaction_points)} cross-contract interaction points...")
+
+        try:
+            result = await agent.analyze_contract(prompt_text, context={'mode': 'cross_contract'})
+            if isinstance(result, ModelResult) and result.findings:
+                for f in result.findings:
+                    f['source'] = 'cross_contract_analysis'
+                print(f"   Found {len(result.findings)} cross-contract findings")
+                return result.findings
+        except Exception as e:
+            logger.warning(f"Cross-contract analysis failed: {e}")
+
+        return []
 
     async def analyze_contract_ensemble(self, contract_content: str) -> ConsensusResult:
         """Legacy method name for backward compatibility with enhanced audit engine."""

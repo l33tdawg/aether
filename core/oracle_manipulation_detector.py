@@ -126,152 +126,128 @@ class OracleManipulationDetector:
         }
 
     def _initialize_manipulation_patterns(self) -> Dict[OracleManipulationType, List[Dict[str, Any]]]:
-        """Initialize oracle manipulation patterns."""
+        """Initialize oracle manipulation patterns.
+
+        Key design: patterns flag oracle USAGE and then check if required
+        validations are MISSING. Validation code (e.g. roundId > 0, updatedAt > 0)
+        is a PROTECTION, not a vulnerability. We only report when protections
+        are absent.
+        """
         return {
             OracleManipulationType.PRICE_MANIPULATION: [
                 {
-                    "pattern": r"price.*=.*oracle\.getPrice\(\)|price.*=.*feed\.latestRoundData\(\)",
+                    "pattern": r"latestRoundData\s*\(\s*\)",
                     "severity": "high",
-                    "confidence": 0.8,
-                    "description": "Direct oracle price usage without validation",
-                    "attack_vector": "Price manipulation via oracle dependency",
-                    "financial_impact": "High - Can lead to incorrect pricing",
+                    "confidence": 0.6,
+                    "description": "Chainlink oracle usage without complete return value validation",
+                    "attack_vector": "Stale/invalid price exploitation due to incomplete validation",
+                    "financial_impact": "High - Incorrect pricing leads to fund loss",
                     "exploit_complexity": "Medium",
                     "immunefi_bounty_potential": "$10,000-$500,000",
-                    "poc_suggestion": "Demonstrate price manipulation attack",
-                    "fix_suggestion": "Add price validation and circuit breakers",
-                    "manipulation_method": "Direct price manipulation",
-                    "attack_prerequisites": ["Oracle access", "Price-sensitive operations"],
-                    "mitigation_strategies": ["Price validation", "Circuit breakers", "Multiple oracles"],
-                    "historical_examples": ["Harvest Finance Oracle Attack", "Value DeFi Oracle Manipulation"]
+                    "poc_suggestion": "Demonstrate exploitation with stale or zero price",
+                    "fix_suggestion": "Validate all return values: require(answer > 0), require(updatedAt > 0), require(answeredInRound >= roundId), check staleness",
+                    "manipulation_method": "Incomplete oracle validation",
+                    "attack_prerequisites": ["Oracle returns stale/zero data", "Price-sensitive operations"],
+                    "mitigation_strategies": ["Complete return value validation", "Staleness checks", "Circuit breakers"],
+                    "historical_examples": ["Harvest Finance Oracle Attack ($34M)", "Mango Markets ($116M)"],
+                    "required_validations": [
+                        r"answer\s*>\s*0|price\s*>\s*0|require\s*\([^)]*answer[^)]*>[^)]*0",
+                        r"updatedAt\s*>|block\.timestamp\s*-\s*updatedAt|staleness|maxAge|freshness",
+                        r"answeredInRound\s*>=\s*roundId",
+                    ],
+                    "min_validations_required": 2,
                 }
             ],
-            
+
             OracleManipulationType.STALE_PRICE_ATTACK: [
                 {
-                    "pattern": r"require\s*\(\s*.*price.*>.*0\s*\)",
+                    "pattern": r"latestRoundData\s*\(\s*\)",
                     "severity": "medium",
-                    "confidence": 0.7,
-                    "description": "Basic price validation only - vulnerable to stale prices",
-                    "attack_vector": "Stale price exploitation",
-                    "financial_impact": "Medium - Stale price attacks",
+                    "confidence": 0.5,
+                    "description": "Oracle price feed without staleness check",
+                    "attack_vector": "Stale price exploitation - oracle data may be hours/days old",
+                    "financial_impact": "Medium - Stale price enables arbitrage",
                     "exploit_complexity": "Low",
                     "immunefi_bounty_potential": "$1,000-$50,000",
-                    "poc_suggestion": "Show stale price attack with timing manipulation",
-                    "fix_suggestion": "Add timestamp validation and freshness checks",
+                    "poc_suggestion": "Show exploitation when oracle heartbeat is missed",
+                    "fix_suggestion": "Add: require(block.timestamp - updatedAt < MAX_STALENESS)",
                     "manipulation_method": "Stale price exploitation",
-                    "attack_prerequisites": ["Stale oracle data", "Time-sensitive operations"],
-                    "mitigation_strategies": ["Timestamp validation", "Freshness checks", "Emergency stops"]
+                    "attack_prerequisites": ["Oracle heartbeat delay", "Price-sensitive operations"],
+                    "mitigation_strategies": ["Staleness threshold check", "Fallback oracle", "Emergency pause"],
+                    "required_validations": [
+                        r"block\.timestamp\s*-\s*updatedAt|updatedAt\s*\+|maxAge|staleness|heartbeat|STALENESS",
+                    ],
+                    "min_validations_required": 1,
                 }
             ],
-            
+
             OracleManipulationType.ROUND_ID_MANIPULATION: [
                 {
-                    "pattern": r"roundId.*>.*0|answeredInRound.*>.*0",
-                    "severity": "high",
-                    "confidence": 0.8,
-                    "description": "Round ID validation - potential for manipulation",
-                    "attack_vector": "Round ID manipulation",
-                    "financial_impact": "High - Round ID attacks",
-                    "exploit_complexity": "High",
-                    "immunefi_bounty_potential": "$10,000-$250,000",
-                    "poc_suggestion": "Demonstrate round ID manipulation",
-                    "fix_suggestion": "Add comprehensive round ID validation",
-                    "manipulation_method": "Round ID manipulation",
-                    "attack_prerequisites": ["Round ID access", "Validation bypass"],
-                    "mitigation_strategies": ["Round ID validation", "Phase ID checks", "Comprehensive validation"]
-                }
-            ],
-            
-            OracleManipulationType.TIMESTAMP_MANIPULATION: [
-                {
-                    "pattern": r"updatedAt.*>.*0|startedAt.*>.*0",
+                    "pattern": r"latestRoundData\s*\(\s*\)",
                     "severity": "medium",
-                    "confidence": 0.6,
-                    "description": "Timestamp validation - potential for manipulation",
-                    "attack_vector": "Timestamp manipulation",
-                    "financial_impact": "Medium - Timestamp attacks",
-                    "exploit_complexity": "Medium",
+                    "confidence": 0.5,
+                    "description": "Oracle usage without round completeness validation",
+                    "attack_vector": "Incomplete round data exploitation",
+                    "financial_impact": "Medium - Using data from incomplete rounds",
+                    "exploit_complexity": "High",
                     "immunefi_bounty_potential": "$1,000-$50,000",
-                    "poc_suggestion": "Show timestamp manipulation attack",
-                    "fix_suggestion": "Add timestamp validation and freshness checks",
-                    "manipulation_method": "Timestamp manipulation",
-                    "attack_prerequisites": ["Timestamp access", "Validation bypass"],
-                    "mitigation_strategies": ["Timestamp validation", "Freshness checks", "Time-based validation"]
+                    "poc_suggestion": "Demonstrate incomplete round exploitation",
+                    "fix_suggestion": "Add: require(answeredInRound >= roundId)",
+                    "manipulation_method": "Incomplete round exploitation",
+                    "attack_prerequisites": ["Oracle round incomplete", "Price-sensitive operations"],
+                    "mitigation_strategies": ["Round completeness check", "answeredInRound validation"],
+                    "required_validations": [
+                        r"answeredInRound\s*>=\s*roundId|answeredInRound\s*==\s*roundId",
+                    ],
+                    "min_validations_required": 1,
                 }
             ],
-            
-            OracleManipulationType.AGGREGATION_ATTACK: [
-                {
-                    "pattern": r"getPrice.*getPrice|getRate.*getRate|getExchangeRate.*getExchangeRate",
-                    "severity": "high",
-                    "confidence": 0.8,
-                    "description": "Multiple oracle sources - potential for aggregation attacks",
-                    "attack_vector": "Oracle aggregation manipulation",
-                    "financial_impact": "High - Aggregation attacks",
-                    "exploit_complexity": "High",
-                    "immunefi_bounty_potential": "$10,000-$500,000",
-                    "poc_suggestion": "Demonstrate aggregation attack",
-                    "fix_suggestion": "Add aggregation validation and outlier detection",
-                    "manipulation_method": "Aggregation manipulation",
-                    "attack_prerequisites": ["Multiple oracle access", "Aggregation logic"],
-                    "mitigation_strategies": ["Aggregation validation", "Outlier detection", "Median pricing"]
-                }
-            ],
-            
-            OracleManipulationType.CROSS_ORACLE_ARBITRAGE: [
-                {
-                    "pattern": r"Chainlink.*Band|Band.*Tellor|Tellor.*Pyth",
-                    "severity": "medium",
-                    "confidence": 0.7,
-                    "description": "Multiple oracle types - potential for cross-oracle arbitrage",
-                    "attack_vector": "Cross-oracle arbitrage",
-                    "financial_impact": "Medium - Cross-oracle arbitrage",
-                    "exploit_complexity": "High",
-                    "immunefi_bounty_potential": "$5,000-$100,000",
-                    "poc_suggestion": "Show cross-oracle arbitrage",
-                    "fix_suggestion": "Add cross-oracle validation and price synchronization",
-                    "manipulation_method": "Cross-oracle arbitrage",
-                    "attack_prerequisites": ["Multiple oracle types", "Price discrepancies"],
-                    "mitigation_strategies": ["Cross-oracle validation", "Price synchronization", "Arbitrage limits"]
-                }
-            ],
-            
+
             OracleManipulationType.FLASH_LOAN_ORACLE_ATTACK: [
                 {
-                    "pattern": r"flashLoan.*oracle|oracle.*flashLoan",
+                    "pattern": r"balanceOf\s*\([^)]*\)\s*/\s*totalSupply|getReserves\s*\(\s*\)\s*[^;]*price",
                     "severity": "critical",
-                    "confidence": 0.9,
-                    "description": "Flash loan with oracle manipulation - critical vulnerability",
-                    "attack_vector": "Flash loan oracle manipulation",
-                    "financial_impact": "Critical - Protocol drain",
-                    "exploit_complexity": "High",
+                    "confidence": 0.8,
+                    "description": "On-chain spot price used as oracle - vulnerable to flash loan manipulation",
+                    "attack_vector": "Flash loan price manipulation via spot price dependency",
+                    "financial_impact": "Critical - Protocol drain via single-block price manipulation",
+                    "exploit_complexity": "Medium",
                     "immunefi_bounty_potential": "$50,000-$2,000,000",
-                    "poc_suggestion": "Demonstrate flash loan oracle attack",
-                    "fix_suggestion": "Add flash loan protection and oracle validation",
-                    "manipulation_method": "Flash loan oracle manipulation",
-                    "attack_prerequisites": ["Flash loan access", "Oracle manipulation", "Large capital"],
-                    "mitigation_strategies": ["Flash loan limits", "Oracle validation", "Circuit breakers"]
+                    "poc_suggestion": "Demonstrate flash loan attack manipulating spot reserves",
+                    "fix_suggestion": "Use off-chain oracle (Chainlink) or TWAP instead of spot price",
+                    "manipulation_method": "Flash loan spot price manipulation",
+                    "attack_prerequisites": ["Flash loan access", "Spot price dependency"],
+                    "mitigation_strategies": ["Use Chainlink/off-chain oracle", "Use TWAP", "Add manipulation resistance"],
+                    "historical_examples": ["Harvest Finance ($34M)", "Value DeFi ($6M)", "Cream Finance ($18M)"],
+                    "required_validations": [
+                        r"twap|timeWeighted|observe\(|consult\(|TWAP",
+                        r"Chainlink|AggregatorV3|priceFeed",
+                    ],
+                    "min_validations_required": 1,
                 }
             ],
-            
+
             OracleManipulationType.ORACLE_FRONT_RUNNING: [
                 {
-                    "pattern": r"oracle.*update|update.*oracle",
+                    "pattern": r"oracle.*update|updatePrice|setPrice|submitValue",
                     "severity": "medium",
-                    "confidence": 0.6,
-                    "description": "Oracle update mechanism - potential for front-running",
-                    "attack_vector": "Oracle front-running",
-                    "financial_impact": "Medium - Oracle front-running",
+                    "confidence": 0.5,
+                    "description": "Oracle update mechanism - check for front-running protections",
+                    "attack_vector": "Oracle update front-running",
+                    "financial_impact": "Medium - Oracle front-running profits",
                     "exploit_complexity": "Medium",
                     "immunefi_bounty_potential": "$1,000-$50,000",
-                    "poc_suggestion": "Show oracle front-running attack",
-                    "fix_suggestion": "Add oracle update protection and front-running prevention",
+                    "poc_suggestion": "Show oracle update front-running",
+                    "fix_suggestion": "Add commit-reveal or private submission for oracle updates",
                     "manipulation_method": "Oracle front-running",
-                    "attack_prerequisites": ["Oracle update access", "Front-running capability"],
-                    "mitigation_strategies": ["Oracle update protection", "Front-running prevention", "Time delays"]
+                    "attack_prerequisites": ["Oracle update visibility", "Front-running capability"],
+                    "mitigation_strategies": ["Commit-reveal", "Private mempool", "Time delay"],
+                    "required_validations": [
+                        r"commit.*reveal|commitHash|onlyOracle|onlyReporter|whitelistReporter",
+                    ],
+                    "min_validations_required": 1,
                 }
-            ]
+            ],
         }
 
     def _initialize_validation_patterns(self) -> Dict[str, List[str]]:
@@ -378,7 +354,22 @@ class OracleManipulationDetector:
                 
                 for match in regex.finditer(content):
                     line_number = content[:match.start()].count('\n') + 1
-                    
+
+                    # Check if required validations exist in contract
+                    required_validations = pattern_info.get("required_validations", [])
+                    min_required = pattern_info.get("min_validations_required", 1)
+
+                    validations_found = 0
+                    validations_present = []
+                    for validation_pattern in required_validations:
+                        if re.search(validation_pattern, content, re.IGNORECASE):
+                            validations_found += 1
+                            validations_present.append(validation_pattern)
+
+                    # Skip if sufficient validations are present
+                    if validations_found >= min_required:
+                        continue
+
                     # Extract code snippet with context
                     start_line = max(0, line_number - 3)
                     end_line = min(len(lines), line_number + 3)
@@ -478,7 +469,16 @@ class OracleManipulationDetector:
                     vulnerability.context["protection_found"] = pattern
         
         # Only report vulnerabilities with sufficient confidence
-        return vulnerability.confidence > 0.3
+        return vulnerability.confidence > 0.5
+
+    def _check_l2_sequencer_feed(self, content: str) -> bool:
+        """Check if contract handles L2 sequencer uptime feed (Arbitrum/Optimism)."""
+        l2_patterns = [
+            r"sequencerUptimeFeed|SEQUENCER_UPTIME_FEED",
+            r"isSequencerUp|sequencerUp",
+            r"gracePeriod|GRACE_PERIOD_TIME",
+        ]
+        return any(re.search(p, content, re.IGNORECASE) for p in l2_patterns)
 
     async def _analyze_oracle_specific_patterns(self, content: str, contract_path: str, oracle_types: List[OracleType]) -> List[OracleVulnerability]:
         """Analyze oracle-specific patterns."""

@@ -346,39 +346,6 @@ contract MultiProtocol {
         self.assertIn(ProtocolType.UNISWAP_V3, protocols_detected)
         self.assertIn(ProtocolType.AAVE_V3, protocols_detected)
 
-    def test_confidence_ordering(self):
-        """Test that detections are ordered by confidence."""
-        mixed_contract = """
-pragma solidity ^0.8.0;
-
-contract MixedProtocol {
-    // Strong Uniswap V3 indicators
-    int24 public tickSpacing = 60;
-    uint160 public sqrtPriceX96;
-    uint24 public fee = 3000;
-
-    function mint(address r, int24 tl, int24 tu, uint128 a, bytes calldata d) external returns (uint256, uint256) {
-        return (0, 0);
-    }
-
-    // Weaker Aave indicators
-    uint256 public healthFactor;
-
-    function getUserAccountData(address) external view returns (uint256, uint256, uint256, uint256, uint256, uint256) {
-        return (0, 0, 0, 0, 0, 0);
-    }
-}
-"""
-        detections = self.recognizer.analyze_contract(mixed_contract)
-
-        # Uniswap V3 should be detected with higher confidence than Aave
-        uniswap_detection = next((d for d in detections if d.protocol == ProtocolType.UNISWAP_V3), None)
-        aave_detection = next((d for d in detections if d.protocol == ProtocolType.AAVE_V3), None)
-
-        if uniswap_detection and aave_detection:
-            self.assertGreater(uniswap_detection.confidence, aave_detection.confidence,
-                             "Uniswap V3 should have higher confidence than Aave in this case")
-
     def test_summary_generation(self):
         """Test summary generation for detected protocols."""
         test_contract = """

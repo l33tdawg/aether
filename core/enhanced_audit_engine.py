@@ -99,9 +99,45 @@ class EnhancedAetherAuditEngine:
             # Step 4: Phase 3 AI Ensemble Analysis
             ai_ensemble_results = await self._run_ai_ensemble_analysis(contract_files, static_results)
             
+            # Step 4.5: Deep-dive analysis on high-confidence findings
+            if ai_ensemble_results and hasattr(ai_ensemble_results, 'consensus_findings') and ai_ensemble_results.consensus_findings:
+                try:
+                    print("🔬 Running deep-dive analysis on top findings...", flush=True)
+                    deep_dive_findings = await self.ai_ensemble.deep_dive_analysis(
+                        ai_ensemble_results.consensus_findings,
+                        contract_files[0]['content'] if contract_files else ''
+                    )
+                    # Update consensus findings with deep-dive results
+                    ai_ensemble_results = ConsensusResult(
+                        consensus_findings=deep_dive_findings,
+                        model_agreement=ai_ensemble_results.model_agreement,
+                        confidence_score=ai_ensemble_results.confidence_score,
+                        processing_time=ai_ensemble_results.processing_time,
+                        individual_results=ai_ensemble_results.individual_results
+                    )
+                except Exception as e:
+                    logger.warning(f"Deep-dive analysis failed: {e}")
+
+            # Step 4.6: Cross-contract interaction analysis (if multiple contracts)
+            if len(contract_files) >= 2:
+                try:
+                    print("🔗 Analyzing cross-contract interactions...", flush=True)
+                    cross_contract_findings = await self.ai_ensemble.analyze_cross_contract_interactions(contract_files)
+                    if cross_contract_findings and ai_ensemble_results and hasattr(ai_ensemble_results, 'consensus_findings'):
+                        merged_findings = list(ai_ensemble_results.consensus_findings) + cross_contract_findings
+                        ai_ensemble_results = ConsensusResult(
+                            consensus_findings=merged_findings,
+                            model_agreement=ai_ensemble_results.model_agreement,
+                            confidence_score=ai_ensemble_results.confidence_score,
+                            processing_time=ai_ensemble_results.processing_time,
+                            individual_results=ai_ensemble_results.individual_results
+                        )
+                except Exception as e:
+                    logger.warning(f"Cross-contract analysis failed: {e}")
+
             # Step 5: Formal Verification for Critical Findings (DISABLED - too many false positives)
             formal_verification_results = None  # Disabled due to excessive false positives
-            
+
             # Step 6: Validation layer
             validated_results = await self._validate_findings(static_results, llm_results, contract_files, ai_ensemble_results, formal_verification_results)
             

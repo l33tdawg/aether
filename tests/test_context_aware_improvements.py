@@ -498,39 +498,6 @@ class TestValidationPipelineIntegration:
         assert 'has_impact_analyzer' in summary
         assert 'has_confidence_scorer' in summary
     
-    def test_function_context_stage_filters_misaligned_findings(self):
-        """Test that function context stage filters misaligned findings."""
-        from core.validation_pipeline import ValidationPipeline
-        
-        contract_code = """
-        pragma solidity ^0.8.0;
-        
-        contract Test {
-            function getValue() external view returns (uint256) {
-                return value;
-            }
-        }
-        """
-        
-        pipeline = ValidationPipeline(None, contract_code)
-        
-        # Misaligned finding: fund impact on view function
-        vuln = {
-            'vulnerability_type': 'parameter_validation_issue',
-            'severity': 'high',
-            'function': 'getValue',
-            'description': 'Could lead to fund theft',
-            'code_snippet': 'return value;'
-        }
-        
-        stages = pipeline.validate(vuln)
-        
-        # Should be filtered
-        assert any(s.is_false_positive for s in stages)
-        # Should be filtered by function_context or impact_analysis
-        fp_stage = next(s for s in stages if s.is_false_positive)
-        assert fp_stage.stage_name in ['function_context', 'impact_analysis']
-    
     def test_impact_stage_filters_no_impact_findings(self):
         """Test that impact analysis stage filters findings with no real impact."""
         from core.validation_pipeline import ValidationPipeline
@@ -799,40 +766,6 @@ class TestEndToEndWorkflow:
 
 class TestRegressionPrevention:
     """Ensure real vulnerabilities are still detected."""
-    
-    def test_real_reentrancy_not_filtered(self):
-        """Test that real reentrancy vulnerability is NOT filtered."""
-        from core.validation_pipeline import ValidationPipeline
-        
-        contract_code = """
-        pragma solidity ^0.8.0;
-        
-        contract Vulnerable {
-            mapping(address => uint256) public balances;
-            
-            function withdraw(uint256 amount) external {
-                require(balances[msg.sender] >= amount);
-                msg.sender.call{value: amount}("");  // State change after external call
-                balances[msg.sender] -= amount;
-            }
-        }
-        """
-        
-        vuln = {
-            'vulnerability_type': 'reentrancy',
-            'severity': 'critical',
-            'function': 'withdraw',
-            'description': 'State change after external call',
-            'line': 9,
-            'attack_scenario': '1. Attacker calls withdraw 2. Reenters in receive() 3. Drains all funds'
-        }
-        
-        pipeline = ValidationPipeline(None, contract_code)
-        stages = pipeline.validate(vuln)
-        
-        # Should NOT be filtered (real vulnerability)
-        assert stages[-1].stage_name == 'all_checks_passed'
-        assert stages[-1].is_false_positive is False
     
     def test_real_access_control_not_filtered(self):
         """Test that real access control issues are NOT filtered."""

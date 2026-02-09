@@ -325,3 +325,274 @@ def get_enhanced_validation_prompt(vulnerability: Dict, function_analysis: str =
         function_type_analysis=function_analysis
     )
 
+
+# ============================================================================
+# Zero-Day Vulnerability Patterns for Bounty-Paying Bugs
+# ============================================================================
+
+ZERO_DAY_VULNERABILITY_PATTERNS = """
+## Critical Vulnerability Patterns (Bounty-Paying)
+
+### 1. ERC-4626 Vault Inflation / First Depositor Attack
+- **Pattern**: Vault without `_decimalsOffset()` or minimum deposit enforcement
+- **What to look for**: `totalAssets()` returns 0 when vault is empty; no virtual shares/assets
+- **Missing protection**: No `_decimalsOffset()` override, no minimum initial deposit, no virtual shares
+- **Exploit**: Attacker deposits 1 wei, donates large amount directly, inflates share price so subsequent depositors get 0 shares
+- **Code indicators**: `ERC4626` inheritance without `_decimalsOffset`, `deposit()` without minimum check
+
+### 2. Read-Only Reentrancy
+- **Pattern**: View functions returning stale state during external callbacks
+- **What to look for**: `balanceOf()`, `totalSupply()`, `getReserves()` called by external protocols during state transitions
+- **Missing protection**: No reentrancy guard on view functions, state updates AFTER external calls
+- **Exploit**: During callback (e.g., ETH transfer), attacker calls view function that returns pre-update state, uses stale price in another protocol
+- **Code indicators**: ETH transfers before state updates, `receive()` callbacks, external protocols reading contract state
+
+### 3. Cross-Function Reentrancy
+- **Pattern**: Multiple functions share state but have inconsistent reentrancy guards
+- **What to look for**: Function A has `nonReentrant`, Function B modifies same state without it
+- **Missing protection**: Inconsistent `nonReentrant` modifiers across functions sharing storage variables
+- **Exploit**: During Function A callback, attacker calls unprotected Function B to manipulate shared state
+- **Code indicators**: Multiple functions writing same storage, mixed `nonReentrant` usage
+
+### 4. Rounding Direction Exploitation
+- **Pattern**: Inconsistent `Math.Rounding.Up` vs `Down` in deposit/withdraw or mint/redeem
+- **What to look for**: Deposits round DOWN (fewer shares), withdrawals also round DOWN (less assets returned)
+- **Missing protection**: Protocol should round AGAINST the user (deposits DOWN, withdrawals DOWN for assets, UP for shares)
+- **Exploit**: Repeated deposit/withdraw cycles extract value through consistent favorable rounding
+- **Code indicators**: `mulDiv`, `Math.Rounding`, manual division without rounding direction consideration
+
+### 5. Permit/Permit2 Frontrunning
+- **Pattern**: `permit()` + `transferFrom()` without try/catch around permit
+- **What to look for**: Function calls `permit()` then `transferFrom()` in sequence
+- **Missing protection**: No try/catch around `permit()` call, no check if allowance already set
+- **Exploit**: Attacker frontruns the permit transaction, causing the bundled permit+transfer to revert
+- **Code indicators**: `IERC20Permit.permit()` followed by `transferFrom()` without error handling
+
+### 6. Storage Collision in Proxies
+- **Pattern**: Upgradeable contracts without `__gap` storage arrays
+- **What to look for**: Base contracts in upgrade chain missing `uint256[50] __gap`
+- **Missing protection**: No `__gap` arrays, new storage variables added in upgrades that collide
+- **Exploit**: After upgrade, new variables overwrite existing storage, corrupting state
+- **Code indicators**: `Initializable`, `UUPSUpgradeable` without `__gap` in base contracts
+
+### 7. Returndata Bomb
+- **Pattern**: Unbounded returndata copy from untrusted external calls
+- **What to look for**: Low-level `call()` without limiting returndata, `abi.decode` on untrusted return
+- **Missing protection**: No assembly-level returndata size check, no gas limit on call
+- **Exploit**: Malicious contract returns massive returndata, consuming all remaining gas in memory expansion
+- **Code indicators**: `address.call()` without `{gas: X}`, no `returndatasize()` check in assembly
+
+### 8. Signature Replay Across Chains
+- **Pattern**: Cached `DOMAIN_SEPARATOR` without runtime chainid check
+- **What to look for**: `DOMAIN_SEPARATOR` set in constructor but not recomputed when `block.chainid` changes
+- **Missing protection**: No `block.chainid` comparison in signature verification, no EIP-712 domain separator recomputation
+- **Exploit**: After chain fork, signatures from original chain are valid on forked chain
+- **Code indicators**: Immutable `DOMAIN_SEPARATOR`, `ecrecover` without chainid verification
+
+### 9. First Depositor Share Manipulation in Pools
+- **Pattern**: Liquidity pools where initial LP can manipulate share price
+- **What to look for**: `totalSupply() == 0` branch in mint/deposit, no minimum liquidity lock
+- **Missing protection**: No `MINIMUM_LIQUIDITY` burn (like Uniswap V2), no virtual reserves
+- **Exploit**: First depositor provides tiny liquidity, manipulates price, extracts value from subsequent depositors
+- **Code indicators**: No minimum liquidity constant, no dead shares, `totalSupply == 0` special case
+
+### 10. Incorrect Fee-on-Transfer Token Handling
+- **Pattern**: Balance assumptions without pre/post transfer checks
+- **What to look for**: `transferFrom(sender, address(this), amount)` followed by accounting with `amount` instead of actual received
+- **Missing protection**: No balance snapshot before/after transfer, no special handling for deflationary tokens
+- **Exploit**: Protocol credits full `amount` but receives less due to transfer fee, creating bad debt
+- **Code indicators**: `amount` used directly after `transferFrom` without `balanceOf` delta check
+"""
+
+# Focus area to pattern mapping for agent-specific injection
+_FOCUS_AREA_PATTERNS = {
+    'access_control': [3, 5, 6],        # Cross-function reentrancy, permit frontrunning, storage collision
+    'reentrancy': [2, 3],               # Read-only reentrancy, cross-function reentrancy
+    'amm': [1, 4, 9],                   # ERC-4626 inflation, rounding direction, first depositor
+    'lending': [1, 4, 10],              # ERC-4626 inflation, rounding direction, fee-on-transfer
+    'governance': [5, 6],               # Permit frontrunning, storage collision
+    'external_calls': [2, 7, 8],        # Read-only reentrancy, returndata bomb, signature replay
+    'delegatecall': [6, 7],             # Storage collision, returndata bomb
+    'arithmetic': [4, 10],              # Rounding direction, fee-on-transfer
+    'precision': [4, 10],               # Rounding direction, fee-on-transfer
+    'logic_errors': [2, 3, 6],          # Read-only reentrancy, cross-function reentrancy, storage collision
+    'privilege': [3, 5, 6],             # Cross-function reentrancy, permit frontrunning, storage collision
+    'complex_logic': [1, 9, 5],         # ERC-4626 inflation, first depositor, permit frontrunning
+    'economic': [1, 4, 9],              # ERC-4626 inflation, rounding direction, first depositor
+    'oracle_manipulation': [2, 8],      # Read-only reentrancy, signature replay
+    'overflow': [4, 10],                # Rounding direction, fee-on-transfer
+    'underflow': [4, 10],               # Rounding direction, fee-on-transfer
+    'precision_loss': [4, 10],          # Rounding direction, fee-on-transfer
+    'cross_contract': [2, 3, 7],        # Read-only reentrancy, cross-function reentrancy, returndata bomb
+    'economic_attacks': [1, 4, 9],      # ERC-4626 inflation, rounding direction, first depositor
+    'invariant_violations': [1, 4, 9],  # ERC-4626 inflation, rounding direction, first depositor
+}
+
+
+def get_patterns_for_focus_areas(focus_areas: list) -> str:
+    """Get relevant zero-day patterns for a set of focus areas.
+
+    Args:
+        focus_areas: List of focus area strings (e.g., ['access_control', 'reentrancy'])
+
+    Returns:
+        String containing relevant patterns from ZERO_DAY_VULNERABILITY_PATTERNS
+    """
+    if not focus_areas:
+        return ZERO_DAY_VULNERABILITY_PATTERNS
+
+    # Collect unique pattern numbers
+    relevant_nums = set()
+    for area in focus_areas:
+        area_lower = area.lower().replace(' ', '_').replace('-', '_')
+        if area_lower in _FOCUS_AREA_PATTERNS:
+            relevant_nums.update(_FOCUS_AREA_PATTERNS[area_lower])
+
+    if not relevant_nums:
+        return ZERO_DAY_VULNERABILITY_PATTERNS
+
+    # Parse patterns from the full text and filter
+    lines = ZERO_DAY_VULNERABILITY_PATTERNS.strip().split('\n')
+    result_lines = [lines[0], lines[1], '']  # Header
+
+    current_pattern_num = 0
+    include_current = False
+
+    for line in lines[2:]:
+        # Detect pattern headers like "### 1. ERC-4626..."
+        if line.startswith('### ') and '. ' in line:
+            try:
+                num_str = line.split('### ')[1].split('.')[0].strip()
+                current_pattern_num = int(num_str)
+                include_current = current_pattern_num in relevant_nums
+            except (ValueError, IndexError):
+                include_current = False
+
+        if include_current:
+            result_lines.append(line)
+
+    return '\n'.join(result_lines)
+
+
+# ============================================================================
+# Cross-Validation Prompt for Adversarial Agent Review
+# ============================================================================
+
+CROSS_VALIDATION_PROMPT = """You are reviewing another security auditor's finding. Your job is to determine if this is a REAL, EXPLOITABLE vulnerability or a false positive.
+
+Be rigorous and skeptical. Many automated findings are false positives.
+
+FINDING:
+- Type: {finding_type}
+- Severity: {severity}
+- Line: {line}
+- Description: {description}
+
+RELEVANT CODE:
+```solidity
+{code_context}
+```
+
+FULL CONTRACT (for reference):
+```solidity
+{contract_content}
+```
+
+Analyze this finding and respond with valid JSON only:
+{{
+    "is_valid": true or false,
+    "confidence": 0.0-1.0,
+    "exploit_steps": "Step 1: ... Step 2: ... Step 3: ..." or "N/A if false positive",
+    "false_positive_reason": "What protection/pattern makes this a false positive" or "N/A if valid",
+    "reasoning": "Detailed explanation of your assessment"
+}}
+
+Return only valid JSON, no markdown formatting."""
+
+
+# ============================================================================
+# Cross-Contract Interaction Analysis Prompt
+# ============================================================================
+
+CROSS_CONTRACT_ANALYSIS_PROMPT = """You are analyzing interactions between multiple smart contracts for security vulnerabilities.
+
+CONTRACTS AND THEIR INTERACTIONS:
+{contracts_summary}
+
+INTERACTION POINTS (external calls between contracts):
+{interaction_points}
+
+For each interaction point, analyze:
+1. **Callback reentrancy**: Can the callee re-enter the caller during the call?
+2. **State inconsistency**: Is the caller's state fully updated before the external call?
+3. **Privilege assumptions**: Does contract A trust contract B's return values without verification?
+4. **Cross-contract read-only reentrancy**: Can a view function return stale state during a callback?
+
+Return findings as valid JSON only:
+{{
+    "findings": [
+        {{
+            "type": "vulnerability_type",
+            "severity": "critical|high|medium|low",
+            "confidence": 0.0-1.0,
+            "description": "detailed explanation",
+            "contracts_involved": ["ContractA.sol", "ContractB.sol"],
+            "interaction_point": "function_name",
+            "exploit_steps": "concrete step-by-step attack path",
+            "why_not_false_positive": "specific reason this is exploitable",
+            "affected_funds": "estimated impact or N/A"
+        }}
+    ]
+}}
+
+Return only valid JSON, no markdown formatting."""
+
+
+# ============================================================================
+# Deep-Dive Analysis Prompt
+# ============================================================================
+
+DEEP_DIVE_PROMPT = """You are performing a deep-dive security analysis on a specific vulnerability finding. Trace every code path thoroughly.
+
+FINDING TO INVESTIGATE:
+- Type: {finding_type}
+- Severity: {severity}
+- Line: {line}
+- Initial Description: {description}
+- Initial Confidence: {confidence}
+
+FULL FUNCTION AND CALLED FUNCTIONS:
+```solidity
+{function_code}
+```
+
+FULL CONTRACT:
+```solidity
+{contract_content}
+```
+
+REQUIRED ANALYSIS:
+1. **Complete code path trace**: Follow every branch, modifier, and internal call
+2. **All state changes**: List every storage variable modified
+3. **Concrete exploit with parameters**: Provide actual function call parameters for the attack
+4. **Financial impact calculation**: Estimate the maximum extractable value
+5. **Prerequisites check**: What conditions must be true for the exploit to work?
+
+Return your analysis as valid JSON only:
+{{
+    "verified": true or false,
+    "adjusted_severity": "critical|high|medium|low",
+    "adjusted_confidence": 0.0-1.0,
+    "code_path_trace": "Step-by-step trace through all code paths",
+    "state_changes": ["var1: old -> new", "var2: old -> new"],
+    "exploit_parameters": {{
+        "function": "functionName",
+        "args": ["arg1_value", "arg2_value"],
+        "msg_value": "0 or amount in wei",
+        "prerequisites": ["condition1", "condition2"]
+    }},
+    "financial_impact": "Maximum extractable value with calculation",
+    "reasoning": "Detailed reasoning for verification/refutation"
+}}
+
+Return only valid JSON, no markdown formatting."""
