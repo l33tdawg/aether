@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt, Confirm
 import questionary
-from questionary import Style
+from questionary import Choice, Separator, Style
 
 # Questionary style matching setup.py theme
 custom_style = Style([
@@ -32,15 +32,24 @@ custom_style = Style([
 ])
 
 
-def _select(prompt_text: str, choices: List[str], default: Optional[str] = None) -> Optional[str]:
+def _select(prompt_text: str, choices: list, default: Optional[str] = None) -> Optional[str]:
     """Arrow-key selector wrapping questionary.select."""
     try:
+        # Build list of valid default candidates (string choices and Choice values)
+        valid_defaults = []
+        for c in choices:
+            if isinstance(c, str):
+                valid_defaults.append(c)
+            elif isinstance(c, questionary.Choice):
+                valid_defaults.append(c.value)
+        resolved_default = default if default in valid_defaults else (valid_defaults[0] if valid_defaults else None)
+
         result = questionary.select(
             prompt_text,
             choices=choices,
-            default=default if default in choices else (choices[0] if choices else None),
+            default=resolved_default,
             style=custom_style,
-            use_shortcuts=True,
+            use_shortcuts=False,
             use_arrow_keys=True,
             use_jk_keys=False,
         ).ask()
@@ -75,15 +84,15 @@ class AetherInteractiveMenu:
 """
 
     MENU_ITEMS = [
-        ("1", "New Audit", "Start a new security audit"),
-        ("2", "Resume Audit", "Continue an in-progress audit"),
-        ("3", "Audit History", "Browse past audits & results"),
-        ("4", "Generate PoCs", "Create Foundry exploit proofs"),
-        ("5", "Reports", "Generate/view audit reports"),
-        ("6", "Fetch Contract", "Fetch from blockchain explorers"),
-        ("7", "Settings", "Configure API keys, models, tools"),
-        ("8", "Console", "Launch advanced Metasploit-style console"),
-        ("0", "Exit", ""),
+        ("1", "\U0001f6e1  New Audit",      "Start a new security audit"),
+        ("2", "\u23ef  Resume Audit",    "Continue an in-progress audit"),
+        ("3", "\U0001f4dc  Audit History",   "Browse past audits & results"),
+        ("4", "\U0001f9ea  Generate PoCs",   "Create Foundry exploit proofs"),
+        ("5", "\U0001f4ca  Reports",         "Generate/view audit reports"),
+        ("6", "\U0001f310  Fetch Contract",  "Fetch from blockchain explorers"),
+        ("7", "\u2699\ufe0f  Settings",        "Configure API keys, models, tools"),
+        ("8", "\U0001f4bb  Console",         "Launch advanced Metasploit-style console"),
+        ("0", "\U0001f6aa  Exit",            ""),
     ]
 
     def __init__(self):
@@ -131,14 +140,24 @@ class AetherInteractiveMenu:
         self._show_banner()
         self._check_first_run()
 
+        # Build questionary Choice list once
+        menu_choices = []
+        for key, label, desc in self.MENU_ITEMS:
+            if key == "0":
+                menu_choices.append(Separator("  ──────────────────────────────────"))
+                menu_choices.append(Choice(title=f"{label}", value=key))
+            else:
+                menu_choices.append(Choice(title=f"{label:<22s} {desc}", value=key))
+
         while True:
             try:
-                self._show_menu()
-                choice = Prompt.ask(
-                    "\n  [bold cyan]Select[/bold cyan]",
-                    choices=["0", "1", "2", "3", "4", "5", "6", "7", "8"],
-                    default="0",
-                )
+                self.console.print()
+                choice = _select("Select an option", menu_choices, default="1")
+
+                if choice is None or choice == "0":
+                    self.console.print("\n[bold cyan]Goodbye![/bold cyan]")
+                    break
+
                 handler = {
                     "1": self._handle_new_audit,
                     "2": self._handle_resume_audit,
@@ -148,14 +167,10 @@ class AetherInteractiveMenu:
                     "6": self._handle_fetch_contract,
                     "7": self._handle_settings,
                     "8": self._handle_console,
-                    "0": None,
                 }.get(choice)
 
-                if handler is None:
-                    self.console.print("\n[bold cyan]Goodbye![/bold cyan]")
-                    break
-
-                handler()
+                if handler:
+                    handler()
 
             except KeyboardInterrupt:
                 self.console.print("\n[yellow]Interrupted — returning to menu[/yellow]")
@@ -166,14 +181,6 @@ class AetherInteractiveMenu:
 
     def _show_banner(self):
         self.console.print(self.BANNER)
-
-    def _show_menu(self):
-        self.console.print()
-        for key, label, desc in self.MENU_ITEMS:
-            if key == "0":
-                self.console.print(f"  [cyan][{key}][/cyan]  {label}")
-            else:
-                self.console.print(f"  [cyan][{key}][/cyan]  {label:<20s}{desc}")
 
     def _check_first_run(self):
         """Hint at Settings if no config exists."""
@@ -339,14 +346,53 @@ class AetherInteractiveMenu:
                 return
             output_dir = Prompt.ask("Output directory", default="./output")
 
+            # Step 3b: Contract picker for directories with multiple .sol files
+            target_path = Path(target)
+            sol_files = []
+            if target_path.is_dir():
+                sol_files = sorted(target_path.rglob("*.sol"))
+
+            use_parallel = False
+            selected_paths = []
+
+            if len(sol_files) >= 2:
+                selected_paths = self._prompt_contract_selection(sol_files, target_path)
+                if selected_paths is None:
+                    return
+                if len(selected_paths) == 0:
+                    self.console.print("[yellow]No contracts selected.[/yellow]")
+                    return
+                if len(selected_paths) > 1:
+                    use_parallel = Confirm.ask(
+                        f"Run {len(selected_paths)} contracts in parallel?",
+                        default=True,
+                    )
+
             # Confirm
             self.console.print(f"\n[bold]Target:[/bold]  {target}")
+            if selected_paths:
+                self.console.print(f"[bold]Contracts:[/bold] {len(selected_paths)} selected")
             self.console.print(f"[bold]Features:[/bold] {', '.join(features) if features else 'default'}")
             self.console.print(f"[bold]Output:[/bold]  {output_dir}")
+            if use_parallel:
+                self.console.print("[bold]Mode:[/bold]   Parallel")
             if not Confirm.ask("\nStart audit?", default=True):
                 return
 
-            self._run_local_audit(target, features, output_dir)
+            if use_parallel and len(selected_paths) > 1:
+                self._run_parallel_audit(
+                    [str(p) for p in selected_paths], features, output_dir
+                )
+            elif len(selected_paths) == 1:
+                self._run_local_audit(str(selected_paths[0]), features, output_dir)
+            elif selected_paths:
+                # Multiple selected but user declined parallel — run sequentially
+                for p in selected_paths:
+                    self.console.print(f"\n[cyan]Auditing {p.name}...[/cyan]")
+                    self._run_local_audit(str(p), features, output_dir)
+            else:
+                # Original behavior: single file or directory as-is
+                self._run_local_audit(target, features, output_dir)
 
         elif source_type == "GitHub URL":
             features = self._prompt_github_features()
@@ -446,6 +492,105 @@ class AetherInteractiveMenu:
         except Exception as e:
             self.console.print(f"\n[red]Audit error: {e}[/red]")
 
+    def _prompt_contract_selection(
+        self, sol_files: List[Path], base_dir: Path
+    ) -> Optional[List[Path]]:
+        """Show a checkbox picker for .sol files in a directory."""
+        choices = []
+        for f in sol_files:
+            try:
+                rel = f.relative_to(base_dir)
+            except ValueError:
+                rel = f.name
+            choices.append(
+                questionary.Choice(
+                    title=f"{f.stem}  ({rel})",
+                    value=str(f),
+                    checked=True,
+                )
+            )
+
+        self.console.print(
+            f"\n[bold]Found {len(sol_files)} Solidity files in directory:[/bold]"
+        )
+        selected = _checkbox("Select contracts to audit", choices)
+        if selected is None:
+            return None
+        return [Path(p) for p in selected]
+
+    def _run_parallel_audit(
+        self, contract_paths: List[str], features: List[str], output_dir: str
+    ):
+        """Launch parallel audits with a live dashboard."""
+        try:
+            from core.parallel_audit_manager import ParallelAuditManager
+            from core.config_manager import ConfigManager
+
+            # Read max_concurrent_contracts from config
+            try:
+                cfg = ConfigManager()
+                max_workers = min(cfg.config.max_concurrent_contracts, len(contract_paths), 8)
+            except Exception:
+                max_workers = min(5, len(contract_paths))
+
+            manager = ParallelAuditManager(max_workers=max_workers)
+
+            self.console.print(
+                f"\n[bold cyan]Starting parallel audit of {len(contract_paths)} contracts "
+                f"({max_workers} workers)...[/bold cyan]\n"
+            )
+
+            os.makedirs(output_dir, exist_ok=True)
+            manager.run_parallel_audits(contract_paths, features, output_dir)
+
+            # Post-run summary
+            summary = manager.get_summary()
+            self.console.print()
+
+            if summary["completed"]:
+                table = Table(title="Audit Summary", show_header=True, header_style="bold green")
+                table.add_column("Contract", style="bold")
+                table.add_column("Findings", justify="right", style="yellow")
+                table.add_column("Time", justify="right")
+                table.add_column("Output")
+
+                for c in summary["completed"]:
+                    elapsed = c.get("elapsed")
+                    if elapsed is not None:
+                        mins, secs = divmod(int(elapsed), 60)
+                        time_str = f"{mins}:{secs:02d}"
+                    else:
+                        time_str = "-"
+                    table.add_row(
+                        c["contract"],
+                        str(c["findings"]),
+                        time_str,
+                        c.get("output_dir", ""),
+                    )
+                self.console.print(table)
+
+            if summary["failed"]:
+                self.console.print("\n[bold red]Failed audits:[/bold red]")
+                for f in summary["failed"]:
+                    self.console.print(
+                        f"  [red]{f['contract']}[/red]: {f.get('error', 'Unknown error')}"
+                    )
+
+            total = summary["total_contracts"]
+            ok = len(summary["completed"])
+            self.console.print(
+                f"\n[bold]{ok}/{total} contracts audited successfully, "
+                f"{summary['total_findings']} total findings[/bold]"
+            )
+            if summary.get("wall_time"):
+                mins, secs = divmod(int(summary["wall_time"]), 60)
+                self.console.print(f"[dim]Wall time: {mins}:{secs:02d}[/dim]")
+
+        except KeyboardInterrupt:
+            self.console.print("\n[yellow]Parallel audit interrupted.[/yellow]")
+        except Exception as e:
+            self.console.print(f"\n[red]Parallel audit error: {e}[/red]")
+
     def _run_github_audit(self, github_url: str, output: Optional[str] = None):
         try:
             self.cli.run_github_audit_command(
@@ -513,13 +658,26 @@ class AetherInteractiveMenu:
             )
         self.console.print(table)
 
-        # Select
-        options = [str(i) for i in range(1, len(active_items) + 1)] + ["0"]
-        choice = Prompt.ask("Select audit to resume (0 to cancel)", choices=options, default="0")
-        if choice == "0":
+        # Select via arrow-key navigation
+        resume_choices = []
+        for i, item in enumerate(active_items):
+            total = item.get("total_selected") or 0
+            done = item.get("total_audited") or 0
+            progress_str = f"{done}/{total}" if total else "?"
+            name = item.get("repo_name", "Unknown")
+            scope = item.get("scope_name", "default")
+            resume_choices.append(Choice(
+                title=f"{name:<24s} [{scope}]  {progress_str} done",
+                value=str(i),
+            ))
+        resume_choices.append(Separator("  ──────────────────────────────────"))
+        resume_choices.append(Choice(title="Cancel", value="cancel"))
+
+        pick = _select("Select audit to resume", resume_choices)
+        if pick is None or pick == "cancel":
             return
 
-        selected = active_items[int(choice) - 1]
+        selected = active_items[int(pick)]
         github_url = selected.get("url", "")
         if not github_url:
             self.console.print("[red]No URL found for this project.[/red]")
@@ -601,13 +759,23 @@ class AetherInteractiveMenu:
             table.add_row(str(i), p["name"], p["source"], str(p["findings"]), p["date"])
         self.console.print(table)
 
-        # Select for submenu
-        options = [str(i) for i in range(1, len(projects) + 1)] + ["0"]
-        choice = Prompt.ask("Select a project for details (0 to go back)", choices=options, default="0")
-        if choice == "0":
+        # Select via arrow-key navigation
+        history_choices = []
+        for i, p in enumerate(projects):
+            tag = f"[{p['source']}]"
+            findings = p.get("findings", 0)
+            history_choices.append(Choice(
+                title=f"{tag:<10s} {p['name']:<28s} {findings} findings  {p['date']}",
+                value=str(i),
+            ))
+        history_choices.append(Separator("  ──────────────────────────────────"))
+        history_choices.append(Choice(title="Back", value="back"))
+
+        pick = _select("Select a project for details", history_choices)
+        if pick is None or pick == "back":
             return
 
-        selected = projects[int(choice) - 1]
+        selected = projects[int(pick)]
         self._history_submenu(selected)
 
     def _history_submenu(self, project: Dict[str, Any]):
@@ -864,27 +1032,30 @@ class AetherInteractiveMenu:
     def _handle_settings(self):
         self.console.print("\n[bold cyan]── Settings ──[/bold cyan]\n")
 
+        settings_choices = [
+            Choice(title="\U0001f9d9  Run full setup wizard", value="wizard"),
+            Choice(title="\U0001f50d  View current configuration", value="view"),
+            Choice(title="\U0001f511  Reconfigure API keys", value="keys"),
+            Choice(title="\U0001f916  Reconfigure model selections", value="models"),
+            Choice(title="\U0001f4cb  Triage settings", value="triage"),
+            Separator("  ──────────────────────────────────"),
+            Choice(title="\u2b05  Back to main menu", value="back"),
+        ]
+
         while True:
-            self.console.print("  [cyan]1[/cyan] - Run full setup wizard")
-            self.console.print("  [cyan]2[/cyan] - View current configuration")
-            self.console.print("  [cyan]3[/cyan] - Reconfigure API keys")
-            self.console.print("  [cyan]4[/cyan] - Reconfigure model selections")
-            self.console.print("  [cyan]5[/cyan] - Triage settings")
-            self.console.print("  [cyan]0[/cyan] - Back to main menu")
+            choice = _select("Settings", settings_choices, default="wizard")
 
-            choice = Prompt.ask("\nSelect option", choices=["0", "1", "2", "3", "4", "5"], default="0")
-
-            if choice == "0":
+            if choice is None or choice == "back":
                 break
-            elif choice == "1":
+            elif choice == "wizard":
                 self._run_setup_wizard()
-            elif choice == "2":
+            elif choice == "view":
                 self._view_config()
-            elif choice == "3":
+            elif choice == "keys":
                 self._run_setup_wizard(reconfigure_keys=True)
-            elif choice == "4":
+            elif choice == "models":
                 self._run_setup_wizard(reconfigure_models=True)
-            elif choice == "5":
+            elif choice == "triage":
                 self._edit_triage_settings()
 
     def _run_setup_wizard(self, reconfigure_keys: bool = False, reconfigure_models: bool = False):
