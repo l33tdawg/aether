@@ -430,19 +430,38 @@ class EnhancedAetherAuditEngine:
         return '\n'.join(snippet_lines)
 
     async def _run_enhanced_llm_analysis(self, contract_files: List[Dict[str, Any]], static_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Run enhanced LLM analysis with validation."""
+        """Run enhanced LLM analysis with validation.
+
+        Uses the deep analysis engine (6-pass pipeline) by default.
+        Falls back to one-shot analysis if deep analysis fails or is disabled.
+        """
         print("🤖 Running enhanced LLM analysis...", flush=True)
-        
+
         # Combine all contract content
         combined_content = "\n\n".join([cf['content'] for cf in contract_files])
-        
-        # Run enhanced LLM analysis
+
+        # Try deep analysis engine first (feature-flagged, default ON)
+        use_deep = os.getenv('AETHER_DEEP_ANALYSIS', '1') == '1'
+        if use_deep:
+            try:
+                from core.deep_analysis_engine import DeepAnalysisEngine
+                from core.protocol_archetypes import ProtocolArchetypeDetector
+
+                print("🧠 Using deep analysis engine (multi-pass)...", flush=True)
+                deep_engine = DeepAnalysisEngine(self.llm_analyzer, ProtocolArchetypeDetector())
+                deep_result = await deep_engine.analyze(combined_content, contract_files, static_results)
+                return deep_result.to_llm_results_format()
+            except Exception as e:
+                print(f"⚠️  Deep analysis failed, falling back to one-shot: {e}", flush=True)
+                logger.warning(f"Deep analysis engine failed: {e}")
+
+        # Fallback: one-shot LLM analysis
         llm_results = await self.llm_analyzer.analyze_vulnerabilities(
             combined_content,
             static_results,
             {'contract_files': contract_files}
         )
-        
+
         return llm_results
 
     async def _run_ai_ensemble_analysis(self, contract_files: List[Dict[str, Any]], static_results: Dict[str, Any]) -> Dict[str, Any]:

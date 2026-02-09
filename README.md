@@ -1,8 +1,80 @@
-# Aether v3.2 — Smart Contract Security Analysis Framework
+# Aether v3.5 — Smart Contract Security Analysis Framework
 
-**Version 3.2** | [What's New in v3.0](#whats-new-in-v30) | [Changelog](#changelog)
+**Version 3.5** | [What's New in v3.5](#whats-new-in-v35) | [Changelog](#changelog)
 
-Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines 60+ pattern-based static detectors, prompt-driven LLM analysis (GPT/Gemini/Claude), AI-ensemble reasoning, and advanced false-positive filtering into a single persistent full-screen TUI.
+Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines 160+ pattern-based static detectors, a structured 6-pass deep analysis LLM pipeline (GPT/Gemini/Claude), protocol archetype detection, a 50+ exploit knowledge base, AI-ensemble reasoning, invariant extraction, and advanced context-aware filtering into a single persistent full-screen TUI.
+
+## What's New in v3.5
+
+**Elite-Level Deep Analysis Engine** — Aether v3.5 fundamentally transforms how the tool finds vulnerabilities, moving from a one-shot "find bugs" LLM call to a structured 6-pass pipeline that mirrors how elite auditors think: understand first, then systematically attack.
+
+### Deep Analysis Engine (6-Pass LLM Pipeline)
+
+Instead of sending an entire contract to an LLM with a single prompt, Aether now runs six sequential analysis passes with accumulated context:
+
+| Pass | Purpose | Model Tier |
+|------|---------|------------|
+| **Pass 1** | Protocol Understanding — what the protocol IS, its invariants, value flows, trust assumptions | Cheap (cached) |
+| **Pass 2** | Attack Surface Mapping — every entry point, state reads/writes, reentrancy windows | Cheap (cached) |
+| **Pass 3** | Invariant Violation Analysis — systematically check every invariant against every code path | Strong |
+| **Pass 4** | Cross-Function Interaction — state dependency analysis, temporal dependencies, flash loan sequences | Strong |
+| **Pass 5** | Adversarial Modeling — explicit attacker perspective with flash loans, MEV, multiple accounts | Strong |
+| **Pass 6** | Boundary & Edge Cases — first/last operations, zero values, max values, self-referential ops | Medium |
+
+Passes 1-2 are cached by contract content hash, so re-audits skip the understanding phase. Each subsequent pass receives all prior context, building a comprehensive attack model. Feature-flagged with `AETHER_DEEP_ANALYSIS=1` (default ON); falls back to one-shot on failure.
+
+### Protocol Archetype System
+
+Before analyzing for bugs, Aether detects what *kind* of protocol the contract implements and loads archetype-specific vulnerability checklists:
+
+| Archetype | Example Checklist Items |
+|-----------|----------------------|
+| **ERC-4626 Vault** | First depositor inflation, rounding direction, share price manipulation via donation |
+| **Lending Pool** | Oracle price manipulation, liquidation threshold manipulation, bad debt cascade, interest rate manipulation |
+| **DEX/AMM** | First LP manipulation, sandwich attacks, price oracle via reserves |
+| **Bridge** | Cross-chain replay, validator compromise, token mapping mismatch, withdrawal proof forgery |
+| **Staking** | Reward calculation manipulation, reward rate overflow, unstaking reentrancy |
+| **Governance** | Flash loan governance attacks, timelock bypass, quorum manipulation |
+| **Oracle** | Stale price data, price deviation, L2 sequencer downtime |
+
+10 archetypes total, each with 3-7 specific checklist items drawn from real-world exploits.
+
+### Exploit Knowledge Base (50+ Patterns)
+
+A structured database of 50+ categorized real-world exploit patterns replaces the previous static 10-pattern list:
+
+| Category | Patterns | Examples |
+|----------|----------|----------|
+| Inflation/Share Attacks | 6 | ERC-4626 first depositor, LP token inflation, donation-based manipulation |
+| Reentrancy | 7 | Classic, read-only, cross-function, cross-contract, ERC-777/1155 hooks, flash loan callbacks |
+| Oracle | 5 | Spot price manipulation, TWAP manipulation, staleness, decimals mismatch, L2 sequencer |
+| Governance | 4 | Flash loan voting (Beanstalk), timelock bypass, quorum manipulation |
+| Bridge | 5 | Message replay (Nomad), validator compromise (Ronin), token mapping (Wormhole) |
+| Precision/Rounding | 4 | Rounding direction, unchecked overflow, fee-on-transfer, rebasing token drift |
+| Access Control | 5 | Uninitialized proxy, storage collision, selector collision, delegatecall injection |
+| Economic/DeFi | 8 | Sandwich attacks, JIT liquidity, bad debt cascade, returndata bomb, signature replay |
+| Logic | 6 | Off-by-one, missing deadline/slippage, unchecked returns, self-transfer accounting |
+
+Each pattern includes code indicators, missing protections, step-by-step exploit mechanism, and real-world precedents (with dollar amounts). Patterns are filtered by detected archetype and agent focus area.
+
+### Invariant Engine
+
+Automatically extracts protocol invariants from three sources:
+1. **NatSpec** `@invariant` tags in contract comments
+2. **LLM-discovered** invariants from Pass 1 of deep analysis
+3. **Pattern-detected** common invariants (balance conservation, AMM constant product, collateralization ratios, etc.)
+
+Generates Foundry `invariant_*()` test suites that serve as formal-verification-lite proofs — a failing invariant test proves the bug is real.
+
+### Pipeline Fixes
+
+- **Context-aware severity calibration** — no longer blanket-downgrades `division_by_zero`, `integer_underflow`, etc. to low. Now checks if the finding is in an `unchecked{}` block, near value transfers, in price calculations, or in oracle contexts before deciding
+- **Validation gate fix** — `"pending"` findings now pass through to LLM analysis (previously only `"validated"` passed, silently dropping many real findings)
+- **Specialist-aware confidence penalty** — single-agent findings from a specialist in their domain (e.g., AnthropicReasoningSpecialist finding a complex logic bug) get only -0.05 penalty instead of -0.15
+- **Line-bucket dedup fix** — removed arbitrary `(line // 10) * 10` bucketing that split findings 2 lines apart into different groups
+- **DeFi detector integration** — `DeFiVulnerabilityDetector` (two-stage presence/absence analysis) now runs in the main enhanced audit engine, not just the flow-based pipeline
+
+---
 
 ## What's New in v3.0
 
@@ -191,11 +263,15 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 
 ## Scope and Capabilities
 
-- **Static analysis** — 60+ pattern-based detectors (reentrancy, access control, arithmetic, oracle manipulation, flash loans, MEV, governance, DeFi-specific, and more)
+- **Deep analysis engine** — 6-pass LLM pipeline (understand → map attack surface → check invariants → cross-function analysis → adversarial modeling → edge cases) with per-pass model tier selection and caching
+- **Protocol archetype detection** — Automatic identification of protocol type (vault, lending, DEX, bridge, staking, governance, oracle, etc.) with archetype-specific vulnerability checklists
+- **Exploit knowledge base** — 50+ categorized real-world exploit patterns with code indicators, missing protections, and precedents; filterable by archetype and focus area
+- **Invariant engine** — Extracts protocol invariants from NatSpec, LLM analysis, and code patterns; generates Foundry invariant tests
+- **Static analysis** — 160+ pattern-based detectors (reentrancy, access control, arithmetic, oracle manipulation, flash loans, MEV, governance, DeFi-specific, and more)
 - **LLM analysis** — Structured, validation-oriented analysis with OpenAI, Gemini, and Claude; automatic provider fallback
-- **AI ensemble** — Multi-agent coordination with consensus-based reasoning (6 agents: 2 OpenAI, 2 Gemini, 2 Anthropic)
+- **AI ensemble** — Multi-agent coordination with specialist-aware consensus reasoning (6 agents: 2 OpenAI, 2 Gemini, 2 Anthropic)
+- **Context-aware filtering** — Severity calibration that checks risk context (unchecked blocks, value operations, oracle usage) before downgrading; pending findings preserved for LLM validation
 - **Parallel auditing** — Concurrent multi-contract analysis with live progress in the jobs table
-- **False positive filtering** — 4-stage validation pipeline with governance, deployment, and LLM-based filtering
 - **GitHub audit workflow** — Clone repos, detect frameworks, discover contracts, inline scope selection, persistent state
 - **Foundry PoC generation** — AST-based analysis, iterative compilation feedback, production-ready exploit prompts
 - **Multi-chain contract fetching** — 10+ EVM networks + Solana support
@@ -234,13 +310,19 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 
 ### Core Orchestration
 - `cli/main.py` — `AetherCLI` class (~2600 lines) — internal audit orchestrator used by AuditRunner
-- `core/enhanced_audit_engine.py` — Main audit engine (Phase 1-3 execution)
+- `core/enhanced_audit_engine.py` — Main audit engine with deep analysis integration
 - `core/post_audit_summary.py` — Post-audit panel with cost-by-provider breakdown
+
+### Deep Analysis Layer (v3.5)
+- `core/deep_analysis_engine.py` — 6-pass LLM pipeline (understand → attack surface → invariants → cross-function → adversarial → edge cases) with model tier selection and caching
+- `core/protocol_archetypes.py` — Protocol archetype detection (10 types) with per-archetype vulnerability checklists
+- `core/exploit_knowledge_base.py` — 50+ categorized real-world exploit patterns with code indicators and precedents
+- `core/invariant_engine.py` — Invariant extraction (NatSpec + LLM + pattern) and Foundry invariant test generation
 
 ### Detection Layer
 - `core/enhanced_vulnerability_detector.py` — Primary detector with 60+ patterns
 - `core/business_logic_detector.py`, `core/state_management_detector.py`, `core/data_inconsistency_detector.py`, `core/centralization_detector.py`, `core/looping_detector.py` — Move-inspired detectors
-- `core/defi_vulnerability_detector.py`, `core/mev_detector.py`, `core/oracle_manipulation_detector.py` — DeFi-specific detectors
+- `core/defi_vulnerability_detector.py`, `core/mev_detector.py`, `core/oracle_manipulation_detector.py` — DeFi-specific detectors (DeFi detector integrated into enhanced engine in v3.5)
 - `core/arithmetic_analyzer.py`, `core/precision_analyzer.py`, `core/gas_analyzer.py`, `core/input_validation_detector.py`, `core/data_decoding_analyzer.py` — Specialized analyzers
 
 ### Validation Layer
@@ -250,8 +332,8 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 
 ### LLM & AI Layer
 - `core/enhanced_llm_analyzer.py` — Structured LLM analysis (GPT/Gemini/Claude) with JSON output
-- `core/ai_ensemble.py` — Multi-agent coordination with consensus-based reasoning
-- `core/enhanced_prompts.py` — Production prompt templates
+- `core/ai_ensemble.py` — Multi-agent coordination with specialist-aware consensus reasoning
+- `core/enhanced_prompts.py` — Production prompt templates with dynamic exploit pattern loading from knowledge base
 
 ### PoC Generation Layer
 - `core/foundry_poc_generator.py` (~8000 lines) — AST-based analysis, iterative compilation feedback
@@ -276,10 +358,10 @@ Audit flows defined in YAML configs (`configs/`). Enhanced audit pipeline:
 
 ## Tests
 
-770 tests across 50 test files, running in ~13 seconds:
+1461 tests across 55 test files, running in ~50 seconds:
 
 ```bash
-python -m pytest tests/                                    # All tests (~13s)
+python -m pytest tests/                                    # All tests (~50s, 1461 tests)
 python -m pytest tests/test_enhanced_detectors.py -v       # Single file
 python -m pytest tests/test_enhanced_detectors.py::TestArithmeticAnalyzer -v  # Single class
 python -m pytest tests/ -k "governance" -v                 # Pattern match
@@ -298,6 +380,19 @@ python -m pytest tests/ --cov=core --cov-report=html       # With coverage
 
 ## Changelog
 
+### v3.5 — Elite-Level Deep Analysis Engine
+- **6-pass deep analysis pipeline** — replaces one-shot LLM calls with structured multi-pass reasoning: Protocol Understanding → Attack Surface Mapping → Invariant Violation Analysis → Cross-Function Interaction → Adversarial Modeling → Boundary & Edge Cases. Each pass receives accumulated context from prior passes. Passes 1-2 cached by content hash for fast re-audits
+- **Protocol archetype detection** — automatically identifies protocol type (ERC-4626 Vault, Lending Pool, DEX/AMM, Bridge, Staking, Governance, Oracle, NFT Marketplace, Token, Orderbook) with per-archetype vulnerability checklists drawn from real-world exploits
+- **Exploit knowledge base** — 50+ categorized exploit patterns across 9 categories (Inflation/Share, Reentrancy, Oracle, Governance, Bridge, Precision/Rounding, Access Control, Economic/DeFi, Logic) replacing the static 10-pattern list. Each pattern includes code indicators, missing protections, step-by-step exploit mechanism, real-world precedents with dollar amounts, and archetype applicability
+- **Invariant engine** — extracts protocol invariants from NatSpec `@invariant` tags, LLM analysis, and 6 common pattern detectors (vault conservation, balance tracking, supply accounting, AMM constant product, lending collateralization, staking rewards). Generates Foundry `invariant_*()` test suites as formal-verification-lite proofs
+- **Context-aware severity calibration** — replaces blanket severity downgrades with risk context checks. Findings in `unchecked{}` blocks, near value transfers (`call{value:}`, `_mint`, `safeTransfer`), price calculations, or oracle contexts preserve their original severity
+- **Validation gate fix** — `"pending"` findings now pass through to LLM analysis with `needs_llm_validation` flag. Only explicit `"false_positive"` findings are dropped (previously, all non-`"validated"` findings were silently filtered)
+- **Specialist-aware confidence penalty** — single-agent findings matching the agent's specialization (e.g., AnthropicReasoningSpecialist + economic attacks) get -0.05 penalty; non-specialist findings keep -0.15
+- **Line-bucket dedup fix** — removed `(line // 10) * 10` bucketing that caused arbitrary boundary issues (lines 9 and 11 in different buckets). Dedup now uses only normalized vulnerability type, with `_findings_match_fuzzy()` handling line proximity
+- **DeFi detector integration** — `DeFiVulnerabilityDetector` (two-stage presence/absence semantic analysis) now runs in the enhanced audit engine alongside `EnhancedVulnerabilityDetector`
+- **Dynamic exploit patterns in prompts** — `enhanced_prompts.py` now loads patterns from ExploitKnowledgeBase filtered by focus area, with fallback to static patterns
+- **1461 tests** passing across 55 test files (~50 seconds)
+
 ### v3.2 — Job Stats & UI Fixes
 - **Fixed job findings/cost/LLM stats always showing zero** — audit worker now captures the results dict from `run_audit()` to extract findings count; removed `LLMUsageTracker.reset()` that orphaned singleton references; all 4 worker types compute per-job stats from snapshot deltas
 - **Fixed UI repaint artifact on window switch** — replaced scrollable containers with plain `Container` + `overflow: hidden` in JobDetailScreen to prevent stale compositor frames
@@ -314,7 +409,7 @@ python -m pytest tests/ --cov=core --cov-report=html       # With coverage
 - **Inline settings** — API key and model configuration via native TextInputDialog/SelectDialog, no external setup wizard needed
 - **Inline GitHub scope management** — continue, re-audit, or create new scope via SelectDialog; contract selection via ContractSelectorDialog
 - **6 screens rewritten** — PoCScreen, ReportsScreen, SettingsScreen, NewAuditScreen, HistoryScreen, ResumeScreen — all fully inline
-- **770 tests** passing across 50 test files in ~13 seconds
+- **770 tests** passing across 50 test files
 
 ### v2.2 — Textual TUI Dashboard
 - Full-screen Textual TUI with persistent app, key bindings, and 1-second refresh timer

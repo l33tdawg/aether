@@ -1,5 +1,5 @@
 """
-Aether v3.0 — Textual TUI Application
+Aether v3.5 — Textual TUI Application
 
 Main Textual App class that drives the persistent full-screen dashboard.
 Replaces the Rich-based AetherDashboard with a proper reactive TUI built
@@ -18,11 +18,11 @@ from core.job_manager import JobManager
 from core.llm_usage_tracker import LLMUsageTracker
 
 
-VERSION = "3.0"
+VERSION = "3.5"
 
 
 class AetherApp(App):
-    """Aether v3.0 Textual TUI — persistent full-screen security dashboard."""
+    """Aether v3.5 Textual TUI — persistent full-screen security dashboard."""
 
     TITLE = f"Aether v{VERSION}"
     SUB_TITLE = "Smart Contract Security Analysis Framework"

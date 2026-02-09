@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Aether v3.0 — Smart Contract Security Analysis Framework
+Aether v3.5 — Smart Contract Security Analysis Framework
 
 Sole entry point. Launches the persistent full-screen Textual TUI dashboard.
 
