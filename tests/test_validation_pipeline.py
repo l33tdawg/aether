@@ -638,6 +638,101 @@ class TestErrorHandling:
         assert isinstance(stages, list)
 
 
+class TestAtomicConstructorFP:
+    """Test atomic deploy+init false positive detection."""
+
+    def test_atomic_constructor_create2_initialize(self):
+        """Constructor with deploy + initialize should be marked as FP."""
+        contract_code = """
+        pragma solidity ^0.8.0;
+
+        contract BGTDeployer {
+            constructor(address admin) {
+                BGT bgt = new BGT();
+                bgt.initialize(admin);
+            }
+        }
+        """
+
+        vulnerability = {
+            'vulnerability_type': 'initialization_frontrun_risk',
+            'description': 'initialize() can be front-run after deployment',
+            'line': 7,
+            'severity': 'high',
+        }
+
+        pipeline = ValidationPipeline(None, contract_code)
+        stages = pipeline.validate(vulnerability)
+
+        constructor_stages = [s for s in stages if s.stage_name == 'constructor_context']
+        assert len(constructor_stages) > 0
+        assert constructor_stages[0].is_false_positive is True
+        assert 'atomic' in constructor_stages[0].reasoning.lower() or 'Atomic' in constructor_stages[0].reasoning
+
+    def test_non_atomic_separate_tx_not_filtered(self):
+        """Constructor without deploy+init should NOT be marked as atomic FP."""
+        contract_code = """
+        pragma solidity ^0.8.0;
+
+        contract Proxy {
+            constructor(address impl) {
+                _implementation = impl;
+            }
+
+            function initialize(address admin) external {
+                require(!initialized, "Already init");
+                owner = admin;
+                initialized = true;
+            }
+        }
+        """
+
+        vulnerability = {
+            'vulnerability_type': 'initialization_frontrun_risk',
+            'description': 'initialize() can be front-run after deployment',
+            'line': 5,
+            'severity': 'high',
+        }
+
+        pipeline = ValidationPipeline(None, contract_code)
+        stages = pipeline.validate(vulnerability)
+
+        constructor_stages = [s for s in stages if s.stage_name == 'constructor_context']
+        # Should have a constructor context stage, but NOT marked as atomic FP
+        # It may be marked as FP for other reasons (has_initialization_function), but
+        # the reasoning should NOT mention 'atomic'
+        for stage in constructor_stages:
+            if stage.is_false_positive:
+                assert 'atomic' not in stage.reasoning.lower() or 'Atomic' not in stage.reasoning
+
+    def test_create2_deploy_with_init(self):
+        """Create2 deploy + initialize in constructor should be marked as FP."""
+        contract_code = """
+        pragma solidity ^0.8.0;
+
+        contract Factory {
+            constructor(bytes32 salt, address admin) {
+                address token = Create2.deploy(0, salt, type(Token).creationCode);
+                Token(token).initialize(admin);
+            }
+        }
+        """
+
+        vulnerability = {
+            'vulnerability_type': 'front-run',
+            'description': 'Initialization of Create2-deployed contract can be front-run',
+            'line': 6,
+            'severity': 'high',
+        }
+
+        pipeline = ValidationPipeline(None, contract_code)
+        stages = pipeline.validate(vulnerability)
+
+        constructor_stages = [s for s in stages if s.stage_name == 'constructor_context']
+        assert len(constructor_stages) > 0
+        assert constructor_stages[0].is_false_positive is True
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

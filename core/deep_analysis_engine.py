@@ -129,16 +129,20 @@ class DeepAnalysisResult:
 # Prompt builders
 # ---------------------------------------------------------------------------
 
-def _build_pass1_prompt(contract_content: str, archetype: ArchetypeResult) -> str:
+def _build_pass1_prompt(contract_content: str, archetype: ArchetypeResult, file_context: str = "") -> str:
     """Pass 1: Protocol Understanding."""
     archetype_hint = f"Detected archetype: {archetype.primary.value} (confidence: {archetype.confidence:.0%})"
     if archetype.secondary:
         archetype_hint += f"\nSecondary: {', '.join(a.value for a in archetype.secondary)}"
 
+    file_context_section = ""
+    if file_context:
+        file_context_section = f"\n{file_context}\n\nIMPORTANT: Files marked [DEPLOYMENT SCRIPT] are deploy-time helpers (e.g. Foundry scripts). Do NOT report vulnerabilities in deployment scripts — focus only on [PRODUCTION] contracts.\n"
+
     return f"""You are a senior smart contract security auditor. Your task is to **understand** this protocol before looking for bugs.
 
 {archetype_hint}
-
+{file_context_section}
 Analyze the following Solidity contract(s) and produce a structured understanding.
 
 ## Contract Code
@@ -213,10 +217,14 @@ For EVERY external and public function, analyze and return a JSON object:
 
 
 def _build_pass3_prompt(contract_content: str, pass1_result: str, pass2_result: str,
-                        checklist_text: str) -> str:
+                        checklist_text: str, file_context: str = "") -> str:
     """Pass 3: Invariant Violation Analysis."""
-    return f"""You are an elite smart contract security auditor. Your mission: systematically check every protocol invariant against every code path.
+    file_context_section = ""
+    if file_context:
+        file_context_section = f"\n{file_context}\n\nIMPORTANT: Files marked [DEPLOYMENT SCRIPT] are deploy-time helpers. Do NOT report vulnerabilities in deployment scripts — focus only on [PRODUCTION] contracts.\n"
 
+    return f"""You are an elite smart contract security auditor. Your mission: systematically check every protocol invariant against every code path.
+{file_context_section}
 ## Protocol Understanding
 {pass1_result}
 
@@ -442,6 +450,18 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
+def _build_file_context_header(contract_files: List[Dict[str, Any]]) -> str:
+    """Build a header listing project files with their roles."""
+    if not contract_files:
+        return ""
+    lines = ["## Project Files"]
+    for cf in contract_files:
+        name = os.path.basename(cf.get('path', 'unknown'))
+        label = "[DEPLOYMENT SCRIPT]" if cf.get('is_script', False) else "[PRODUCTION]"
+        lines.append(f"- {name} {label}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -482,6 +502,9 @@ class DeepAnalysisEngine:
         result = DeepAnalysisResult(archetype=archetype)
         content_key = _content_hash(combined_content)
 
+        # Build file context header for LLM prompts
+        file_context = _build_file_context_header(contract_files)
+
         # Truncate contract to fit within model context (keep first 300K chars)
         max_contract_chars = 300000
         truncated_content = combined_content
@@ -489,10 +512,14 @@ class DeepAnalysisEngine:
             truncated_content = combined_content[:max_contract_chars] + "\n\n// [truncated for analysis]"
             print(f"   Truncated contract from {len(combined_content)} to {max_contract_chars} chars for LLM", flush=True)
 
+        # Prepend file context to content for LLM awareness
+        if file_context:
+            truncated_content = f"{file_context}\n\n{truncated_content}"
+
         # --- Pass 1: Protocol Understanding ---
         pass1_text = await self._run_pass(
             "Pass 1: Protocol Understanding",
-            _build_pass1_prompt(truncated_content, archetype),
+            _build_pass1_prompt(truncated_content, archetype, file_context=file_context),
             _get_cheap_model(),
             cache_key=f"p1_{content_key}",
         )
@@ -527,7 +554,7 @@ class DeepAnalysisEngine:
         # --- Pass 3: Invariant Violation Analysis ---
         pass3_findings = await self._run_finding_pass(
             "Pass 3: Invariant Violations",
-            _build_pass3_prompt(truncated_content, pass1_text, pass2_text, checklist_text),
+            _build_pass3_prompt(truncated_content, pass1_text, pass2_text, checklist_text, file_context=file_context),
             _get_strong_model(),
             result,
         )

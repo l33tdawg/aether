@@ -684,6 +684,114 @@ class TestComplexContracts:
         assert result['governed'] is True
 
 
+class TestDynamicModifierDetection:
+    """Test dynamic modifier extraction and detection."""
+
+    def setup_method(self):
+        """Setup test fixtures."""
+        self.detector = GovernanceDetector()
+
+    def test_detects_custom_modifier_onlyDistributor(self):
+        """Test detection of custom onlyDistributor modifier."""
+        contract_code = """
+        contract RewardVault {
+            modifier onlyDistributor() {
+                require(msg.sender == distributor, "Not distributor");
+                _;
+            }
+
+            function notifyRewardAmount(uint256 reward) external onlyDistributor {
+                rewardRate = reward / duration;
+            }
+        }
+        """
+        assert self.detector.is_governance_function('notifyRewardAmount', contract_code) is True
+
+    def test_detects_custom_modifier_onlyMinter(self):
+        """Test detection of custom onlyMinter modifier."""
+        contract_code = """
+        contract Token {
+            modifier onlyMinter() {
+                require(hasRole(MINTER_ROLE, msg.sender), "Not minter");
+                _;
+            }
+
+            function mint(address to, uint256 amount) external onlyMinter {
+                _mint(to, amount);
+            }
+        }
+        """
+        assert self.detector.is_governance_function('mint', contract_code) is True
+
+    def test_extract_custom_modifiers_from_contract(self):
+        """Test extracting custom modifiers from contract source."""
+        contract_code = """
+        contract Protocol {
+            modifier onlyDistributor() {
+                require(msg.sender == distributor);
+                _;
+            }
+
+            modifier onlyVault() {
+                require(msg.sender == vault);
+                _;
+            }
+
+            modifier whenNotPaused() {
+                require(!paused);
+                _;
+            }
+        }
+        """
+        modifiers = GovernanceDetector._extract_custom_modifiers(contract_code)
+
+        # Should find onlyDistributor and onlyVault (both have 'only' prefix)
+        assert 'onlyDistributor' in modifiers
+        assert 'onlyVault' in modifiers
+        # whenNotPaused has no msg.sender check and no 'only' prefix
+        assert 'whenNotPaused' not in modifiers
+
+    def test_dynamic_modifier_with_msg_sender_check(self):
+        """Test that modifiers with msg.sender check are detected even without 'only' prefix."""
+        contract_code = """
+        contract Protocol {
+            modifier authorized() {
+                require(msg.sender == admin, "Unauthorized");
+                _;
+            }
+
+            function setConfig(bytes memory config) external authorized {
+                _config = config;
+            }
+        }
+        """
+        modifiers = GovernanceDetector._extract_custom_modifiers(contract_code)
+        assert 'authorized' in modifiers
+
+        # Should also detect as governance function
+        result = self.detector.has_access_control(
+            "function setConfig(bytes memory config) external authorized { _config = config; }",
+            contract_code
+        )
+        assert result['has_access_control'] is True
+
+    def test_only_prefix_modifier_detected(self):
+        """Test that modifiers with 'only' prefix are detected regardless of body."""
+        contract_code = """
+        contract Protocol {
+            modifier onlyOperator() {
+                _;
+            }
+
+            function execute() external onlyOperator {
+                doStuff();
+            }
+        }
+        """
+        modifiers = GovernanceDetector._extract_custom_modifiers(contract_code)
+        assert 'onlyOperator' in modifiers
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

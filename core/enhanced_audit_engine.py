@@ -181,33 +181,37 @@ class EnhancedAetherAuditEngine:
             try:
                 with open(contract_path, 'r', encoding='utf-8') as f:
                     content = f.read()
+                from core.discovery import ContractDiscovery
                 contract_files.append({
                     'path': contract_path,
                     'content': content,
-                    'name': os.path.basename(contract_path)
+                    'name': os.path.basename(contract_path),
+                    'is_script': ContractDiscovery._is_script_file(Path(contract_path), content),
                 })
             except Exception as e:
                 print(f"❌ Error reading contract file: {e}")
         elif os.path.isdir(contract_path):
             # Directory - filter by selected_contracts if provided
             selected_set = set(selected_contracts) if selected_contracts else None
-            
+            from core.discovery import ContractDiscovery
+
             for root, dirs, files in os.walk(contract_path):
                 for file in files:
                     if file.endswith('.sol'):
                         file_path = os.path.join(root, file)
-                        
+
                         # Filter by selected_contracts if provided
                         if selected_set is not None and file_path not in selected_set:
                             continue
-                        
+
                         try:
                             with open(file_path, 'r', encoding='utf-8') as f:
                                 content = f.read()
                             contract_files.append({
                                 'path': file_path,
                                 'content': content,
-                                'name': file
+                                'name': file,
+                                'is_script': ContractDiscovery._is_script_file(Path(file_path), content),
                             })
                         except Exception as e:
                             print(f"❌ Error reading {file_path}: {e}")
@@ -437,8 +441,23 @@ class EnhancedAetherAuditEngine:
         """
         print("🤖 Running enhanced LLM analysis...", flush=True)
 
-        # Combine all contract content
-        combined_content = "\n\n".join([cf['content'] for cf in contract_files])
+        # Filter out deployment scripts from LLM analysis
+        production_files = []
+        for cf in contract_files:
+            if cf.get('is_script', False):
+                print(f"   Excluding script file from analysis: {os.path.basename(cf.get('path', 'unknown'))}", flush=True)
+                continue
+            production_files.append(cf)
+
+        if not production_files:
+            production_files = contract_files  # fallback if all filtered
+
+        # Combine content with file path markers
+        parts = []
+        for cf in production_files:
+            rel = os.path.basename(cf.get('path', 'unknown'))
+            parts.append(f"// FILE: {rel}\n{cf['content']}")
+        combined_content = "\n\n".join(parts)
 
         # Try deep analysis engine first (feature-flagged, default ON)
         use_deep = os.getenv('AETHER_DEEP_ANALYSIS', '1') == '1'

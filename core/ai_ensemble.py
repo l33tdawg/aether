@@ -2145,10 +2145,10 @@ class AIEnsemble:
         if type1 != type2:
             return False
 
-        # Line number within +/-5
+        # Line number within +/-15 (widened from ±5 to catch same-function duplicates)
         line1 = f1.get('line', -1)
         line2 = f2.get('line', -1)
-        if line1 >= 0 and line2 >= 0 and abs(line1 - line2) > 5:
+        if line1 >= 0 and line2 >= 0 and abs(line1 - line2) > 15:
             return False
 
         return True

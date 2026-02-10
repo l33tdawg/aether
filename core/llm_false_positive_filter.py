@@ -738,7 +738,7 @@ Before marking any vulnerability as real, check these common false positive patt
     - VERDICT: If it only executes during deployment → FALSE POSITIVE (governance concern, not exploit)
     - Real vulnerability would require: Post-deployment exploit path
 
-17. **Centralization vs Vulnerability (FALSE POSITIVE)**  
+17. **Centralization vs Vulnerability (FALSE POSITIVE)**
     - Pattern: Finding claims "admin/owner can do X" as a vulnerability
     - Why it's not a vulnerability: Centralization is a DESIGN CHOICE, not a code bug
     - Check:
@@ -750,6 +750,19 @@ Before marking any vulnerability as real, check these common false positive patt
       * "Owner can upgrade to malicious implementation" → Inherent to upgradeable design
     - VERDICT: If it's about deployment parameters or governance model → FALSE POSITIVE (centralization risk)
     - Real vulnerability would require: Code that allows unauthorized escalation or bypass of admin
+
+18. **Atomic Deployment + Initialization (FALSE POSITIVE)**
+    - Pattern: Finding claims "initialize() can be front-run" on a contract deployed and initialized in the same constructor/transaction
+    - Why it's safe: When a contract is deployed via "new ContractName()" or Create2 AND ".initialize()" is called in the SAME constructor, the entire sequence is ATOMIC — it executes in a single transaction
+    - Check:
+      * Is the deploy (new X() or Create2) in the same constructor as .initialize()?
+      * Is there any way to call initialize() separately after deployment?
+      * Does the initializer have a protection like "initializer" modifier?
+    - Examples:
+      * constructor() creates X via "new X()" then calls x.initialize(params) → Atomic, no front-run window
+      * Create2 deploy + initialize in same deployer constructor → Atomic
+    - VERDICT: If deploy + init happen in the same transaction → FALSE POSITIVE
+    - Real vulnerability would require: Separate transactions for deploy and initialize, with no initializer guard
 
 **OUTPUT FORMAT (JSON):**
 

@@ -526,6 +526,116 @@ class TestRealWorldScenarios:
         assert 'detected_by' in result[0].context
 
 
+class TestVulnerabilityDeduplicatorFunctionScope:
+    """Test function-scope deduplication in VulnerabilityDeduplicator."""
+
+    def setup_method(self):
+        from core.vulnerability_deduplicator import VulnerabilityDeduplicator
+        self.contract_code = """pragma solidity ^0.8.0;
+
+contract Vault {
+    mapping(address => uint256) public balances;
+
+    function deposit() external payable {
+        balances[msg.sender] += msg.value;
+    }
+
+    function withdraw(uint256 amount) external {
+        require(balances[msg.sender] >= amount, "Insufficient");
+        (bool ok, ) = msg.sender.call{value: amount}("");
+        require(ok, "Transfer failed");
+        balances[msg.sender] -= amount;
+    }
+
+    function emergencyWithdraw() external {
+        uint256 bal = balances[msg.sender];
+        (bool ok, ) = msg.sender.call{value: bal}("");
+        require(ok, "Transfer failed");
+        balances[msg.sender] = 0;
+    }
+}
+"""
+        self.deduplicator = VulnerabilityDeduplicator(contract_code=self.contract_code)
+
+    def test_dedup_adjacent_lines_same_function(self):
+        """Two reentrancy findings in withdraw() on adjacent lines should merge."""
+        vulns = [
+            {
+                'vulnerability_type': 'reentrancy',
+                'line': 13,
+                'description': 'Reentrancy via external call',
+                'severity': 'high',
+                'confidence': 0.9,
+            },
+            {
+                'vulnerability_type': 'reentrancy',
+                'line': 15,
+                'description': 'State update after external call',
+                'severity': 'high',
+                'confidence': 0.85,
+            },
+        ]
+        result = self.deduplicator.deduplicate(vulns)
+        assert len(result) == 1, f"Expected 1 merged finding, got {len(result)}"
+
+    def test_dedup_different_functions_not_merged(self):
+        """Reentrancy in withdraw() and emergencyWithdraw() should stay separate."""
+        vulns = [
+            {
+                'vulnerability_type': 'reentrancy',
+                'line': 13,
+                'description': 'Reentrancy in withdraw',
+                'severity': 'high',
+                'confidence': 0.9,
+            },
+            {
+                'vulnerability_type': 'reentrancy',
+                'line': 21,
+                'description': 'Reentrancy in emergencyWithdraw',
+                'severity': 'high',
+                'confidence': 0.85,
+            },
+        ]
+        result = self.deduplicator.deduplicate(vulns)
+        assert len(result) == 2, f"Expected 2 findings, got {len(result)}"
+
+    def test_get_function_name_for_line(self):
+        """Test the _get_function_name_for_line helper."""
+        from core.vulnerability_deduplicator import _get_function_name_for_line
+
+        # Line 13 is inside withdraw()
+        assert _get_function_name_for_line(13, self.contract_code) == 'withdraw'
+        # Line 21 is inside emergencyWithdraw()
+        assert _get_function_name_for_line(21, self.contract_code) == 'emergencyWithdraw'
+        # Line 7 is inside deposit()
+        assert _get_function_name_for_line(7, self.contract_code) == 'deposit'
+        # Line 0 or negative should return None
+        assert _get_function_name_for_line(0, self.contract_code) is None
+
+    def test_fallback_line_bucket_dedup(self):
+        """Without contract code, dedup uses 20-line buckets."""
+        dedup_no_code = __import__('core.vulnerability_deduplicator', fromlist=['VulnerabilityDeduplicator']).VulnerabilityDeduplicator()
+        vulns = [
+            {
+                'vulnerability_type': 'reentrancy',
+                'line': 10,
+                'description': 'Reentrancy A',
+                'severity': 'high',
+                'confidence': 0.9,
+            },
+            {
+                'vulnerability_type': 'reentrancy',
+                'line': 15,
+                'description': 'Reentrancy B',
+                'severity': 'high',
+                'confidence': 0.85,
+            },
+        ]
+        result = dedup_no_code.deduplicate(vulns)
+        # Both lines 10 and 15 fall in bucket 0 (10//20 == 15//20 == 0), so should merge
+        assert len(result) == 1, f"Expected 1 merged finding (same bucket), got {len(result)}"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

@@ -6,6 +6,7 @@ Enumerates Solidity contracts, captures simple metadata, and persists via DB.
 """
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -22,6 +23,7 @@ class ContractInfo:
     solc_version: Optional[str]
     line_count: int
     dependencies: List[str]
+    is_script: bool = False
 
 
 class ContractDiscovery:
@@ -65,6 +67,25 @@ class ContractDiscovery:
                     )
         return contracts
 
+    @staticmethod
+    def _is_script_file(file_path: Path, text: str) -> bool:
+        """Detect if a Solidity file is a deployment/testing script."""
+        # Path heuristics
+        parts = file_path.parts
+        if 'script' in parts or 'scripts' in parts:
+            return True
+        if file_path.name.endswith('.s.sol'):
+            return True
+
+        # Content heuristics (check first 50 lines for imports/inheritance)
+        for line in text.splitlines()[:50]:
+            stripped = line.strip()
+            if re.search(r'import\s+.*forge-std/(Script|console)\.sol', stripped):
+                return True
+            if re.search(r'\bis\s+Script\b', stripped):
+                return True
+        return False
+
     def _extract_contract_info(self, file_path: Path) -> ContractInfo:
         try:
             text = file_path.read_text(encoding='utf-8', errors='ignore')
@@ -92,6 +113,7 @@ class ContractDiscovery:
                         contract_name = name.split()[0]
                 except Exception:
                     continue
-        return ContractInfo(file_path=file_path, contract_name=contract_name, solc_version=solc_version, line_count=line_count, dependencies=dependencies)
+        is_script = self._is_script_file(file_path, text)
+        return ContractInfo(file_path=file_path, contract_name=contract_name, solc_version=solc_version, line_count=line_count, dependencies=dependencies, is_script=is_script)
 
 

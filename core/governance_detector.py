@@ -26,6 +26,37 @@ class GovernanceDetector:
             'onlyGovernance', 'onlyAuthorized', 'onlyLatestNetworkContract'
         ]
     
+    @staticmethod
+    def _extract_custom_modifiers(contract_code: str) -> List[str]:
+        """Extract custom access-control modifiers defined in the contract.
+
+        Keeps modifiers whose name starts with ``only`` (convention) or whose
+        body contains a ``msg.sender`` check.
+        """
+        custom: List[str] = []
+        # Find all modifier definitions
+        for m in re.finditer(r'modifier\s+(\w+)\s*\(', contract_code):
+            name = m.group(1)
+            if name.startswith('only'):
+                custom.append(name)
+                continue
+            # Check if modifier body references msg.sender
+            brace_start = contract_code.find('{', m.end())
+            if brace_start == -1:
+                continue
+            depth = 1
+            i = brace_start + 1
+            while i < len(contract_code) and depth > 0:
+                if contract_code[i] == '{':
+                    depth += 1
+                elif contract_code[i] == '}':
+                    depth -= 1
+                i += 1
+            body = contract_code[brace_start:i]
+            if 'msg.sender' in body:
+                custom.append(name)
+        return custom
+
     def find_setter_for_param(self, param_name: str, contract_code: str) -> Optional[Dict]:
         """
         Find setter function for a parameter and its protections.
@@ -112,31 +143,44 @@ class GovernanceDetector:
             'confidence': 0.5
         }
     
-    def has_access_control(self, function_code: str) -> Dict:
+    def has_access_control(self, function_code: str, contract_code: str = "") -> Dict:
         """
         Check if a function has access control.
-        
+
         Args:
             function_code: Function source code (including signature and body)
-            
+            contract_code: Full contract source (used for dynamic modifier extraction)
+
         Returns:
             Dict with 'has_access_control' (bool), 'modifiers' (list), 'confidence' (float)
         """
         found_modifiers = []
-        
+
+        # Merge hardcoded + dynamically extracted modifiers
+        all_modifiers = list(self.access_modifiers)
+        if contract_code:
+            all_modifiers.extend(self._extract_custom_modifiers(contract_code))
+        # Deduplicate while preserving order
+        seen = set()
+        unique_modifiers = []
+        for m in all_modifiers:
+            if m not in seen:
+                seen.add(m)
+                unique_modifiers.append(m)
+
         # Check for access control modifiers
-        for modifier in self.access_modifiers:
+        for modifier in unique_modifiers:
             if modifier in function_code:
                 found_modifiers.append(modifier)
-        
+
         # Check for inline access control (require with msg.sender check)
         inline_checks = re.findall(
-            r'require\s*\(\s*msg\.sender\s*==\s*\w+', 
+            r'require\s*\(\s*msg\.sender\s*==\s*\w+',
             function_code
         )
-        
+
         has_inline_control = len(inline_checks) > 0
-        
+
         if found_modifiers or has_inline_control:
             return {
                 'has_access_control': True,
@@ -144,7 +188,7 @@ class GovernanceDetector:
                 'inline_checks': len(inline_checks),
                 'confidence': 0.9 if found_modifiers else 0.7
             }
-        
+
         return {
             'has_access_control': False,
             'modifiers': [],
@@ -155,27 +199,30 @@ class GovernanceDetector:
     def is_governance_function(self, function_name: str, contract_code: str) -> bool:
         """
         Check if a function is governance-related.
-        
+
         Args:
             function_name: Name of the function
             contract_code: Full contract source code
-            
+
         Returns:
             True if function appears to be governance-controlled
         """
         # Extract function definition
         pattern = rf'function\s+{function_name}\s*\([^)]*\)([^{{]*)\{{'
         match = re.search(pattern, contract_code)
-        
+
         if not match:
             return False
-        
+
+        # Merge hardcoded + dynamically extracted modifiers
+        all_modifiers = list(self.access_modifiers) + self._extract_custom_modifiers(contract_code)
+
         # Check for access control modifiers
         modifiers = match.group(1)
-        for modifier in self.access_modifiers:
+        for modifier in all_modifiers:
             if modifier in modifiers:
                 return True
-        
+
         return False
     
     def get_governance_summary(self, contract_code: str) -> Dict:

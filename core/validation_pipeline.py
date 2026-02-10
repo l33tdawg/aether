@@ -587,9 +587,24 @@ class ValidationPipeline:
         in_constructor = self._is_inside_constructor(line_number, self.contract_code)
         
         if in_constructor:
+            # Check for atomic deploy + initialize pattern (no front-running window)
+            description = vuln.get('description', '').lower()
+            vuln_type = vuln.get('vulnerability_type', '').lower()
+            is_frontrun_concern = any(kw in description or kw in vuln_type for kw in [
+                'front-run', 'frontrun', 'front run', 'initialization', 'initialize'
+            ])
+
+            if is_frontrun_concern and self._has_atomic_deploy_init(line_number, self.contract_code):
+                return ValidationStage(
+                    stage_name="constructor_context",
+                    is_false_positive=True,
+                    confidence=0.95,
+                    reasoning="Atomic deployment + initialization in same constructor — deploy and init happen in the same transaction, no front-running window exists"
+                )
+
             # Check if there's proper initialization pattern
             has_initializer = self._has_initialization_function(self.contract_code)
-            
+
             if has_initializer:
                 return ValidationStage(
                     stage_name="constructor_context",
@@ -605,7 +620,7 @@ class ValidationPipeline:
                     confidence=0.6,
                     reasoning="Constructor issue with no clear initialization pattern - needs manual review"
                 )
-        
+
         return None  # Not in constructor
     
     def _is_inside_constructor(self, line_num: int, code: str) -> bool:
@@ -647,9 +662,41 @@ class ValidationPipeline:
         for pattern in init_patterns:
             if re.search(pattern, code):
                 return True
-        
+
         return False
-    
+
+    def _has_atomic_deploy_init(self, line_number: int, code: str) -> bool:
+        """Check if the constructor contains both a deploy (new/Create2) and an initialize call.
+
+        When a contract is deployed *and* initialized inside the same constructor,
+        the two operations happen atomically in a single transaction — there is
+        no window for front-running the initialization.
+        """
+        # Extract the constructor body
+        lines = code.split('\n')
+        constructor_start = None
+        brace_depth = 0
+        constructor_body_lines: List[str] = []
+
+        for i, line in enumerate(lines):
+            if re.search(r'constructor\s*\(', line):
+                constructor_start = i
+            if constructor_start is not None:
+                brace_depth += line.count('{') - line.count('}')
+                constructor_body_lines.append(line)
+                if brace_depth == 0 and len(constructor_body_lines) > 1:
+                    break
+
+        if not constructor_body_lines:
+            return False
+
+        body = '\n'.join(constructor_body_lines)
+
+        has_deploy = bool(re.search(r'\bnew\s+\w+\s*\(', body)) or bool(re.search(r'Create2\b', body))
+        has_init = bool(re.search(r'\.initialize\s*\(', body)) or bool(re.search(r'\.init\s*\(', body))
+
+        return has_deploy and has_init
+
     def _check_governance_control(self, vuln: Dict) -> Optional[ValidationStage]:
         """Check if issue is governance-controlled."""
         if not self.governance_detector:

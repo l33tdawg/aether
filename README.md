@@ -104,11 +104,16 @@ Generates Foundry `invariant_*()` test suites that serve as formal-verification-
 
 **Enhanced PoC Generation**: AST-based contract analysis, iterative compilation fixes, and production-ready LLM prompts generating exploits suitable for bug bounty submissions.
 
-**Advanced False Positive Filtering**: Multi-stage validation reduces false positives from 66% to ~30-35%, improving accuracy from 33% to 65-70%:
+**Advanced False Positive Filtering**: Multi-stage validation reduces false positives from 66% to ~20-25%, improving accuracy from 33% to 75-80%:
+- **Script detection** — deployment scripts (`script/`, `.s.sol`, `forge-std/Script.sol`) automatically excluded from vulnerability analysis
+- **File context markers** — LLM prompts include `[PRODUCTION]`/`[DEPLOYMENT SCRIPT]` labels so models focus on production code
+- **Dynamic modifier detection** — custom access-control modifiers (e.g. `onlyDistributor`, `authorized`) extracted from contract source and recognized alongside hardcoded patterns
+- **Function-scope deduplication** — duplicate findings in the same function are merged instead of using fragile line-number proximity
+- **Atomic constructor detection** — deploy+initialize in the same constructor recognized as non-front-runnable
 - Governance detection (onlyOwner/onlyGovernor protected parameters)
 - Deployment analysis (verifies code paths are actually used in production)
 - Built-in protection checks (Solidity 0.8+ auto-protection, SafeMath)
-- Governance-aware LLM validation with 4-stage checklist
+- Governance-aware LLM validation with 18-pattern checklist
 - Accuracy tracking with submission outcomes and bounty earnings
 - Smart caching for 2x faster repeated analysis
 
@@ -358,10 +363,10 @@ Audit flows defined in YAML configs (`configs/`). Enhanced audit pipeline:
 
 ## Tests
 
-1461 tests across 55 test files, running in ~50 seconds:
+1489 tests across 56 test files, running in ~40 seconds:
 
 ```bash
-python -m pytest tests/                                    # All tests (~50s, 1461 tests)
+python -m pytest tests/                                    # All tests (~40s, 1489 tests)
 python -m pytest tests/test_enhanced_detectors.py -v       # Single file
 python -m pytest tests/test_enhanced_detectors.py::TestArithmeticAnalyzer -v  # Single class
 python -m pytest tests/ -k "governance" -v                 # Pattern match
@@ -379,6 +384,16 @@ python -m pytest tests/ --cov=core --cov-report=html       # With coverage
 ---
 
 ## Changelog
+
+### v3.5.2 — False Positive Reduction
+- **Script detection in contract discovery** — files under `script/`/`scripts/`, `.s.sol` files, and contracts importing `forge-std/Script.sol` or inheriting `is Script` are tagged as deployment scripts and excluded from LLM vulnerability analysis. Eliminates an entire class of false positives from Foundry deployment helpers being analyzed as production code
+- **File context markers in LLM prompts** — combined content now includes `// FILE: <name>` markers per file, and deep analysis passes 1 and 3 receive a `## Project Files` header labeling each file as `[PRODUCTION]` or `[DEPLOYMENT SCRIPT]` so LLMs focus on the right code
+- **Dynamic modifier detection** — `GovernanceDetector` now extracts custom access-control modifiers defined in the contract (e.g. `onlyDistributor`, `onlyMinter`, `authorized`) by scanning for modifier definitions with `only` prefix or `msg.sender` checks. These are merged with the hardcoded modifier list for `has_access_control()` and `is_governance_function()`
+- **Function-scope deduplication** — `VulnerabilityDeduplicator` now groups findings by `(function_name, vuln_type)` when contract code is available, replacing the fragile exact-line matching that missed adjacent-line duplicates in the same function. Falls back to 20-line bucket grouping when function context is unavailable
+- **Widened AI ensemble line tolerance** — `_findings_match_fuzzy()` tolerance increased from ±5 to ±15 lines to catch same-function duplicates across agents
+- **Atomic constructor false positive pattern** — `_check_constructor_context()` now detects when a contract is deployed (`new`/`Create2`) and initialized (`.initialize()`) in the same constructor, marking front-running concerns as false positives since the operations are atomic
+- **LLM validation pattern #18** — added "Atomic Deployment + Initialization" to the 18-pattern false positive checklist in the LLM validation prompt
+- **1489 tests** passing across 56 test files (~40 seconds), up from 1461
 
 ### v3.5 — Deep Analysis Engine
 - **6-pass deep analysis pipeline** — replaces one-shot LLM calls with structured multi-pass reasoning: Protocol Understanding → Attack Surface Mapping → Invariant Violation Analysis → Cross-Function Interaction → Adversarial Modeling → Boundary & Edge Cases. Each pass receives accumulated context from prior passes. Passes 1-2 cached by content hash for fast re-audits
