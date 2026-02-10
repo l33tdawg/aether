@@ -305,6 +305,36 @@ class DatabaseManager:
             self.console.print(f"[red]❌ Failed to store audit metrics: {e}[/red]")
             raise
 
+    def clear_all(self) -> bool:
+        """Delete all data from all tables in the local audit database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('PRAGMA foreign_keys = ON')
+                conn.execute('DELETE FROM audit_metrics')
+                conn.execute('DELETE FROM learning_patterns')
+                conn.execute('DELETE FROM vulnerability_findings')
+                conn.execute('DELETE FROM audit_results')
+                conn.execute('DELETE FROM slither_project_cache')
+                conn.execute('VACUUM')
+            return True
+        except Exception as e:
+            self.console.print(f"[red]Failed to clear database: {e}[/red]")
+            return False
+
+    def get_record_counts(self) -> Dict[str, int]:
+        """Return row counts for each table."""
+        counts = {}
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                for table in ['audit_results', 'vulnerability_findings',
+                              'learning_patterns', 'audit_metrics']:
+                    row = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()
+                    counts[table] = row[0] if row else 0
+        except Exception:
+            pass
+        return counts
+
+
 class AetherDatabase:
     """SQLite database for GitHub audit orchestration (projects/contracts/results/cache/errors/stats).
 
@@ -591,6 +621,42 @@ class AetherDatabase:
             conn.execute('CREATE INDEX IF NOT EXISTS idx_contracts_project ON contracts(project_id)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_results_contract ON analysis_results(contract_id)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_project ON analysis_errors(project_id)')
+
+    def clear_all(self) -> bool:
+        """Delete all data from all tables in the GitHub audit database."""
+        try:
+            with self._connect() as conn:
+                # Delete in FK-safe order
+                conn.execute('DELETE FROM audit_metrics')
+                conn.execute('DELETE FROM learning_patterns')
+                conn.execute('DELETE FROM vulnerability_findings')
+                conn.execute('DELETE FROM audit_results')
+                conn.execute('DELETE FROM analysis_errors')
+                conn.execute('DELETE FROM analysis_results')
+                conn.execute('DELETE FROM build_artifacts')
+                conn.execute('DELETE FROM project_statistics')
+                conn.execute('DELETE FROM audit_scopes')
+                conn.execute('DELETE FROM contracts')
+                conn.execute('DELETE FROM projects')
+                conn.execute('VACUUM')
+            return True
+        except Exception as e:
+            self.console.print(f"[red]Failed to clear GitHub database: {e}[/red]")
+            return False
+
+    def get_record_counts(self) -> Dict[str, int]:
+        """Return row counts for key tables."""
+        counts = {}
+        try:
+            with self._connect() as conn:
+                for table in ['projects', 'contracts', 'analysis_results',
+                              'audit_scopes', 'audit_results',
+                              'vulnerability_findings']:
+                    row = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()
+                    counts[table] = row[0] if row else 0
+        except Exception:
+            pass
+        return counts
 
     # Project operations
     def get_project(self, github_url: str) -> Optional[Dict[str, Any]]:

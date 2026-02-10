@@ -252,6 +252,7 @@ Pick a network from 10+ supported chains, enter an address or paste an explorer 
 - **Reconfigure API keys** — TextInputDialog prompts with masked current values
 - **Reconfigure model selections** — SelectDialog per provider
 - **Triage settings** — severity, confidence threshold, max findings
+- **Clear data** — wipe local audit DB, GitHub audit DB, analysis cache, or all at once (with confirmation)
 
 ### `Enter` — Job Detail
 

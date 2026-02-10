@@ -26,6 +26,7 @@ _MENU_OPTIONS = [
     ("keys", "Reconfigure API keys"),
     ("models", "Reconfigure model selections"),
     ("triage", "Triage settings"),
+    ("clear", "Clear data"),
     ("back", "Back to dashboard"),
 ]
 
@@ -73,6 +74,8 @@ class SettingsScreen(Screen):
             await self._configure_models()
         elif choice == "triage":
             await self._edit_triage_settings()
+        elif choice == "clear":
+            await self._clear_data()
 
     # ── API key configuration ──────────────────────────────────────
 
@@ -329,6 +332,163 @@ class SettingsScreen(Screen):
             detail.update("[green]Triage settings saved.[/green]")
         except Exception as e:
             detail.update(f"[red]Error editing triage settings: {e}[/red]")
+
+    # ── Clear data ──────────────────────────────────────────────
+
+    async def _clear_data(self) -> None:
+        """Present sub-menu for clearing databases and caches."""
+        detail = self.query_one("#settings-detail", Static)
+
+        clear_options = [
+            "Clear local audit database",
+            "Clear GitHub audit database",
+            "Clear analysis cache",
+            "Clear all data",
+        ]
+        selected = await self.app.push_screen_wait(
+            SelectDialog("Select data to clear", clear_options)
+        )
+        if not selected:
+            return
+
+        if selected == "Clear local audit database":
+            await self._clear_local_db(detail)
+        elif selected == "Clear GitHub audit database":
+            await self._clear_github_db(detail)
+        elif selected == "Clear analysis cache":
+            await self._clear_analysis_cache(detail)
+        elif selected == "Clear all data":
+            await self._clear_all_data(detail)
+
+    async def _clear_local_db(self, detail: Static) -> None:
+        """Clear the local audit database after confirmation."""
+        try:
+            from core.database_manager import DatabaseManager
+            db = DatabaseManager()
+            counts = db.get_record_counts()
+            total = sum(counts.values())
+
+            confirmed = await self.app.push_screen_wait(
+                ConfirmDialog(
+                    f"[bold red]Clear local audit database?[/bold red]\n\n"
+                    f"This will delete {total} records:\n"
+                    f"  Audits: {counts.get('audit_results', 0)}\n"
+                    f"  Findings: {counts.get('vulnerability_findings', 0)}\n"
+                    f"  Patterns: {counts.get('learning_patterns', 0)}\n"
+                    f"  Metrics: {counts.get('audit_metrics', 0)}\n\n"
+                    f"This action cannot be undone."
+                )
+            )
+            if confirmed:
+                if db.clear_all():
+                    detail.update("[green]Local audit database cleared.[/green]")
+                else:
+                    detail.update("[red]Failed to clear local audit database.[/red]")
+            else:
+                detail.update("Cancelled.")
+        except Exception as e:
+            detail.update(f"[red]Error: {e}[/red]")
+
+    async def _clear_github_db(self, detail: Static) -> None:
+        """Clear the GitHub audit database after confirmation."""
+        try:
+            from core.database_manager import AetherDatabase
+            db = AetherDatabase()
+            counts = db.get_record_counts()
+            total = sum(counts.values())
+
+            confirmed = await self.app.push_screen_wait(
+                ConfirmDialog(
+                    f"[bold red]Clear GitHub audit database?[/bold red]\n\n"
+                    f"This will delete {total} records:\n"
+                    f"  Projects: {counts.get('projects', 0)}\n"
+                    f"  Contracts: {counts.get('contracts', 0)}\n"
+                    f"  Results: {counts.get('analysis_results', 0)}\n"
+                    f"  Scopes: {counts.get('audit_scopes', 0)}\n\n"
+                    f"This action cannot be undone."
+                )
+            )
+            if confirmed:
+                if db.clear_all():
+                    detail.update("[green]GitHub audit database cleared.[/green]")
+                else:
+                    detail.update("[red]Failed to clear GitHub audit database.[/red]")
+            else:
+                detail.update("Cancelled.")
+        except Exception as e:
+            detail.update(f"[red]Error: {e}[/red]")
+
+    async def _clear_analysis_cache(self, detail: Static) -> None:
+        """Clear the analysis cache after confirmation."""
+        try:
+            from core.analysis_cache import AnalysisCache
+            cache = AnalysisCache()
+            stats = cache.get_stats()
+            disk_entries = stats.get('disk_entries', 0)
+            mem_entries = stats.get('memory_entries', 0)
+
+            confirmed = await self.app.push_screen_wait(
+                ConfirmDialog(
+                    f"[bold red]Clear analysis cache?[/bold red]\n\n"
+                    f"Disk entries: {disk_entries}\n"
+                    f"Memory entries: {mem_entries}\n\n"
+                    f"Cached results will need to be recomputed."
+                )
+            )
+            if confirmed:
+                cache.clear_all()
+                detail.update("[green]Analysis cache cleared.[/green]")
+            else:
+                detail.update("Cancelled.")
+        except Exception as e:
+            detail.update(f"[red]Error: {e}[/red]")
+
+    async def _clear_all_data(self, detail: Static) -> None:
+        """Clear all databases and caches after double confirmation."""
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog(
+                "[bold red]Clear ALL data?[/bold red]\n\n"
+                "This will delete:\n"
+                "  - All local audit results and findings\n"
+                "  - All GitHub audit projects and scopes\n"
+                "  - All cached analysis results\n\n"
+                "This action cannot be undone."
+            )
+        )
+        if not confirmed:
+            detail.update("Cancelled.")
+            return
+
+        errors = []
+        try:
+            from core.database_manager import DatabaseManager
+            db = DatabaseManager()
+            if not db.clear_all():
+                errors.append("local audit database")
+        except Exception as e:
+            errors.append(f"local DB ({e})")
+
+        try:
+            from core.database_manager import AetherDatabase
+            db = AetherDatabase()
+            if not db.clear_all():
+                errors.append("GitHub audit database")
+        except Exception as e:
+            errors.append(f"GitHub DB ({e})")
+
+        try:
+            from core.analysis_cache import AnalysisCache
+            cache = AnalysisCache()
+            cache.clear_all()
+        except Exception as e:
+            errors.append(f"analysis cache ({e})")
+
+        if errors:
+            detail.update(
+                f"[yellow]Partially cleared. Errors with: {', '.join(errors)}[/yellow]"
+            )
+        else:
+            detail.update("[green]All data cleared successfully.[/green]")
 
     # ── Bindings ──────────────────────────────────────────────────
 
