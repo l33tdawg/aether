@@ -7,14 +7,18 @@ This is a placeholder for deeper analyzers; keeps interface stable.
 """
 
 import asyncio
+import sys
+import threading
 import time
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from rich.console import Console
 
+from core.audit_progress import ThreadDemuxWriter
 from core.database_manager import AetherDatabase
 from core.enhanced_audit_engine import EnhancedAetherAuditEngine
 
@@ -228,12 +232,12 @@ class SequentialAnalyzer:
         except Exception:
             return None
 
-    def analyze_contracts(self, project_id: int, project_path: Union[str, Path], contract_relative_paths: List[str], force: bool = False) -> List[AnalysisOutcome]:
+    def analyze_contracts(self, project_id: int, project_path: Union[str, Path], contract_relative_paths: List[str], force: bool = False, max_workers: int = 1) -> List[AnalysisOutcome]:
         outcomes: List[AnalysisOutcome] = []
 
         # Use enhanced analysis engine if requested
         if self.use_enhanced_analysis:
-            return self._analyze_with_enhanced_engine(project_id, project_path, contract_relative_paths, force)
+            return self._analyze_with_enhanced_engine(project_id, project_path, contract_relative_paths, force, max_workers=max_workers)
 
         # Otherwise use basic analysis
         for rel in contract_relative_paths:
@@ -306,22 +310,59 @@ class SequentialAnalyzer:
             'total_findings': int(payable_count > 10) + int(unchecked_count > 0) + int(selfdestruct_count > 0),
         }
 
-    def _analyze_with_enhanced_engine(self, project_id: int, project_path: Union[str, Path], contract_relative_paths: List[str], force: bool = False) -> List[AnalysisOutcome]:
+    def _get_parent_audit_status(self):
+        """Get the ContractAuditStatus registered for the current thread, if any."""
+        stdout = sys.stdout
+        if isinstance(stdout, ThreadDemuxWriter):
+            tid = threading.current_thread().ident
+            with stdout._lock:
+                return stdout._registry.get(tid)
+        return None
+
+    def _register_thread_output(self, audit_status):
+        """Register current thread with stdout/stderr demuxers for output capture."""
+        if audit_status is None:
+            return
+        stdout = sys.stdout
+        stderr = sys.stderr
+        if isinstance(stdout, ThreadDemuxWriter):
+            stdout.register(audit_status)
+        if isinstance(stderr, ThreadDemuxWriter):
+            stderr.register(audit_status)
+        # Also register with the logging JobLogHandler if present
+        import logging
+        for handler in logging.getLogger().handlers:
+            if hasattr(handler, 'register') and hasattr(handler, '_registry'):
+                handler.register(audit_status)
+
+    def _unregister_thread_output(self):
+        """Unregister current thread from stdout/stderr demuxers."""
+        stdout = sys.stdout
+        stderr = sys.stderr
+        if isinstance(stdout, ThreadDemuxWriter):
+            stdout.unregister()
+        if isinstance(stderr, ThreadDemuxWriter):
+            stderr.unregister()
+        import logging
+        for handler in logging.getLogger().handlers:
+            if hasattr(handler, 'unregister') and hasattr(handler, '_registry'):
+                handler.unregister()
+
+    def _analyze_with_enhanced_engine(self, project_id: int, project_path: Union[str, Path], contract_relative_paths: List[str], force: bool = False, max_workers: int = 1) -> List[AnalysisOutcome]:
         """Use EnhancedAetherAuditEngine for comprehensive analysis."""
         outcomes: List[AnalysisOutcome] = []
+        total = len(contract_relative_paths)
 
-        # Initialize enhanced audit engine with AetherDatabase for GitHub audit compatibility
-        enhanced_engine = EnhancedAetherAuditEngine(verbose=True, database=self.db)
-
+        # First pass: handle skips and cache hits (fast, sequential)
+        pending = []  # (original_index, rel_path) for contracts needing analysis
         for idx, rel in enumerate(contract_relative_paths, 1):
             start = time.time()
             contract_path = Path(project_path) / rel
-            contract_name = contract_path.name  # e.g., "RocketBase.sol"
+            contract_name = contract_path.name
 
-            # Check if this is an abstract interface (skip analysis - no implementation to analyze)
+            # Check if this is an abstract interface (skip analysis)
             if self._is_abstract_interface(contract_path):
                 duration_ms = int((time.time() - start) * 1000)
-                # Save as skipped with empty findings
                 empty_findings = {'total_findings': 0, 'severity_counts': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}, 'vulnerabilities': [], 'analysis_types': ['skipped_interface']}
                 self.db.save_analysis_result(
                     contract_id=self._get_contract_id(project_id, rel),
@@ -330,7 +371,7 @@ class SequentialAnalyzer:
                     status='skipped',
                     analysis_duration_ms=duration_ms,
                 )
-                self.console.print(f"[yellow]⏭️  {idx}/{len(contract_relative_paths)}: {contract_name} (skipped - interface)[/yellow]")
+                self.console.print(f"[yellow]⏭️  {idx}/{total}: {contract_name} (skipped - interface)[/yellow]")
                 outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=empty_findings, status='skipped', duration_ms=duration_ms))
                 continue
 
@@ -338,7 +379,6 @@ class SequentialAnalyzer:
             mock_reason = self._get_mock_or_test_reason(contract_path)
             if mock_reason:
                 duration_ms = int((time.time() - start) * 1000)
-                # Save as skipped with empty findings
                 empty_findings = {'total_findings': 0, 'severity_counts': {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}, 'vulnerabilities': [], 'analysis_types': ['skipped_mock_test']}
                 self.db.save_analysis_result(
                     contract_id=self._get_contract_id(project_id, rel),
@@ -347,7 +387,7 @@ class SequentialAnalyzer:
                     status='skipped',
                     analysis_duration_ms=duration_ms,
                 )
-                self.console.print(f"[yellow]⏭️  {idx}/{len(contract_relative_paths)}: {contract_name} (skipped - {mock_reason})[/yellow]")
+                self.console.print(f"[yellow]⏭️  {idx}/{total}: {contract_name} (skipped - {mock_reason})[/yellow]")
                 outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=empty_findings, status='skipped', duration_ms=duration_ms))
                 continue
 
@@ -356,15 +396,42 @@ class SequentialAnalyzer:
                 cached = self._get_cached(project_id, rel)
                 if cached is not None:
                     duration_ms = int((time.time() - start) * 1000)
-                    self.console.print(f"[cyan]⚡ {idx}/{len(contract_relative_paths)}: {contract_name} (cached)[/cyan]")
+                    self.console.print(f"[cyan]⚡ {idx}/{total}: {contract_name} (cached)[/cyan]")
                     outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=cached, status='cached', duration_ms=duration_ms))
                     continue
 
+            pending.append((idx, rel))
+
+        if not pending:
+            return outcomes
+
+        # Second pass: analyze pending contracts
+        effective_workers = min(max_workers, len(pending))
+
+        if effective_workers > 1:
+            self.console.print(f"\n[bold cyan]Running {len(pending)} contracts in parallel ({effective_workers} workers)...[/bold cyan]\n")
+            parallel_outcomes = self._analyze_parallel(project_id, project_path, pending, total, effective_workers)
+            outcomes.extend(parallel_outcomes)
+        else:
+            # Sequential analysis (single worker)
+            sequential_outcomes = self._analyze_sequential(project_id, project_path, pending, total)
+            outcomes.extend(sequential_outcomes)
+
+        return outcomes
+
+    def _analyze_sequential(self, project_id: int, project_path: Union[str, Path], pending: list, total: int) -> List[AnalysisOutcome]:
+        """Analyze contracts sequentially (original behavior)."""
+        outcomes: List[AnalysisOutcome] = []
+        enhanced_engine = EnhancedAetherAuditEngine(verbose=True, database=self.db)
+
+        for idx, rel in pending:
+            start = time.time()
+            contract_path = Path(project_path) / rel
+            contract_name = contract_path.name
+
             try:
-                # Display progress: Currently analyzing
-                self.console.print(f"[bold cyan]🔍 {idx}/{len(contract_relative_paths)}: {contract_name}[/bold cyan]", end="")
-                
-                # Run enhanced audit on the contract
+                self.console.print(f"[bold cyan]🔍 {idx}/{total}: {contract_name}[/bold cyan]", end="")
+
                 results = asyncio.run(enhanced_engine.run_enhanced_audit_with_llm_validation(
                     str(contract_path),
                     output_dir=None,
@@ -372,9 +439,6 @@ class SequentialAnalyzer:
                 ))
 
                 duration_ms = int((time.time() - start) * 1000)
-                status = 'success'
-
-                # Extract findings from results
                 findings = self._extract_findings_from_results(results)
                 finding_count = findings.get('total_findings', 0)
 
@@ -382,38 +446,126 @@ class SequentialAnalyzer:
                     contract_id=self._get_contract_id(project_id, rel),
                     analysis_type='enhanced',
                     findings=findings,
-                    status=status,
+                    status='success',
                     analysis_duration_ms=duration_ms,
                 )
 
-                # Display completion with findings count and duration
                 duration_sec = duration_ms / 1000
                 if finding_count > 0:
                     self.console.print(f" [green]✅ {finding_count} finding{'s' if finding_count != 1 else ''} ({duration_sec:.1f}s)[/green]")
                 else:
                     self.console.print(f" [green]✅ clean ({duration_sec:.1f}s)[/green]")
-                
-                outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status=status, duration_ms=duration_ms))
+
+                outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status='success', duration_ms=duration_ms))
 
             except Exception as e:
                 duration_ms = int((time.time() - start) * 1000)
-                status = 'error'
                 findings = {'error': str(e), 'error_type': 'analysis_error'}
 
                 self.db.save_analysis_result(
                     contract_id=self._get_contract_id(project_id, rel),
                     analysis_type='enhanced',
                     findings=findings,
-                    status=status,
+                    status='error',
                     error_log=str(e),
                     analysis_duration_ms=duration_ms,
                 )
 
                 duration_sec = duration_ms / 1000
                 self.console.print(f" [red]❌ error ({duration_sec:.1f}s)[/red]")
-                outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status=status, duration_ms=duration_ms))
+                outcomes.append(AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status='error', duration_ms=duration_ms))
 
         return outcomes
+
+    def _analyze_parallel(self, project_id: int, project_path: Union[str, Path], pending: list, total: int, max_workers: int) -> List[AnalysisOutcome]:
+        """Analyze contracts in parallel using ThreadPoolExecutor."""
+        # Capture parent thread's audit_status so worker threads can register for output capture
+        parent_audit_status = self._get_parent_audit_status()
+
+        # Results indexed by position for ordered output
+        results_map: Dict[int, AnalysisOutcome] = {}
+
+        def _worker(idx: int, rel: str) -> AnalysisOutcome:
+            """Worker function that runs in a pool thread."""
+            # Register this thread with demuxers so output goes to the job's log buffer
+            self._register_thread_output(parent_audit_status)
+            try:
+                start = time.time()
+                contract_path = Path(project_path) / rel
+                contract_name = contract_path.name
+
+                try:
+                    print(f"🔍 {idx}/{total}: {contract_name} — starting analysis", flush=True)
+
+                    # Each worker gets its own engine instance (thread-safe)
+                    engine = EnhancedAetherAuditEngine(verbose=True, database=self.db)
+                    results = asyncio.run(engine.run_enhanced_audit_with_llm_validation(
+                        str(contract_path),
+                        output_dir=None,
+                        enable_foundry_tests=False
+                    ))
+
+                    duration_ms = int((time.time() - start) * 1000)
+                    findings = self._extract_findings_from_results(results)
+                    finding_count = findings.get('total_findings', 0)
+
+                    self.db.save_analysis_result(
+                        contract_id=self._get_contract_id(project_id, rel),
+                        analysis_type='enhanced',
+                        findings=findings,
+                        status='success',
+                        analysis_duration_ms=duration_ms,
+                    )
+
+                    duration_sec = duration_ms / 1000
+                    if finding_count > 0:
+                        print(f"✅ {idx}/{total}: {contract_name} — {finding_count} finding{'s' if finding_count != 1 else ''} ({duration_sec:.1f}s)", flush=True)
+                    else:
+                        print(f"✅ {idx}/{total}: {contract_name} — clean ({duration_sec:.1f}s)", flush=True)
+
+                    return AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status='success', duration_ms=duration_ms)
+
+                except Exception as e:
+                    duration_ms = int((time.time() - start) * 1000)
+                    findings = {'error': str(e), 'error_type': 'analysis_error'}
+
+                    self.db.save_analysis_result(
+                        contract_id=self._get_contract_id(project_id, rel),
+                        analysis_type='enhanced',
+                        findings=findings,
+                        status='error',
+                        error_log=str(e),
+                        analysis_duration_ms=duration_ms,
+                    )
+
+                    duration_sec = duration_ms / 1000
+                    print(f"❌ {idx}/{total}: {contract_name} — error ({duration_sec:.1f}s)", flush=True)
+                    return AnalysisOutcome(contract_path=rel, analysis_type='enhanced', findings=findings, status='error', duration_ms=duration_ms)
+
+            finally:
+                self._unregister_thread_output()
+
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="analyzer") as executor:
+            futures = {}
+            for idx, rel in pending:
+                future = executor.submit(_worker, idx, rel)
+                futures[future] = (idx, rel)
+
+            for future in as_completed(futures):
+                idx, rel = futures[future]
+                try:
+                    outcome = future.result()
+                    results_map[idx] = outcome
+                except Exception as e:
+                    # Shouldn't happen since _worker catches exceptions, but just in case
+                    results_map[idx] = AnalysisOutcome(
+                        contract_path=rel, analysis_type='enhanced',
+                        findings={'error': str(e), 'error_type': 'worker_error'},
+                        status='error', duration_ms=0
+                    )
+
+        # Return in original order
+        return [results_map[idx] for idx, _ in pending if idx in results_map]
 
     def _extract_findings_from_results(self, results: Dict[str, any]) -> Dict[str, any]:
         """Extract findings from enhanced audit results."""

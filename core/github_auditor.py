@@ -279,8 +279,15 @@ class GitHubAuditor:
                 
                 # Run analysis on selected contracts
                 try:
+                    # Get parallelism config
+                    try:
+                        from core.config_manager import ConfigManager
+                        max_workers = min(ConfigManager().config.max_concurrent_contracts, len(rel_paths), 8)
+                    except Exception:
+                        max_workers = min(5, len(rel_paths))
+
                     analyzer = SequentialAnalyzer(db=self.db, use_enhanced_analysis=True)
-                    outcomes = analyzer.analyze_contracts(project_id, repo_dir, rel_paths, force=options.reanalyze)
+                    outcomes = analyzer.analyze_contracts(project_id, repo_dir, rel_paths, force=options.reanalyze, max_workers=max_workers)
                     findings = [{'contract': oc.contract_path, 'analysis_type': oc.analysis_type, 
                                'summary': oc.findings} for oc in outcomes]
                     
@@ -517,8 +524,16 @@ class GitHubAuditor:
             try:
                 # Determine if we should use enhanced analysis (for now, always use enhanced for better results)
                 use_enhanced = True  # Could be made configurable via options
+
+                # Get parallelism config
+                try:
+                    from core.config_manager import ConfigManager
+                    max_workers = min(ConfigManager().config.max_concurrent_contracts, len(rel_paths), 8)
+                except Exception:
+                    max_workers = min(5, len(rel_paths))
+
                 analyzer = SequentialAnalyzer(db=self.db, use_enhanced_analysis=use_enhanced)
-                outcomes = analyzer.analyze_contracts(project_id, clone.repo_path, rel_paths, force=options.reanalyze)
+                outcomes = analyzer.analyze_contracts(project_id, clone.repo_path, rel_paths, force=options.reanalyze, max_workers=max_workers)
             except Exception as e:
                 self.db.log_error({
                     'project_id': project_id,

@@ -356,8 +356,8 @@ class NewAuditScreen(Screen):
             scope_id=scope_id,
         )
 
-        self.app.pop_screen()
-        return None  # Signals: don't continue wizard (audit launched)
+        # Return None — _wizard() will pop_screen() once back to MainScreen
+        return None
 
     async def _step_explorer(
         self, status: Static

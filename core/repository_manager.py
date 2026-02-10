@@ -47,6 +47,8 @@ def _strip_credentials(remote_url: str) -> str:
 def _parse_github_url(url: str) -> Tuple[Optional[str], Optional[str]]:
     # Supports https URLs primarily. SSH format will return (None, None).
     try:
+        # Strip query parameters and fragments
+        url = url.split('?')[0].split('#')[0]
         if url.endswith('.git'):
             url = url[:-4]
         if 'github.com/' in url:
@@ -169,6 +171,8 @@ class RepositoryManager:
                 return url
             # Trim whitespace
             cleaned = url.strip()
+            # Strip query parameters and fragments (e.g. ?utm_source=immunefi, #readme)
+            cleaned = cleaned.split('?')[0].split('#')[0]
             # Remove trailing .git for parsing, we'll accept both
             suffix_git = cleaned.endswith('.git')
             if suffix_git:

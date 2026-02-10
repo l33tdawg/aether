@@ -120,6 +120,16 @@ class JobDetailScreen(Screen):
         # Start a 0.5s refresh timer for live updates
         self._refresh_timer = self.set_interval(0.5, self._refresh)
 
+    def on_screen_suspend(self) -> None:
+        """Pause refresh timer when this screen is hidden by another screen."""
+        if self._refresh_timer is not None:
+            self._refresh_timer.pause()
+
+    def on_screen_resume(self) -> None:
+        """Resume refresh timer when this screen becomes active again."""
+        if self._refresh_timer is not None:
+            self._refresh_timer.resume()
+
     def _refresh(self) -> None:
         """Fetch new log lines, update phase bar and metadata panel."""
         jm = JobManager.get_instance()

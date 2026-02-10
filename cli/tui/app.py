@@ -12,7 +12,6 @@ from pathlib import Path
 
 from textual.app import App
 from textual.binding import Binding
-from textual.css.query import NoMatches
 
 from core.job_manager import JobManager
 from core.llm_usage_tracker import LLMUsageTracker
@@ -43,30 +42,12 @@ class AetherApp(App):
         super().__init__(**kwargs)
         self._job_manager = JobManager.get_instance()
         self._tracker = LLMUsageTracker.get_instance()
-        self._refresh_timer = None
 
     def on_mount(self) -> None:
-        """Push MainScreen as the default screen and start the refresh timer."""
+        """Push MainScreen as the default screen."""
         from cli.tui.screens.main import MainScreen
 
         self.push_screen(MainScreen())
-        self._refresh_timer = self.set_interval(1.0, self._refresh_jobs)
-
-    def _refresh_jobs(self) -> None:
-        """Periodically refresh the jobs table and cost bar on the active screen."""
-        try:
-            from cli.tui.widgets.jobs_table import JobsTable
-            jobs_table = self.query_one(JobsTable)
-            jobs_table.refresh_jobs()
-        except (NoMatches, Exception):
-            pass
-
-        try:
-            from cli.tui.widgets.cost_bar import CostBar
-            cost_bar = self.query_one(CostBar)
-            cost_bar.refresh_cost()
-        except (NoMatches, Exception):
-            pass
 
     # ── Action handlers ──────────────────────────────────────────
 

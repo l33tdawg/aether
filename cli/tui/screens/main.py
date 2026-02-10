@@ -48,6 +48,18 @@ class MainScreen(Screen):
         # Do an immediate refresh so the screen isn't blank on first paint
         self._refresh()
 
+    def on_screen_suspend(self) -> None:
+        """Pause refresh timer when this screen is hidden by another screen."""
+        if self._refresh_timer is not None:
+            self._refresh_timer.pause()
+
+    def on_screen_resume(self) -> None:
+        """Resume refresh timer when this screen becomes active again."""
+        if self._refresh_timer is not None:
+            self._refresh_timer.resume()
+        # Immediate refresh to catch up on any changes while suspended
+        self._refresh()
+
     def _refresh(self) -> None:
         """Poll JobManager and LLMUsageTracker to update widgets."""
         try:
