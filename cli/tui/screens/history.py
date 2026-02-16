@@ -246,7 +246,6 @@ class HistoryScreen(Screen):
                 return
 
             from cli.tui.github_audit_helper import GitHubAuditHelper
-            from cli.tui.dialogs.contract_selector import ContractSelectorDialog
 
             helper = GitHubAuditHelper()
 
@@ -265,24 +264,72 @@ class HistoryScreen(Screen):
                 )
                 return
 
-            # Show contract selector
-            audited_paths = helper.get_previously_audited_paths(project["id"])
-            audited_indices = [
-                i for i, c in enumerate(contracts)
-                if c.get("file_path") in audited_paths
-            ]
-
-            selected_indices = await self.app.push_screen_wait(
-                ContractSelectorDialog(
-                    contracts=contracts,
-                    pre_selected=list(range(len(contracts))),
-                    previously_audited_indices=audited_indices,
+            # Choose selection method
+            repo_dir = helper.get_repo_dir(project["id"])
+            method = await self.app.push_screen_wait(
+                SelectDialog(
+                    f"Select contracts from {project['name']} ({len(contracts)} found)",
+                    [
+                        "Auto-Discover (scan & rank)",
+                        "Manual selection (show all)",
+                    ],
                 )
             )
-            if selected_indices is None or len(selected_indices) == 0:
+            if method is None:
                 return
 
-            selected_paths = [contracts[i]["file_path"] for i in selected_indices]
+            if method == "Auto-Discover (scan & rank)" and repo_dir:
+                import asyncio
+                from pathlib import Path as _Path
+                from core.contract_scanner import ContractScanner
+                from cli.tui.dialogs.discovery_results import DiscoveryResultsDialog
+
+                scanner = ContractScanner()
+                try:
+                    loop = asyncio.get_event_loop()
+                    report = await loop.run_in_executor(
+                        None, scanner.scan_directory, _Path(repo_dir)
+                    )
+                except Exception as e:
+                    await self.app.push_screen_wait(
+                        ConfirmDialog(f"Scan failed: {e}\n\nOK?")
+                    )
+                    return
+
+                if not report.results:
+                    await self.app.push_screen_wait(
+                        ConfirmDialog("No contracts found after scanning.\n\nOK?")
+                    )
+                    return
+
+                discovered_paths = await self.app.push_screen_wait(
+                    DiscoveryResultsDialog(report)
+                )
+                if discovered_paths is None or len(discovered_paths) == 0:
+                    return
+                selected_paths = [str(p) for p in discovered_paths]
+            else:
+                # Manual selection flow
+                from cli.tui.dialogs.contract_selector import ContractSelectorDialog
+
+                audited_paths = helper.get_previously_audited_paths(project["id"])
+                audited_indices = [
+                    i for i, c in enumerate(contracts)
+                    if c.get("file_path") in audited_paths
+                ]
+
+                selected_indices = await self.app.push_screen_wait(
+                    ContractSelectorDialog(
+                        contracts=contracts,
+                        pre_selected=list(range(len(contracts))),
+                        previously_audited_indices=audited_indices,
+                    )
+                )
+                if selected_indices is None or len(selected_indices) == 0:
+                    return
+
+                selected_paths = [contracts[i]["file_path"] for i in selected_indices]
+
             scope_id = helper.save_new_scope(project["id"], selected_paths)
 
             # Launch as background job

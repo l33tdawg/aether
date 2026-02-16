@@ -145,6 +145,17 @@ class GitHubAuditHelper:
         db = self._get_db()
         return db.get_contracts(project_id)
 
+    def get_repo_dir(self, project_id: int) -> Optional[str]:
+        """Get the cached repo directory path for a project, if it exists."""
+        db = self._get_db()
+        project = db.get_project_by_id(project_id)
+        if not project:
+            return None
+        cache_path = project.get("cache_path")
+        if cache_path and Path(cache_path).is_dir():
+            return cache_path
+        return None
+
     # ── Scope management ──────────────────────────────────────────
 
     def save_new_scope(
