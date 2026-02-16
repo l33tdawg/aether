@@ -390,35 +390,61 @@ class NewAuditScreen(Screen):
 
         # Select contracts if no scope chosen yet
         if scope_id is None:
-            from cli.tui.dialogs.contract_selector import ContractSelectorDialog
+            repo_dir = discovery.get("repo_dir", "")
 
-            # Find previously audited contracts
-            audited_paths = helper.get_previously_audited_paths(project_id)
-            audited_indices = []
-            for i, c in enumerate(contracts):
-                if c.get("file_path") in audited_paths:
-                    audited_indices.append(i)
-
-            pre_selected = list(range(len(contracts)))
-
-            self._update_status(
-                status,
-                f"[bold cyan]New Audit Wizard[/bold cyan]\n\n"
-                f"[bold]Repository:[/bold] {url}\n"
-                f"[bold]Contracts:[/bold] {len(contracts)} found\n\n"
-                "[cyan]Select contracts to audit...[/cyan]",
-            )
-            selected_indices = await self.app.push_screen_wait(
-                ContractSelectorDialog(
-                    contracts=contracts,
-                    pre_selected=pre_selected,
-                    previously_audited_indices=audited_indices,
+            # Choose selection method
+            method = await self.app.push_screen_wait(
+                SelectDialog(
+                    f"Select contracts from {repo_name} ({len(contracts)} found)",
+                    [
+                        "Auto-Discover (scan & rank)",
+                        "Manual selection (show all)",
+                    ],
                 )
             )
-            if selected_indices is None or len(selected_indices) == 0:
+            if method is None:
                 return None
 
-            selected_paths = [contracts[i]["file_path"] for i in selected_indices]
+            if method == "Auto-Discover (scan & rank)" and repo_dir:
+                # Run scanner on cloned repo directory
+                discovered_paths = await self._auto_discover_flow(
+                    status, Path(repo_dir)
+                )
+                if discovered_paths is None or len(discovered_paths) == 0:
+                    return None
+                selected_paths = [str(p) for p in discovered_paths]
+            else:
+                # Original manual selection flow
+                from cli.tui.dialogs.contract_selector import ContractSelectorDialog
+
+                # Find previously audited contracts
+                audited_paths = helper.get_previously_audited_paths(project_id)
+                audited_indices = []
+                for i, c in enumerate(contracts):
+                    if c.get("file_path") in audited_paths:
+                        audited_indices.append(i)
+
+                pre_selected = list(range(len(contracts)))
+
+                self._update_status(
+                    status,
+                    f"[bold cyan]New Audit Wizard[/bold cyan]\n\n"
+                    f"[bold]Repository:[/bold] {url}\n"
+                    f"[bold]Contracts:[/bold] {len(contracts)} found\n\n"
+                    "[cyan]Select contracts to audit...[/cyan]",
+                )
+                selected_indices = await self.app.push_screen_wait(
+                    ContractSelectorDialog(
+                        contracts=contracts,
+                        pre_selected=pre_selected,
+                        previously_audited_indices=audited_indices,
+                    )
+                )
+                if selected_indices is None or len(selected_indices) == 0:
+                    return None
+
+                selected_paths = [contracts[i]["file_path"] for i in selected_indices]
+
             scope_id = helper.save_new_scope(project_id, selected_paths)
 
         # Launch GitHub audit as background job
