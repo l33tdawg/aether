@@ -17,7 +17,7 @@ from core.job_manager import JobManager
 from core.llm_usage_tracker import LLMUsageTracker
 
 
-VERSION = "3.5"
+VERSION = "3.6"
 
 
 class AetherApp(App):
@@ -29,6 +29,7 @@ class AetherApp(App):
 
     BINDINGS = [
         Binding("n", "new_audit", "New Audit", show=True),
+        Binding("d", "discover", "Discover", show=True),
         Binding("r", "resume_audit", "Resume", show=True),
         Binding("h", "history", "History", show=True),
         Binding("p", "pocs", "PoCs", show=True),
@@ -54,6 +55,10 @@ class AetherApp(App):
     def action_new_audit(self) -> None:
         from cli.tui.screens.new_audit import NewAuditScreen
         self.push_screen(NewAuditScreen())
+
+    def action_discover(self) -> None:
+        from cli.tui.screens.new_audit import NewAuditScreen
+        self.push_screen(NewAuditScreen(auto_discover=True))
 
     def action_resume_audit(self) -> None:
         from cli.tui.screens.resume import ResumeScreen

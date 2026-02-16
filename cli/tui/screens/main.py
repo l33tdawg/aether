@@ -22,6 +22,7 @@ class MainScreen(Screen):
 
     BINDINGS = [
         Binding("n", "new_audit", "New Audit", show=True),
+        Binding("d", "discover", "Discover", show=True),
         Binding("r", "resume", "Resume", show=True),
         Binding("h", "history", "History", show=True),
         Binding("p", "pocs", "PoCs", show=True),
@@ -84,6 +85,9 @@ class MainScreen(Screen):
 
     def action_new_audit(self) -> None:
         self.app.action_new_audit()
+
+    def action_discover(self) -> None:
+        self.app.action_discover()
 
     def action_resume(self) -> None:
         self.app.action_resume_audit()

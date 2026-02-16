@@ -26,11 +26,20 @@ from cli.tui.dialogs.path_picker import PathDialog
 
 
 class NewAuditScreen(Screen):
-    """Multi-step wizard for configuring and launching a new audit."""
+    """Multi-step wizard for configuring and launching a new audit.
+
+    Args:
+        auto_discover: If True, skip source-type selection and go straight
+            to PathDialog -> Auto-Discover flow.
+    """
 
     BINDINGS = [
         Binding("escape", "go_back", "Back", show=True),
     ]
+
+    def __init__(self, auto_discover: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._auto_discover = auto_discover
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -54,29 +63,33 @@ class NewAuditScreen(Screen):
         """Top-level wizard coroutine.  Any cancel pops back to main."""
         status = self.query_one("#wizard-status", Static)
 
-        # Step 1 — source type
-        self._update_status(status, "[bold cyan]New Audit Wizard[/bold cyan]\n\nStep 1/5: Select audit source")
-        source_type = await self.app.push_screen_wait(
-            SelectDialog(
-                "Select audit source",
-                [
-                    "Local file or directory",
-                    "GitHub URL",
-                    "Block explorer URL / address",
-                ],
-            )
-        )
-        if source_type is None:
-            self.app.pop_screen()
-            return
-
-        # Step 2 — target (varies by source type)
-        if source_type == "Local file or directory":
-            result = await self._step_local(status)
-        elif source_type == "GitHub URL":
-            result = await self._step_github(status)
+        if self._auto_discover:
+            # Skip step 1 — go straight to auto-discover local flow
+            result = await self._step_local(status, force_discover=True)
         else:
-            result = await self._step_explorer(status)
+            # Step 1 — source type
+            self._update_status(status, "[bold cyan]New Audit Wizard[/bold cyan]\n\nStep 1/5: Select audit source")
+            source_type = await self.app.push_screen_wait(
+                SelectDialog(
+                    "Select audit source",
+                    [
+                        "Local file or directory",
+                        "GitHub URL",
+                        "Block explorer URL / address",
+                    ],
+                )
+            )
+            if source_type is None:
+                self.app.pop_screen()
+                return
+
+            # Step 2 — target (varies by source type)
+            if source_type == "Local file or directory":
+                result = await self._step_local(status)
+            elif source_type == "GitHub URL":
+                result = await self._step_github(status)
+            else:
+                result = await self._step_explorer(status)
 
         if result is None:
             self.app.pop_screen()
@@ -153,7 +166,7 @@ class NewAuditScreen(Screen):
     # ── Step 2 variants ──────────────────────────────────────────
 
     async def _step_local(
-        self, status: Static
+        self, status: Static, force_discover: bool = False,
     ) -> Optional[tuple[str, List[Path], bool]]:
         """Local file/directory wizard step.  Returns (target, selected_files, use_parallel) or None."""
         self._update_status(
@@ -180,44 +193,114 @@ class NewAuditScreen(Screen):
         if resolved.is_dir():
             sol_files_all = sorted(resolved.rglob("*.sol"))
             if len(sol_files_all) >= 2:
-                # Let user select which contracts
-                choices = []
-                for f in sol_files_all:
-                    try:
-                        rel = f.relative_to(resolved)
-                    except ValueError:
-                        rel = f.name
-                    choices.append((f"{f.stem}  ({rel})", str(f), True))
-
-                self._update_status(
-                    status,
-                    f"[bold cyan]New Audit Wizard[/bold cyan]\n\n"
-                    f"[bold]Directory:[/bold] {target}\n"
-                    f"Found {len(sol_files_all)} Solidity files — select contracts to audit",
-                )
-                selected = await self.app.push_screen_wait(
-                    CheckboxDialog(
-                        f"Select contracts to audit ({len(sol_files_all)} found)",
-                        choices,
+                # Choose selection method
+                use_discover = force_discover
+                if not force_discover:
+                    method = await self.app.push_screen_wait(
+                        SelectDialog(
+                            "How would you like to select contracts?",
+                            [
+                                "Auto-Discover (scan & rank)",
+                                "Manual selection (show all)",
+                            ],
+                        )
                     )
-                )
-                if selected is None:
-                    return None
-                if not selected:
-                    self._update_status(status, "[yellow]No contracts selected.[/yellow]")
-                    return None
-                sol_files = [Path(p) for p in selected]
+                    if method is None:
+                        return None
+                    use_discover = method == "Auto-Discover (scan & rank)"
 
-                if len(sol_files) > 1:
-                    use_parallel_result = await self.app.push_screen_wait(
-                        ConfirmDialog(f"Run {len(sol_files)} contracts in parallel?")
+                if use_discover:
+                    sol_files = await self._auto_discover_flow(status, resolved)
+                    if sol_files is None:
+                        return None
+                    if not sol_files:
+                        self._update_status(status, "[yellow]No contracts selected.[/yellow]")
+                        return None
+                    # Auto-enable parallel for 2+ contracts
+                    use_parallel = len(sol_files) > 1
+                else:
+                    # Original manual selection flow
+                    choices = []
+                    for f in sol_files_all:
+                        try:
+                            rel = f.relative_to(resolved)
+                        except ValueError:
+                            rel = f.name
+                        choices.append((f"{f.stem}  ({rel})", str(f), True))
+
+                    self._update_status(
+                        status,
+                        f"[bold cyan]New Audit Wizard[/bold cyan]\n\n"
+                        f"[bold]Directory:[/bold] {target}\n"
+                        f"Found {len(sol_files_all)} Solidity files — select contracts to audit",
                     )
-                    use_parallel = use_parallel_result if use_parallel_result is not None else False
+                    selected = await self.app.push_screen_wait(
+                        CheckboxDialog(
+                            f"Select contracts to audit ({len(sol_files_all)} found)",
+                            choices,
+                        )
+                    )
+                    if selected is None:
+                        return None
+                    if not selected:
+                        self._update_status(status, "[yellow]No contracts selected.[/yellow]")
+                        return None
+                    sol_files = [Path(p) for p in selected]
+
+                    if len(sol_files) > 1:
+                        use_parallel_result = await self.app.push_screen_wait(
+                            ConfirmDialog(f"Run {len(sol_files)} contracts in parallel?")
+                        )
+                        use_parallel = use_parallel_result if use_parallel_result is not None else False
 
             elif len(sol_files_all) == 1:
                 sol_files = sol_files_all
 
         return target, sol_files, use_parallel
+
+    async def _auto_discover_flow(
+        self, status: Static, resolved: Path,
+    ) -> Optional[List[Path]]:
+        """Run ContractScanner and present DiscoveryResultsDialog.
+
+        Returns selected paths, empty list, or None on cancel.
+        """
+        self._update_status(
+            status,
+            f"[bold cyan]New Audit Wizard[/bold cyan]\n\n"
+            f"[bold]Directory:[/bold] {resolved}\n\n"
+            "[cyan]Scanning contracts...[/cyan]",
+        )
+
+        from core.contract_scanner import ContractScanner
+        scanner = ContractScanner()
+
+        try:
+            loop = asyncio.get_event_loop()
+            report = await loop.run_in_executor(None, scanner.scan_directory, resolved)
+        except Exception as e:
+            self._update_status(status, f"[red]Scan failed: {e}[/red]")
+            await self.app.push_screen_wait(ConfirmDialog(f"Scan failed: {e}\n\nGo back?"))
+            return None
+
+        if not report.results:
+            self._update_status(status, "[yellow]No contracts found after scanning.[/yellow]")
+            await self.app.push_screen_wait(ConfirmDialog("No contracts found.\n\nGo back?"))
+            return None
+
+        self._update_status(
+            status,
+            f"[bold cyan]New Audit Wizard[/bold cyan]\n\n"
+            f"[bold]Directory:[/bold] {resolved}\n"
+            f"[bold]Scanned:[/bold] {report.scanned} contracts in {report.scan_time_ms}ms\n\n"
+            "[cyan]Select contracts to audit...[/cyan]",
+        )
+
+        from cli.tui.dialogs.discovery_results import DiscoveryResultsDialog
+        selected_paths = await self.app.push_screen_wait(
+            DiscoveryResultsDialog(report)
+        )
+        return selected_paths
 
     async def _step_github(
         self, status: Static
