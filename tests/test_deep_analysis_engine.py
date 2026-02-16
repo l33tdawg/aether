@@ -14,7 +14,6 @@ from core.deep_analysis_engine import (
     _build_pass3_prompt,
     _build_pass4_prompt,
     _build_pass5_prompt,
-    _build_pass6_prompt,
     _content_hash,
 )
 from core.protocol_archetypes import (
@@ -187,20 +186,10 @@ class TestDeepAnalysisEngine(unittest.TestCase):
                 "line": 9,
             }]
         })
-        pass6_response = json.dumps({
-            "findings": [{
-                "type": "division_by_zero",
-                "severity": "medium",
-                "confidence": 0.6,
-                "title": "Empty vault division",
-                "description": "Division by zero when totalSupply is 0",
-                "line": 9,
-            }]
-        })
 
         self.mock_llm._call_llm.side_effect = [
             pass1_response, pass2_response, pass3_response,
-            pass4_response, pass5_response, pass6_response,
+            pass4_response, pass5_response,
         ]
 
         result = asyncio.run(self.engine.analyze(
@@ -211,7 +200,7 @@ class TestDeepAnalysisEngine(unittest.TestCase):
 
         self.assertIsInstance(result, DeepAnalysisResult)
         self.assertEqual(result.archetype.primary, ProtocolArchetype.VAULT_ERC4626)
-        self.assertEqual(len(result.all_findings), 3)  # Pass 3 + Pass 5 + Pass 6
+        self.assertEqual(len(result.all_findings), 2)  # Pass 3 + Pass 5
         self.assertGreater(result.total_duration, 0)
 
     def test_pipeline_handles_pass_failure(self):
@@ -220,7 +209,6 @@ class TestDeepAnalysisEngine(unittest.TestCase):
             None,  # Pass 1 fails
             None,  # Pass 2 fails
             json.dumps({"findings": [{"type": "vuln", "severity": "high", "confidence": 0.8, "description": "test", "line": 1}]}),
-            json.dumps({"findings": []}),
             json.dumps({"findings": []}),
             json.dumps({"findings": []}),
         ]
@@ -243,12 +231,10 @@ class TestDeepAnalysisEngine(unittest.TestCase):
             '{"findings": []}',    # Pass 3
             '{"findings": []}',    # Pass 4
             '{"findings": []}',    # Pass 5
-            '{"findings": []}',    # Pass 6
             # Second run should use cache for passes 1 & 2
             '{"findings": []}',    # Pass 3
             '{"findings": []}',    # Pass 4
             '{"findings": []}',    # Pass 5
-            '{"findings": []}',    # Pass 6
         ]
 
         # First run
@@ -265,8 +251,8 @@ class TestDeepAnalysisEngine(unittest.TestCase):
             {'vulnerabilities': []},
         ))
 
-        # Should have 10 total calls (6 + 4), not 12 (6 + 6)
-        self.assertEqual(self.mock_llm._call_llm.call_count, 10)
+        # Should have 8 total calls (5 + 3), not 10 (5 + 5)
+        self.assertEqual(self.mock_llm._call_llm.call_count, 8)
 
 
 class TestPromptBuilders(unittest.TestCase):
@@ -294,11 +280,17 @@ class TestPromptBuilders(unittest.TestCase):
         self.assertIn("attacker", prompt.lower())
         self.assertIn("flash loan", prompt.lower())
 
-    def test_pass6_prompt_checks_boundaries(self):
-        prompt = _build_pass6_prompt("contract Test {}", "{}")
-        self.assertIn("zero", prompt.lower())
-        self.assertIn("maximum", prompt.lower())
+    def test_pass5_prompt_includes_edge_cases(self):
+        prompt = _build_pass5_prompt("contract Test {}", "{}", "{}", "", "", "")
+        self.assertIn("zero values", prompt.lower())
+        self.assertIn("maximum values", prompt.lower())
         self.assertIn("edge case", prompt.lower())
+        self.assertIn("edge_case_category", prompt)
+
+    def test_pass4_prompt_includes_pass3_findings(self):
+        prompt = _build_pass4_prompt("contract Test {}", "{}", "{}", pass3_findings="## Findings\n1. [HIGH] Reentrancy")
+        self.assertIn("Previous Analysis Findings", prompt)
+        self.assertIn("Reentrancy", prompt)
 
 
 if __name__ == '__main__':

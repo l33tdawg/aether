@@ -1,18 +1,17 @@
 """
 Deep Analysis Engine — Multi-pass LLM analysis pipeline.
 
-Replaces single-shot "find bugs" prompts with a structured 6-pass pipeline
+Replaces single-shot "find bugs" prompts with a structured 5-pass pipeline
 that mirrors how professional auditors approach code review:
 
-    Pass 1: Protocol Understanding  (cheap model)
-    Pass 2: Attack Surface Mapping  (cheap model)
-    Pass 3: Invariant Violation Analysis  (strong model)
-    Pass 4: Cross-Function Interaction    (strong model)
-    Pass 5: Adversarial Modeling           (strong model)
-    Pass 6: Boundary & Edge Cases          (medium model)
+    Pass 1: Protocol Understanding              (cheap model)
+    Pass 2: Attack Surface Mapping              (cheap model)
+    Pass 3: Invariant Violation Analysis        (strong model)
+    Pass 4: Cross-Function Interaction          (strong model)
+    Pass 5: Adversarial Modeling + Edge Cases   (strong model)
 
 Each pass receives accumulated context from prior passes.
-Findings are collected from Passes 3-6.
+Findings are collected from Passes 3-5.
 """
 
 import hashlib
@@ -70,12 +69,11 @@ def _get_medium_model() -> str:
     """Return a medium-tier model for edge case analysis."""
     try:
         from core.config_manager import get_model_for_task
-        return get_model_for_task('validation')
+        return get_model_for_task('medium')
     except Exception:
         pass
-    if os.getenv('GEMINI_API_KEY'):
-        return 'gemini-2.5-flash'
-    return 'gpt-4.1-mini-2025-04-14'
+    # Fallback to cheap model
+    return _get_cheap_model()
 
 
 # ---------------------------------------------------------------------------
@@ -273,8 +271,17 @@ Return ONLY findings that represent real vulnerabilities. Do NOT report informat
 """
 
 
-def _build_pass4_prompt(contract_content: str, pass1_result: str, pass2_result: str) -> str:
+def _build_pass4_prompt(contract_content: str, pass1_result: str, pass2_result: str,
+                        pass3_findings: str = "") -> str:
     """Pass 4: Cross-Function Interaction Analysis."""
+    previous_findings_section = ""
+    if pass3_findings:
+        previous_findings_section = f"""
+## Previous Analysis Findings
+{pass3_findings}
+
+"""
+
     return f"""You are an elite smart contract security auditor analyzing cross-function interactions.
 
 ## Protocol Understanding
@@ -283,7 +290,7 @@ def _build_pass4_prompt(contract_content: str, pass1_result: str, pass2_result: 
 ## Attack Surface & State Dependencies
 {pass2_result}
 
-## Contract Code
+{previous_findings_section}## Contract Code
 ```solidity
 {contract_content}
 ```
@@ -366,12 +373,25 @@ Design the **most profitable attacks** against this protocol. For each attack:
 DO NOT hold back. DO NOT worry about false positives. If an attack MIGHT work, report it.
 Every missed real vulnerability is worth $50K-$500K in bug bounties.
 
+## Boundary & Edge Cases
+
+Also systematically check for boundary and edge-case vulnerabilities in each function:
+- **First/last operations**: What happens on first deposit/mint/stake when state is empty (division by zero, zero denominator)? What happens on last withdrawal when state goes to zero (stuck funds)?
+- **Zero values**: amount=0, price=0, supply=0, balance=0 — does anything break?
+- **Maximum values**: type(uint256).max, type(int256).min, type(int256).max — overflow in unchecked blocks?
+- **Self-referential**: transfer to self, borrow against own collateral, swap token for same token
+- **Same-block operations**: deposit+withdraw, stake+unstake, borrow+repay in same transaction
+- **Callback reentrancy**: ERC-777 hooks, ERC-1155 callbacks, flash loan callbacks, receive() fallback
+- **Empty/null inputs**: empty bytes, zero address (address(0)), empty arrays, block.timestamp edge cases
+
+Include any edge-case findings alongside your attack findings in the same output.
+
 ## Required Output (JSON)
 {{
   "findings": [
     {{
-      "type": "attack model type (e.g. flash_loan_attack, price_manipulation, governance_attack)",
-      "severity": "critical|high|medium",
+      "type": "attack model type (e.g. flash_loan_attack, price_manipulation, governance_attack, division_by_zero, empty_state, overflow, stuck_funds, edge_case)",
+      "severity": "critical|high|medium|low",
       "confidence": 0.0-1.0,
       "title": "attack name",
       "description": "detailed attack description",
@@ -383,59 +403,8 @@ Every missed real vulnerability is worth $50K-$500K in bug bounties.
       "line": 0,
       "protections_to_bypass": "what protections exist and how to bypass them",
       "precedent": "real-world exploit this is similar to, or 'novel'",
-      "impact": "maximum financial impact"
-    }}
-  ]
-}}
-"""
-
-
-def _build_pass6_prompt(contract_content: str, pass2_result: str) -> str:
-    """Pass 6: Boundary & Edge Case Analysis."""
-    return f"""You are a smart contract auditor specializing in boundary conditions and edge cases.
-
-## Attack Surface
-{pass2_result}
-
-## Contract Code
-```solidity
-{contract_content}
-```
-
-## Instructions
-
-For EACH function in the attack surface, systematically check:
-
-1. **First operation**: What happens on first deposit/mint/stake when state is empty? Division by zero? Zero denominator?
-2. **Last operation**: What happens on last withdrawal when state goes to zero? Stuck funds?
-3. **Zero values**: amount=0, price=0, supply=0, balance=0. Does anything break?
-4. **Maximum values**: type(uint256).max, type(int256).min, type(int256).max. Overflow?
-5. **Self-referential**: transfer to self, borrow against own collateral, swap token for same token
-6. **Same-block operations**: deposit+withdraw, stake+unstake, borrow+repay in same transaction
-7. **Callback reentrancy points**: ERC-777 hooks, ERC-1155 callbacks, flash loan callbacks, receive() fallback
-8. **Empty/null inputs**: empty bytes, zero address, empty arrays
-
-Focus on edge cases that cause:
-- Division by zero
-- Unexpected zero results (0 shares, 0 tokens)
-- Integer overflow/underflow in unchecked blocks
-- State corruption from unexpected input combinations
-- Funds permanently locked
-
-## Required Output (JSON)
-{{
-  "findings": [
-    {{
-      "type": "edge_case type (e.g. division_by_zero, empty_state, overflow, stuck_funds)",
-      "severity": "critical|high|medium|low",
-      "confidence": 0.0-1.0,
-      "title": "concise title",
-      "description": "detailed description of the edge case",
-      "trigger": "exact input/state that triggers the issue",
-      "affected_functions": ["func1"],
-      "line": 0,
-      "impact": "what happens when triggered",
-      "edge_case_category": "first_operation|last_operation|zero_value|max_value|self_referential|same_block|callback|empty_input"
+      "impact": "maximum financial impact",
+      "edge_case_category": "first_operation|last_operation|zero_value|max_value|self_referential|same_block|callback|empty_input (only for edge-case findings)"
     }}
   ]
 }}
@@ -487,7 +456,7 @@ class DeepAnalysisEngine:
         contract_files: List[Dict[str, Any]],
         static_results: Dict[str, Any],
     ) -> DeepAnalysisResult:
-        """Run the full 6-pass deep analysis pipeline.
+        """Run the full 5-pass deep analysis pipeline.
 
         Falls back gracefully if any individual pass fails.
         """
@@ -559,16 +528,17 @@ class DeepAnalysisEngine:
             result,
         )
 
+        # Format Pass 3 findings summary for subsequent passes
+        p3_summary = self._summarize_findings(pass3_findings, "Invariant Analysis")
+
         # --- Pass 4: Cross-Function Interaction ---
         pass4_findings = await self._run_finding_pass(
             "Pass 4: Cross-Function Interactions",
-            _build_pass4_prompt(truncated_content, pass1_text, pass2_text),
+            _build_pass4_prompt(truncated_content, pass1_text, pass2_text, pass3_findings=p3_summary),
             _get_strong_model(),
             result,
         )
 
-        # Format findings summaries for Pass 5
-        p3_summary = self._summarize_findings(pass3_findings, "Invariant Analysis")
         p4_summary = self._summarize_findings(pass4_findings, "Cross-Function Analysis")
 
         # --- Pass 5: Adversarial Modeling ---
@@ -577,14 +547,6 @@ class DeepAnalysisEngine:
             _build_pass5_prompt(truncated_content, pass1_text, pass2_text,
                                 p3_summary, p4_summary, exploit_text),
             _get_strong_model(),
-            result,
-        )
-
-        # --- Pass 6: Boundary & Edge Cases ---
-        pass6_findings = await self._run_finding_pass(
-            "Pass 6: Boundary & Edge Cases",
-            _build_pass6_prompt(truncated_content, pass2_text),
-            _get_medium_model(),
             result,
         )
 
@@ -629,10 +591,16 @@ class DeepAnalysisEngine:
             return []
 
         findings = self._extract_findings(response, name)
+        # Always record the pass so pass count is accurate
+        result.pass_results.append(PassResult(name, response, findings, model))
         if findings:
-            result.pass_results.append(PassResult(name, response, findings, model))
             result.all_findings.extend(findings)
             print(f"   📊 {name}: {len(findings)} findings", flush=True)
+        else:
+            # Log response snippet for debugging extraction failures
+            snippet = response[:200].replace('\n', ' ')
+            logger.info(f"{name}: 0 findings extracted from {len(response)} char response (starts: {snippet}...)")
+            print(f"   ⚠️  {name}: 0 findings extracted from LLM response", flush=True)
         return findings
 
     def _extract_findings(self, response: str, pass_name: str) -> List[Dict[str, Any]]:
@@ -641,38 +609,62 @@ class DeepAnalysisEngine:
 
         # Try parsing as JSON
         parsed = parse_llm_json(response)
-        if parsed:
-            if isinstance(parsed, dict):
-                raw_findings = parsed.get('findings', [])
-            elif isinstance(parsed, list):
-                raw_findings = parsed
-            else:
-                raw_findings = []
 
-            for f in raw_findings:
-                if isinstance(f, dict):
-                    # Normalize finding structure
-                    finding = {
-                        'type': f.get('type', f.get('vulnerability_type', 'unknown')),
-                        'vulnerability_type': f.get('type', f.get('vulnerability_type', 'unknown')),
-                        'severity': f.get('severity', 'medium'),
-                        'confidence': float(f.get('confidence', 0.5)),
-                        'title': f.get('title', f.get('description', '')[:80]),
-                        'description': f.get('description', ''),
-                        'line': f.get('line', f.get('line_number', 0)),
-                        'line_number': f.get('line', f.get('line_number', 0)),
-                        'source': f'deep_analysis_{pass_name}',
-                        'affected_functions': f.get('affected_functions', []),
-                    }
-                    # Preserve extra fields
-                    for key in ('attack_sequence', 'attack_steps', 'impact',
-                                'precedent', 'proof_sketch', 'trigger',
-                                'edge_case_category', 'attack_type',
-                                'invariant_violated', 'capital_required',
-                                'profit_estimate'):
-                        if key in f:
-                            finding[key] = f[key]
-                    findings.append(finding)
+        raw_findings = []
+        if isinstance(parsed, dict) and parsed:
+            # Check common keys where findings might live
+            for key in ('findings', 'vulnerabilities', 'results', 'issues'):
+                candidate = parsed.get(key, [])
+                if isinstance(candidate, list) and candidate:
+                    raw_findings = candidate
+                    break
+            # If the dict itself looks like a single finding, wrap it
+            if not raw_findings and 'type' in parsed and 'severity' in parsed:
+                raw_findings = [parsed]
+        elif isinstance(parsed, list) and parsed:
+            raw_findings = parsed
+
+        if not raw_findings:
+            # Try to find embedded JSON arrays in the response text (LLM sometimes
+            # wraps findings in markdown or explanatory prose)
+            import re
+            array_match = re.search(r'\[\s*\{.*?\}\s*(?:,\s*\{.*?\}\s*)*\]', response, re.DOTALL)
+            if array_match:
+                try:
+                    from core.json_utils import safe_json_parse
+                    candidate_list = safe_json_parse(array_match.group(0), [])
+                    if isinstance(candidate_list, list) and candidate_list:
+                        raw_findings = candidate_list
+                except Exception:
+                    pass
+
+        if not raw_findings:
+            logger.debug(f"{pass_name}: no structured findings extracted from {len(response)} char response")
+
+        for f in raw_findings:
+            if isinstance(f, dict):
+                # Normalize finding structure
+                finding = {
+                    'type': f.get('type', f.get('vulnerability_type', 'unknown')),
+                    'vulnerability_type': f.get('type', f.get('vulnerability_type', 'unknown')),
+                    'severity': f.get('severity', 'medium'),
+                    'confidence': float(f.get('confidence', 0.5)),
+                    'title': f.get('title', f.get('description', '')[:80]),
+                    'description': f.get('description', ''),
+                    'line': f.get('line', f.get('line_number', 0)),
+                    'line_number': f.get('line', f.get('line_number', 0)),
+                    'source': f'deep_analysis_{pass_name}',
+                    'affected_functions': f.get('affected_functions', []),
+                }
+                # Preserve extra fields
+                for key in ('attack_sequence', 'attack_steps', 'impact',
+                            'precedent', 'proof_sketch', 'trigger',
+                            'edge_case_category', 'attack_type',
+                            'invariant_violated', 'capital_required',
+                            'profit_estimate'):
+                    if key in f:
+                        finding[key] = f[key]
+                findings.append(finding)
 
         return findings
 

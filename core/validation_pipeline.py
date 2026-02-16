@@ -353,28 +353,55 @@ class ValidationPipeline:
             return results  # Early exit
         
         # Stage 2: Design assumption check
+        # Instead of removing findings, downgrade to Low/Informational —
+        # some bounty programs pay for centralization/admin/design risks
         design_check = self._check_design_assumptions(vulnerability)
-        if design_check:
+        if design_check and design_check.is_false_positive:
+            vulnerability['severity'] = 'low'
+            vulnerability['severity_note'] = f"Downgraded: {design_check.reasoning}"
+            design_check = ValidationStage(
+                stage_name=design_check.stage_name,
+                is_false_positive=False,
+                confidence=design_check.confidence,
+                reasoning=f"Severity downgraded to Low (was FP candidate): {design_check.reasoning}"
+            )
             results.append(design_check)
-            return results  # Early exit
-        
+
         # Stage 3: Reentrancy guard check
         reentrancy_check = self._check_reentrancy_protection(vulnerability)
         if reentrancy_check:
             results.append(reentrancy_check)
             return results  # Early exit
-        
+
         # Stage 4: Scope classification (admin-only, etc.)
+        # Downgrade instead of removing — preserves findings for programs that
+        # accept centralization/admin risks
         scope_check = self._check_scope_classification(vulnerability)
-        if scope_check:
+        if scope_check and scope_check.is_false_positive:
+            vulnerability['severity'] = 'low'
+            vulnerability['severity_note'] = f"Downgraded: {scope_check.reasoning}"
+            scope_check = ValidationStage(
+                stage_name=scope_check.stage_name,
+                is_false_positive=False,
+                confidence=scope_check.confidence,
+                reasoning=f"Severity downgraded to Low (was FP candidate): {scope_check.reasoning}"
+            )
             results.append(scope_check)
-            return results  # Early exit
-        
+
         # Stage 5: Governance control check
+        # Downgrade instead of removing — governance-controlled parameters may
+        # still be valuable findings for certain bounty scopes
         governance_check = self._check_governance_control(vulnerability)
-        if governance_check:
+        if governance_check and governance_check.is_false_positive:
+            vulnerability['severity'] = 'low'
+            vulnerability['severity_note'] = f"Downgraded: {governance_check.reasoning}"
+            governance_check = ValidationStage(
+                stage_name=governance_check.stage_name,
+                is_false_positive=False,
+                confidence=governance_check.confidence,
+                reasoning=f"Severity downgraded to Low (was FP candidate): {governance_check.reasoning}"
+            )
             results.append(governance_check)
-            return results  # Early exit
         
         # Stage 6: Deployment check
         deployment_check = self._check_deployment(vulnerability)
@@ -509,24 +536,36 @@ class ValidationPipeline:
         return None
     
     def _uses_unsafe_operations(self, vuln: Dict) -> bool:
-        """Check if unchecked{} or unsafe operations are used."""
+        """Check if unchecked{}, assembly, or unsafe type casts are used."""
         code_snippet = vuln.get('code_snippet', '')
-        
+
         # Check code snippet first
         if 'unchecked' in code_snippet.lower():
             return True
-        
+
         # Check surrounding context in contract
         line_number = vuln.get('line', 0) or vuln.get('line_number', 0)
         if line_number > 0:
             lines = self.contract_code.split('\n')
-            # Check 10 lines before the vulnerability for unchecked block
-            context_start = max(0, line_number - 10)
+            # Check 30 lines before the vulnerability (expanded from 10)
+            context_start = max(0, line_number - 30)
             context = '\n'.join(lines[context_start:line_number])
-            
+
             if 'unchecked' in context.lower():
                 return True
-        
+
+            # Assembly blocks bypass Solidity 0.8+ overflow checks
+            if re.search(r'\bassembly\s*\{', context):
+                return True
+
+            # Unsafe type casts silently truncate in 0.8+ — NOT protected
+            # by automatic overflow checks (e.g. uint256 -> uint128 loses upper bits)
+            unsafe_cast_pattern = r'\buint(?:128|96|64|32|16|8)\s*\('
+            if re.search(unsafe_cast_pattern, context):
+                # Only flag if SafeCast is not used in this contract
+                if 'SafeCast' not in self.contract_code:
+                    return True
+
         return False
     
     def _check_dos_feasibility(self, vuln: Dict) -> Optional[ValidationStage]:
@@ -940,26 +979,33 @@ class ValidationPipeline:
         
         # Extract suspect variables from vulnerability description or code snippet
         suspect_vars = self._extract_suspect_variables(vuln)
+        has_specific_vars = bool(suspect_vars)
         if not suspect_vars:
-            # No specific variables to validate, use generic patterns
-            suspect_vars = ['']  # Empty string will match all validations
-        
+            # No specific variables — use reduced window and require variable-relevant matches
+            suspect_vars = ['']  # Empty string triggers generic path
+
         validations = []
-        
+
+        # Use smaller window for generic matches to reduce false positives
+        effective_window = window if has_specific_vars else min(window, 5)
+
         # Check window BEFORE the vulnerable line (where validations usually are)
-        context_start = max(0, line_number - window - 1)  # -1 for 0-based indexing
+        context_start = max(0, line_number - effective_window - 1)  # -1 for 0-based indexing
         context_end = line_number - 1
-        
+
+        # Extract function parameters and state vars for generic matching
+        func_params = self._extract_function_params_near_line(line_number)
+
         for i in range(context_start, context_end):
             if i >= len(lines):
                 break
-            
+
             line_text = lines[i].strip()
-            
+
             # Skip empty lines and comments
             if not line_text or line_text.startswith('//'):
                 continue
-            
+
             # Check for validation patterns
             for var in suspect_vars:
                 # Require statements
@@ -976,9 +1022,12 @@ class ValidationPipeline:
                                 validations.append(f"Line {i+1}-{j+1}: if({var}...) revert")
                                 break
                 else:
-                    # Generic validation patterns (when no specific variable)
+                    # Generic path: only match require() that references function
+                    # parameters or state variables used in the vulnerable expression
                     if re.search(r'\brequire\s*\(', line_text):
-                        validations.append(f"Line {i+1}: {line_text[:80]}")
+                        # Must reference at least one relevant variable
+                        if func_params and any(p in line_text for p in func_params):
+                            validations.append(f"Line {i+1}: {line_text[:80]}")
         
         # Also check a few lines AFTER for post-condition checks
         context_after_start = line_number
@@ -1036,7 +1085,44 @@ class ValidationPipeline:
                 unique_vars.append(var)
         
         return unique_vars[:5]  # Limit to top 5 most relevant
-    
+
+    def _extract_function_params_near_line(self, line_number: int) -> List[str]:
+        """
+        Extract parameter names from the enclosing function signature near a given line.
+        Used for generic require() matching to ensure the validation is relevant.
+        """
+        if not self.contract_code or line_number <= 0:
+            return []
+
+        lines = self.contract_code.split('\n')
+        # Walk backwards from the vulnerable line to find the function signature
+        params = []
+        for i in range(min(line_number - 1, len(lines) - 1), max(0, line_number - 50), -1):
+            line_text = lines[i]
+            if re.search(r'\bfunction\s+\w+\s*\(', line_text):
+                # Found a function signature — extract parameter names
+                # Gather the full signature (may span multiple lines)
+                sig_text = line_text
+                for j in range(i + 1, min(i + 10, len(lines))):
+                    sig_text += ' ' + lines[j]
+                    if ')' in lines[j]:
+                        break
+                # Extract identifiers from parameter list
+                paren_match = re.search(r'\(([^)]*)\)', sig_text)
+                if paren_match:
+                    param_str = paren_match.group(1)
+                    # Parameters are like "uint256 amount, address token"
+                    # Extract the identifier (last word before comma/end)
+                    for part in param_str.split(','):
+                        tokens = part.strip().split()
+                        if tokens:
+                            param_name = tokens[-1].strip()
+                            if param_name and re.match(r'^_?\w+$', param_name):
+                                params.append(param_name)
+                break
+
+        return params
+
     def _simple_validation_check(self, vuln: Dict) -> Optional[ValidationStage]:
         """Simple validation check using pattern matching (only for arithmetic)."""
         vuln_type = vuln.get('vulnerability_type', '').lower()

@@ -18,6 +18,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from cli.tui.dialogs.confirm import ConfirmDialog
+from cli.tui.dialogs.select import SelectDialog
 
 
 class ResumeScreen(Screen):
@@ -111,6 +112,8 @@ class ResumeScreen(Screen):
         repo_name = item.get("repo_name", "Unknown")
         scope_id = item.get("scope_id")
         project_id = item.get("project_id")
+        total_selected = item.get("total_selected") or 0
+        total_audited = item.get("total_audited") or 0
 
         if not github_url:
             await self.app.push_screen_wait(
@@ -124,29 +127,42 @@ class ResumeScreen(Screen):
         pending = helper.get_pending_contracts(scope_id) if scope_id else []
 
         if not pending:
-            await self.app.push_screen_wait(
-                ConfirmDialog(
-                    f"No pending contracts found for {repo_name}.\n\n"
-                    "The scope may already be complete."
+            # All contracts already analyzed — offer re-analyze
+            action = await self.app.push_screen_wait(
+                SelectDialog(
+                    f"{repo_name} — all {total_selected} contracts audited",
+                    [
+                        "Re-analyze all (full pipeline)",
+                        "Back",
+                    ],
                 )
             )
-            self._load_data()
-            return
-
-        confirmed = await self.app.push_screen_wait(
-            ConfirmDialog(
-                f"Resume audit for {repo_name}?\n\n"
-                f"{len(pending)} contracts remaining."
+            if action is None or action == "Back":
+                self._load_data()
+                return
+            reanalyze = True
+        else:
+            # Pending contracts exist — offer resume or re-analyze
+            action = await self.app.push_screen_wait(
+                SelectDialog(
+                    f"{repo_name} — {total_audited}/{total_selected} audited",
+                    [
+                        f"Resume ({len(pending)} pending)",
+                        "Re-analyze all (full pipeline)",
+                        "Back",
+                    ],
+                )
             )
-        )
-        if not confirmed:
-            return
+            if action is None or action == "Back":
+                return
+            reanalyze = action.startswith("Re-analyze")
 
         # Launch as background job
         from core.job_manager import JobManager
         from cli.audit_runner import AuditRunner
 
         jm = JobManager.get_instance()
+        label = "Re-analyze" if reanalyze else "Resume"
         job = jm.create_job(
             display_name=f"GH: {repo_name}",
             job_type="github",
@@ -158,6 +174,7 @@ class ResumeScreen(Screen):
             github_url=github_url,
             project_id=project_id,
             scope_id=scope_id,
+            reanalyze=reanalyze,
         )
 
         self.app.pop_screen()

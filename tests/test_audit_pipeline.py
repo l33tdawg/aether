@@ -1203,6 +1203,7 @@ class TestGitHubAuditWorker(unittest.TestCase):
         mock_cli.run_github_audit_command.assert_called_once_with(
             github_url="https://github.com/org/repo",
             fresh=False,
+            reanalyze=False,
             interactive_scope=False,
             skip_scope_selector=True,
             resume_scope_id=2,

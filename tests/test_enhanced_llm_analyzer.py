@@ -1457,7 +1457,7 @@ class TestGeminiSecurityAuditorAnalyze(unittest.TestCase):
     """Tests for GeminiSecurityAuditor.analyze_contract()"""
 
     @patch('core.ai_ensemble.DatabaseManager')
-    @patch('core.ai_ensemble.ConfigManager')
+    @patch('core.config_manager.ConfigManager')
     def test_no_api_key(self, mock_config_cls, mock_db_cls):
         """Returns empty findings when no Gemini API key."""
         from core.ai_ensemble import GeminiSecurityAuditor
@@ -1651,7 +1651,7 @@ class TestAIEnsembleConsensus(unittest.TestCase):
         ]
         merged = ensemble._merge_similar_findings(findings, ["agent1"])
         self.assertEqual(merged['agreement_count'], 1)
-        self.assertAlmostEqual(merged['confidence'], 0.65, places=2)
+        self.assertAlmostEqual(merged['confidence'], 0.72, places=2)
         self.assertTrue(merged['needs_verification'])
 
     def test_get_finding_key(self):
@@ -1859,7 +1859,7 @@ class TestGetProviderForAgent(unittest.TestCase):
     def test_legacy_agents(self):
         ensemble = self._make_ensemble()
         self.assertEqual(ensemble._get_provider_for_agent('defi_expert'), 'openai')
-        self.assertEqual(ensemble._get_provider_for_agent('gas_expert'), 'openai')
+        self.assertEqual(ensemble._get_provider_for_agent('proxy_expert'), 'openai')
 
     def test_unknown_agent(self):
         ensemble = self._make_ensemble()

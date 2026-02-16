@@ -101,53 +101,66 @@ class EnhancedAetherAuditEngine:
             # Step 3: Enhanced LLM analysis
             llm_results = await self._run_enhanced_llm_analysis(contract_files, static_results)
             
-            # Step 4: Phase 3 AI Ensemble Analysis
-            ai_ensemble_results = await self._run_ai_ensemble_analysis(contract_files, static_results)
-            
-            # Step 4.5: Deep-dive analysis on high-confidence findings
-            if ai_ensemble_results and hasattr(ai_ensemble_results, 'consensus_findings') and ai_ensemble_results.consensus_findings:
-                try:
-                    print("🔬 Running deep-dive analysis on top findings...", flush=True)
-                    deep_dive_findings = await self.ai_ensemble.deep_dive_analysis(
-                        ai_ensemble_results.consensus_findings,
-                        contract_files[0]['content'] if contract_files else ''
-                    )
-                    # Update consensus findings with deep-dive results
-                    ai_ensemble_results = ConsensusResult(
-                        consensus_findings=deep_dive_findings,
-                        model_agreement=ai_ensemble_results.model_agreement,
-                        confidence_score=ai_ensemble_results.confidence_score,
-                        processing_time=ai_ensemble_results.processing_time,
-                        individual_results=ai_ensemble_results.individual_results
-                    )
-                except Exception as e:
-                    logger.warning(f"Deep-dive analysis failed: {e}")
+            # Step 4: Phase 3 AI Ensemble Analysis (opt-in via AETHER_ENSEMBLE=1)
+            use_ensemble = os.getenv('AETHER_ENSEMBLE', '0') == '1'
+            if use_ensemble:
+                ai_ensemble_results = await self._run_ai_ensemble_analysis(contract_files, static_results)
 
-            # Step 4.6: Cross-contract interaction analysis (if multiple contracts)
-            if len(contract_files) >= 2:
-                try:
-                    print("🔗 Analyzing cross-contract interactions...", flush=True)
-                    cross_contract_findings = await self.ai_ensemble.analyze_cross_contract_interactions(contract_files)
-                    if cross_contract_findings and ai_ensemble_results and hasattr(ai_ensemble_results, 'consensus_findings'):
-                        merged_findings = list(ai_ensemble_results.consensus_findings) + cross_contract_findings
+                # Step 4.5: Deep-dive analysis on high-confidence findings
+                if ai_ensemble_results and hasattr(ai_ensemble_results, 'consensus_findings') and ai_ensemble_results.consensus_findings:
+                    try:
+                        print("🔬 Running deep-dive analysis on top findings...", flush=True)
+                        deep_dive_findings = await self.ai_ensemble.deep_dive_analysis(
+                            ai_ensemble_results.consensus_findings,
+                            contract_files[0]['content'] if contract_files else ''
+                        )
+                        # Update consensus findings with deep-dive results
                         ai_ensemble_results = ConsensusResult(
-                            consensus_findings=merged_findings,
+                            consensus_findings=deep_dive_findings,
                             model_agreement=ai_ensemble_results.model_agreement,
                             confidence_score=ai_ensemble_results.confidence_score,
                             processing_time=ai_ensemble_results.processing_time,
                             individual_results=ai_ensemble_results.individual_results
                         )
-                except Exception as e:
-                    logger.warning(f"Cross-contract analysis failed: {e}")
+                    except Exception as e:
+                        logger.warning(f"Deep-dive analysis failed: {e}")
+
+                # Step 4.6: Cross-contract interaction analysis (if multiple contracts)
+                if len(contract_files) >= 2:
+                    try:
+                        print("🔗 Analyzing cross-contract interactions...", flush=True)
+                        cross_contract_findings = await self.ai_ensemble.analyze_cross_contract_interactions(contract_files)
+                        if cross_contract_findings and ai_ensemble_results and hasattr(ai_ensemble_results, 'consensus_findings'):
+                            merged_findings = list(ai_ensemble_results.consensus_findings) + cross_contract_findings
+                            ai_ensemble_results = ConsensusResult(
+                                consensus_findings=merged_findings,
+                                model_agreement=ai_ensemble_results.model_agreement,
+                                confidence_score=ai_ensemble_results.confidence_score,
+                                processing_time=ai_ensemble_results.processing_time,
+                                individual_results=ai_ensemble_results.individual_results
+                            )
+                    except Exception as e:
+                        logger.warning(f"Cross-contract analysis failed: {e}")
+            else:
+                print("⏭️  AI ensemble disabled (set AETHER_ENSEMBLE=1 to enable)", flush=True)
+                ai_ensemble_results = {
+                    'consensus_findings': [],
+                    'model_agreement': 0.0,
+                    'confidence_score': 0.0,
+                    'processing_time': 0.0,
+                }
 
             # Step 5: Formal Verification for Critical Findings (DISABLED - too many false positives)
             formal_verification_results = None  # Disabled due to excessive false positives
 
             # Step 6: Validation layer
             validated_results = await self._validate_findings(static_results, llm_results, contract_files, ai_ensemble_results, formal_verification_results)
-            
+
+            # Step 6.5: Auto-generate PoCs for HIGH/CRITICAL findings
+            await self._auto_generate_pocs(validated_results, contract_files)
+
             # Step 7: Learning System Integration (removed - was simulated)
-            
+
             # Step 8: Foundry validation (if requested) - MOVED BEFORE report generation
             if foundry_validation:
                 await self._run_foundry_validation(contract_path, validated_results)
@@ -436,7 +449,7 @@ class EnhancedAetherAuditEngine:
     async def _run_enhanced_llm_analysis(self, contract_files: List[Dict[str, Any]], static_results: Dict[str, Any]) -> Dict[str, Any]:
         """Run enhanced LLM analysis with validation.
 
-        Uses the deep analysis engine (6-pass pipeline) by default.
+        Uses the deep analysis engine (5-pass pipeline) by default.
         Falls back to one-shot analysis if deep analysis fails or is disabled.
         """
         print("🤖 Running enhanced LLM analysis...", flush=True)
@@ -767,7 +780,22 @@ class EnhancedAetherAuditEngine:
             # Preserve source tag for downstream triage/reporting
             calibrated_vuln['source'] = vuln_data.get('source', 'unknown')
             validated_vulnerabilities.append(calibrated_vuln)
-        
+
+        # Cross-source dedup: collapse near-duplicate findings from static/LLM/ensemble
+        pre_dedup_count = len(validated_vulnerabilities)
+        cross_dedup: Dict[tuple, Dict[str, Any]] = {}
+        for v in validated_vulnerabilities:
+            vtype = (v.get('vulnerability_type') or v.get('title') or '').lower()
+            fpath = v.get('context', {}).get('file_path', '') if isinstance(v.get('context'), dict) else ''
+            line = v.get('line_number', v.get('line', 0)) or 0
+            key = (vtype, fpath, int(line) // 10 * 10)
+            existing = cross_dedup.get(key)
+            if existing is None or float(v.get('confidence', 0) or 0) > float(existing.get('confidence', 0) or 0):
+                cross_dedup[key] = v
+        validated_vulnerabilities = list(cross_dedup.values())
+        if pre_dedup_count != len(validated_vulnerabilities):
+            print(f"[Cross-source dedup] {pre_dedup_count} → {len(validated_vulnerabilities)} findings (removed {pre_dedup_count - len(validated_vulnerabilities)} cross-source duplicates)", flush=True)
+
         # Optional post-filter for Foundry workload control
         try:
             # DISABLED BY DEFAULT: Send all findings to Foundry for validation
@@ -813,6 +841,98 @@ class EnhancedAetherAuditEngine:
             'validated_count': len(validated_vulnerabilities),
             'false_positive_count': 0  # Will be determined by Foundry tests
         }
+
+    async def _auto_generate_pocs(self, validated_results: Dict[str, Any], contract_files: List[Dict[str, Any]]) -> None:
+        """Auto-generate PoCs for HIGH/CRITICAL findings inline during audit.
+
+        For each validated vulnerability with severity HIGH or CRITICAL, attempts
+        to synthesize a Foundry PoC using FoundryPoCGenerator. The generated PoC
+        code is attached to the finding dict as ``poc_code``. Failures are logged
+        but never break the audit.
+        """
+        vulns = validated_results.get('validated_vulnerabilities', [])
+        high_critical = [
+            v for v in vulns
+            if isinstance(v, dict) and v.get('severity', '').lower() in ('high', 'critical')
+        ]
+
+        if not high_critical:
+            return
+
+        # Build combined contract source for PoC context
+        combined_content = "\n\n".join(cf['content'] for cf in contract_files)
+        contract_name = contract_files[0]['name'] if contract_files else 'Contract'
+
+        print(f"🧪 Auto-generating PoCs for {len(high_critical)} high/critical findings...", flush=True)
+
+        from core.foundry_poc_generator import NormalizedFinding, VulnerabilityClass
+
+        poc_count = 0
+        for vuln in high_critical:
+            try:
+                # Map vulnerability type to VulnerabilityClass
+                vuln_type = (vuln.get('vulnerability_type') or vuln.get('title') or '').lower()
+                vuln_class = VulnerabilityClass.GENERIC
+                class_map = {
+                    'reentrancy': VulnerabilityClass.REENTRANCY,
+                    'access_control': VulnerabilityClass.ACCESS_CONTROL,
+                    'oracle': VulnerabilityClass.ORACLE_MANIPULATION,
+                    'flash_loan': VulnerabilityClass.FLASH_LOAN_ATTACK,
+                    'overflow': VulnerabilityClass.OVERFLOW_UNDERFLOW,
+                    'underflow': VulnerabilityClass.OVERFLOW_UNDERFLOW,
+                    'unchecked': VulnerabilityClass.UNCHECKED_EXTERNAL_CALLS,
+                    'front_run': VulnerabilityClass.FRONT_RUNNING,
+                    'mev': VulnerabilityClass.MEV_EXTRACTION,
+                    'liquidity': VulnerabilityClass.LIQUIDITY_ATTACK,
+                    'arbitrage': VulnerabilityClass.ARBITRAGE_ATTACK,
+                    'price_manipulation': VulnerabilityClass.PRICE_MANIPULATION,
+                    'validation': VulnerabilityClass.INSUFFICIENT_VALIDATION,
+                }
+                for keyword, vc in class_map.items():
+                    if keyword in vuln_type:
+                        vuln_class = vc
+                        break
+
+                finding = NormalizedFinding(
+                    id=vuln.get('id', str(uuid.uuid4())),
+                    vulnerability_type=vuln.get('vulnerability_type', vuln.get('title', 'unknown')),
+                    vulnerability_class=vuln_class,
+                    severity=vuln.get('severity', 'high'),
+                    confidence=float(vuln.get('confidence', 0.0) or 0.0),
+                    description=vuln.get('description', ''),
+                    line_number=int(vuln.get('line_number', vuln.get('line', 0)) or 0),
+                    swc_id=vuln.get('swc_id', ''),
+                    file_path=vuln.get('context', {}).get('file_path', '') if isinstance(vuln.get('context'), dict) else '',
+                    contract_name=contract_name,
+                    status=vuln.get('status', 'confirmed'),
+                    validation_confidence=float(vuln.get('validation_confidence', 0.0) or 0.0),
+                    validation_reasoning=vuln.get('validation_reasoning', ''),
+                    models=vuln.get('models', []),
+                )
+
+                entrypoints = self.foundry_poc_generator.discover_entrypoints(
+                    combined_content, finding.line_number
+                )
+
+                if not entrypoints:
+                    continue
+
+                import tempfile
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    result = await self.foundry_poc_generator.synthesize_poc(
+                        finding, combined_content, entrypoints, tmpdir
+                    )
+
+                if result and result.test_code:
+                    vuln['poc_code'] = result.test_code
+                    poc_count += 1
+
+            except Exception as e:
+                logger.debug(f"PoC auto-generation failed for {vuln.get('vulnerability_type', 'unknown')}: {e}")
+                continue
+
+        if poc_count > 0:
+            print(f"✅ Auto-generated {poc_count} PoC(s) for high/critical findings", flush=True)
 
     def _generate_final_report(self, validated_results: Dict[str, Any], start_time: float, ai_ensemble_results: Dict[str, Any] = None, formal_verification_results: Dict[str, Any] = None) -> Dict[str, Any]:
         """Generate final comprehensive report."""

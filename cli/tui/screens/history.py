@@ -349,6 +349,7 @@ class HistoryScreen(Screen):
                 project_id=project["id"],
                 scope_id=scope_id,
                 fresh=True,
+                reanalyze=True,
             )
 
             self.app.pop_screen()

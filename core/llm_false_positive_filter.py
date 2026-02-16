@@ -121,11 +121,26 @@ class LLMFalsePositiveFilter:
         validated_vulnerabilities = []
         # Track full validation details for reporting
         self.last_validation_details = { 'validated': [], 'filtered': [] }
-        
+
+        skipped_high_confidence = 0
+        sent_to_llm = 0
+
         for i, vuln in enumerate(vulnerabilities):
             try:
                 logger.debug(f"Validating vulnerability {i+1}/{len(vulnerabilities)}: {vuln.get('vulnerability_type', 'unknown')}")
-                
+
+                # Skip LLM validation for high-confidence findings
+                validation_confidence = vuln.get('validation_confidence', 0)
+                static_confidence = vuln.get('confidence', 0)
+                if validation_confidence > 0.9 or static_confidence > 0.95:
+                    skipped_high_confidence += 1
+                    validated_vulnerabilities.append(vuln.copy())
+                    self.last_validation_details['validated'].append(vuln.copy())
+                    print(f"   ⏩ SKIPPED LLM (high confidence {max(validation_confidence, static_confidence):.2f}): {vuln.get('vulnerability_type', 'unknown')}")
+                    continue
+
+                sent_to_llm += 1
+
                 # Always pass FULL contract code to validation, not snippet
                 vuln_contract_name = vuln.get('contract_name', contract_name)
 
@@ -168,6 +183,7 @@ class LLMFalsePositiveFilter:
                 validated_vulnerabilities.append(vuln)
                 logger.warning(f"Kept vulnerability due to validation error")
         
+        print(f"[FP Filter] Skipped {skipped_high_confidence} high-confidence findings, sent {sent_to_llm} to LLM validation")
         logger.info(f"LLM validation: {len(validated_vulnerabilities)}/{len(vulnerabilities)} confirmed")
         
         # Stage 2: Bug bounty relevance assessment (AFTER LLM validation)

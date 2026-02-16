@@ -44,7 +44,7 @@ def sanitize_json_string(json_str: str, aggressive: bool = False) -> str:
     json_str = re.sub(r'\\x[0-9A-Fa-f]{2}', '', json_str)
 
     # And textual unicode control escapes (e.g. "\\u0001" .. "\\u001F")
-    json_str = re.sub(r'\\u00[0-1][0-9A-Fa-f]{2}', '', json_str)
+    json_str = re.sub(r'\\u00[01][0-9a-fA-F]', '', json_str)
     
     # Step 2: Extract JSON from surrounding text
     # Try to find JSON in code blocks first (object or array)
@@ -165,34 +165,31 @@ def extract_json_from_response(response: str) -> str:
     Returns:
         Extracted JSON string
     """
-    # First, clean control characters from the response
-    response = re.sub(r'[\x00-\x1F\x7F]', '', response)
+    # First, clean control characters from the response (preserve \n and \t for JSON)
+    response = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', response)
     # Also remove literal hex/unicode control escape sequences the model might include as text
     response = re.sub(r'\\x[0-9A-Fa-f]{2}', '', response)
-    response = re.sub(r'\\u00[0-1][0-9A-Fa-f]{2}', '', response)
+    response = re.sub(r'\\u00[01][0-9a-fA-F]', '', response)
     
     # Try to find JSON in code blocks first (object or array)
     # Look for both ``` and ```json markers
+    # Use greedy match inside code blocks since we have clear delimiters
     code_block_patterns = [
-        r'```(?:json)?\s*(\{[\s\S]*?\})\s*```',  # Object in code block
-        r'```(?:json)?\s*(\[[\s\S]*?\])\s*```',  # Array in code block
+        r'```(?:json)?\s*(\{[\s\S]*\})\s*```',  # Object in code block (greedy)
+        r'```(?:json)?\s*(\[[\s\S]*\])\s*```',  # Array in code block (greedy)
     ]
-    
+
     for pattern in code_block_patterns:
         code_block_match = re.search(pattern, response, re.DOTALL)
         if code_block_match:
             candidate = code_block_match.group(1)
-            # Normalize separators inside the candidate as well
-            candidate = re.sub(r'[\x00-\x1F\x7F]', '', candidate)
+            # Strip control chars but preserve newlines (\x0a) and tabs (\x09)
+            candidate = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', candidate)
             # Also strip textual hex/unicode control escape sequences inside the block
             candidate = re.sub(r'\\x[0-9A-Fa-f]{2}', '', candidate)
-            candidate = re.sub(r'\\u00[0-1][0-9A-Fa-f]{2}', '', candidate)
-            # Decode any remaining unicode escape sequences then strip controls again
-            try:
-                decoded = candidate.encode('utf-8').decode('unicode_escape')
-                candidate = re.sub(r'[\x00-\x1F\x7F]', '', decoded)
-            except Exception:
-                pass
+            candidate = re.sub(r'\\u00[01][0-9a-fA-F]', '', candidate)
+            # Skip unicode_escape decoding — it corrupts legitimate backslashes in
+            # Solidity code snippets (e.g., turning \\n into an actual newline)
             candidate = re.sub(r'}\s*[^{}\[\]]*\s*{', '}, {', candidate)
             candidate = re.sub(r']\s*[^{}\[\]]*\s*\[', '], [', candidate)
             return candidate
@@ -201,30 +198,20 @@ def extract_json_from_response(response: str) -> str:
     json_match = re.search(r'\{.*\}', response, re.DOTALL)
     if json_match:
         candidate = json_match.group(0)
-        candidate = re.sub(r'[\x00-\x1F\x7F]', '', candidate)
+        candidate = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', candidate)
         candidate = re.sub(r'\\x[0-9A-Fa-f]{2}', '', candidate)
-        candidate = re.sub(r'\\u00[0-1][0-9A-Fa-f]{2}', '', candidate)
-        try:
-            decoded = candidate.encode('utf-8').decode('unicode_escape')
-            candidate = re.sub(r'[\x00-\x1F\x7F]', '', decoded)
-        except Exception:
-            pass
+        candidate = re.sub(r'\\u00[01][0-9a-fA-F]', '', candidate)
         candidate = re.sub(r'}\s*[^{}\[\]]*\s*{', '}, {', candidate)
         candidate = re.sub(r']\s*[^{}\[\]]*\s*\[', '], [', candidate)
         return candidate
-    
+
     # Try to find JSON array second (if no object found)
     array_match = re.search(r'\[.*\]', response, re.DOTALL)
     if array_match:
         candidate = array_match.group(0)
-        candidate = re.sub(r'[\x00-\x1F\x7F]', '', candidate)
+        candidate = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', candidate)
         candidate = re.sub(r'\\x[0-9A-Fa-f]{2}', '', candidate)
-        candidate = re.sub(r'\\u00[0-1][0-9A-Fa-f]{2}', '', candidate)
-        try:
-            decoded = candidate.encode('utf-8').decode('unicode_escape')
-            candidate = re.sub(r'[\x00-\x1F\x7F]', '', decoded)
-        except Exception:
-            pass
+        candidate = re.sub(r'\\u00[01][0-9a-fA-F]', '', candidate)
         candidate = re.sub(r'}\s*[^{}\[\]]*\s*{', '}, {', candidate)
         candidate = re.sub(r']\s*[^{}\[\]]*\s*\[', '], [', candidate)
         return candidate

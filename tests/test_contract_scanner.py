@@ -451,24 +451,35 @@ class TestPriorityTiers(unittest.TestCase):
         self.assertEqual(_score_to_priority(69, ContractClassification.CORE_PROTOCOL), PriorityTier.HIGH)
 
     def test_medium_threshold(self):
-        self.assertEqual(_score_to_priority(30, ContractClassification.CORE_PROTOCOL), PriorityTier.MEDIUM)
+        self.assertEqual(_score_to_priority(25, ContractClassification.CORE_PROTOCOL), PriorityTier.MEDIUM)
         self.assertEqual(_score_to_priority(49, ContractClassification.CORE_PROTOCOL), PriorityTier.MEDIUM)
 
     def test_low_threshold(self):
-        self.assertEqual(_score_to_priority(15, ContractClassification.CORE_PROTOCOL), PriorityTier.LOW)
-        self.assertEqual(_score_to_priority(29, ContractClassification.CORE_PROTOCOL), PriorityTier.LOW)
+        self.assertEqual(_score_to_priority(12, ContractClassification.CORE_PROTOCOL), PriorityTier.LOW)
+        self.assertEqual(_score_to_priority(24, ContractClassification.CORE_PROTOCOL), PriorityTier.LOW)
 
     def test_skip_threshold(self):
-        self.assertEqual(_score_to_priority(14, ContractClassification.CORE_PROTOCOL), PriorityTier.SKIP)
+        self.assertEqual(_score_to_priority(11, ContractClassification.CORE_PROTOCOL), PriorityTier.SKIP)
         self.assertEqual(_score_to_priority(0, ContractClassification.CORE_PROTOCOL), PriorityTier.SKIP)
 
-    def test_non_core_always_skip(self):
-        for cls in ContractClassification:
-            if cls != ContractClassification.CORE_PROTOCOL:
-                self.assertEqual(
-                    _score_to_priority(100, cls), PriorityTier.SKIP,
-                    f"{cls} with score 100 should still be SKIP",
-                )
+    def test_abstract_also_scored(self):
+        """Abstracts should get scored (not auto-SKIP) — they contain real logic."""
+        self.assertEqual(_score_to_priority(50, ContractClassification.ABSTRACT), PriorityTier.HIGH)
+        self.assertEqual(_score_to_priority(25, ContractClassification.ABSTRACT), PriorityTier.MEDIUM)
+
+    def test_non_core_non_abstract_always_skip(self):
+        skip_classes = {
+            ContractClassification.INTERFACE,
+            ContractClassification.LIBRARY,
+            ContractClassification.TEST,
+            ContractClassification.MOCK,
+            ContractClassification.SCRIPT,
+        }
+        for cls in skip_classes:
+            self.assertEqual(
+                _score_to_priority(100, cls), PriorityTier.SKIP,
+                f"{cls} with score 100 should still be SKIP",
+            )
 
 
 class TestScanDirectory(unittest.TestCase):

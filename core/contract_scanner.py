@@ -40,16 +40,21 @@ class PriorityTier(Enum):
 
 
 def _score_to_priority(score: int, classification: ContractClassification) -> PriorityTier:
-    """Map a numeric score + classification to a priority tier."""
-    if classification != ContractClassification.CORE_PROTOCOL:
+    """Map a numeric score + classification to a priority tier.
+
+    Both CORE_PROTOCOL and ABSTRACT contracts are scored — abstract bases
+    often contain the real vulnerable logic in inheritance-heavy codebases.
+    """
+    scoreable = {ContractClassification.CORE_PROTOCOL, ContractClassification.ABSTRACT}
+    if classification not in scoreable:
         return PriorityTier.SKIP
     if score >= 70:
         return PriorityTier.CRITICAL
     if score >= 50:
         return PriorityTier.HIGH
-    if score >= 30:
+    if score >= 25:
         return PriorityTier.MEDIUM
-    if score >= 15:
+    if score >= 12:
         return PriorityTier.LOW
     return PriorityTier.SKIP
 
@@ -295,10 +300,12 @@ class ContractScanner:
     ) -> Tuple[int, Dict[str, int], List[str]]:
         """Compute audit-worthiness score for a file.
 
-        Non-core contracts always score 0.  Core contracts are scored across
-        7 categories (max 100).
+        Interfaces, libraries, tests, mocks, and scripts score 0.
+        Core contracts and abstracts are scored across 7 categories (max 100).
+        Abstracts often contain the real logic in inheritance-heavy codebases.
         """
-        if classification != ContractClassification.CORE_PROTOCOL:
+        scoreable = {ContractClassification.CORE_PROTOCOL, ContractClassification.ABSTRACT}
+        if classification not in scoreable:
             return 0, {}, []
 
         breakdown: Dict[str, int] = {}
@@ -384,12 +391,16 @@ class ContractScanner:
                 ProtocolArchetype.BRIDGE,
                 ProtocolArchetype.DEX_AMM,
                 ProtocolArchetype.DEX_ORDERBOOK,
+                ProtocolArchetype.PERPETUAL_DEX,
+                ProtocolArchetype.CDP_STABLECOIN,
+                ProtocolArchetype.LIQUID_STAKING,
             }
             medium_value = {
                 ProtocolArchetype.STAKING,
                 ProtocolArchetype.GOVERNANCE,
                 ProtocolArchetype.ORACLE,
                 ProtocolArchetype.NFT_MARKETPLACE,
+                ProtocolArchetype.YIELD_AGGREGATOR,
             }
             if result.primary in high_value:
                 defi_score += 12

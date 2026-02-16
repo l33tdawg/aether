@@ -142,9 +142,16 @@ class JobsTable(DataTable):
         """Format findings count; aggregate children for parent jobs."""
         if job.child_job_ids:
             children = jm.get_children(job.job_id)
-            total = sum(c.findings_count for c in children)
+            total = sum(
+                max(c.findings_count,
+                    c.audit_status.findings_count if c.audit_status else 0)
+                for c in children
+            )
             return str(total) if total > 0 else "-"
-        return str(job.findings_count) if job.findings_count > 0 else "-"
+        fc = job.findings_count
+        if job.audit_status and job.audit_status.findings_count > fc:
+            fc = job.audit_status.findings_count
+        return str(fc) if fc > 0 else "-"
 
     @staticmethod
     def _format_cost(job: AuditJob, jm: JobManager) -> str:

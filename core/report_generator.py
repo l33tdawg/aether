@@ -320,11 +320,15 @@ The contract **{contract_name}** passed all security checks with no findings.
 
         return content
 
-    def generate_bug_bounty_submission(self, results: Dict[str, Any]) -> str:
-        """Generate a bug-bounty-friendly submission template."""
+    def generate_bug_bounty_submission(self, results: Dict[str, Any]) -> List[str]:
+        """Generate bug-bounty-friendly submission templates for all HIGH/CRITICAL findings.
+
+        Returns a list of submission strings, one per HIGH/CRITICAL finding,
+        ordered by priority score (highest first).
+        """
         audit = results.get('audit', {})
         vulns = []
-        
+
         # Build candidate list in priority order: confirmed > llm_validated > suspected
         if audit.get('mythril', {}).get('vulnerabilities'):
             vulns += audit['mythril']['vulnerabilities']
@@ -352,7 +356,17 @@ The contract **{contract_name}** passed all security checks with no findings.
                         vuln.validation_status = 'confirmed'
                 vulns.append(vuln)
 
-        # Choose the best concrete finding with file/line/SWC and exploit_successful=True
+        # Filter to only HIGH and CRITICAL severity findings
+        high_critical_vulns = []
+        for v in vulns:
+            severity = v.get('severity', 'medium') if hasattr(v, 'get') else v.severity
+            if severity.lower() in ['critical', 'high']:
+                high_critical_vulns.append(v)
+
+        if not high_critical_vulns:
+            return []
+
+        # Priority scoring for ordering
         def score(v):
             s = 0
             # Handle both dict and VulnerabilityMatch objects
@@ -375,7 +389,8 @@ The contract **{contract_name}** passed all security checks with no findings.
 
             # Severity
             severity = v.get('severity', 'medium') if hasattr(v, 'get') else v.severity
-            if severity.lower() in ('critical','high'): s += 4  # Higher weight for severity
+            if severity.lower() == 'critical': s += 5
+            elif severity.lower() == 'high': s += 4
 
             # Confidence
             confidence = v.get('confidence', 0) if hasattr(v, 'get') else v.confidence
@@ -387,16 +402,64 @@ The contract **{contract_name}** passed all security checks with no findings.
 
             return s
 
-        primary = {}
-        if vulns:
-            vulns_sorted = sorted(vulns, key=score, reverse=True)
-            for v in vulns_sorted:
-                if score(v) > 0:
-                    primary = v
-                    break
-            if not primary:
-                primary = vulns_sorted[0]
+        # Sort by priority score
+        sorted_vulns = sorted(high_critical_vulns, key=score, reverse=True)
 
+        # Generate a submission for each finding
+        submissions = []
+        for primary in sorted_vulns:
+            submission = self._format_single_submission(primary, audit)
+            submissions.append(submission)
+
+        return submissions
+
+    def _get_similar_historical_exploits(self, vuln: Any) -> str:
+        """Query ExploitKnowledgeBase for similar historical exploits based on vulnerability type."""
+        try:
+            from core.exploit_knowledge_base import ExploitKnowledgeBase
+            kb = ExploitKnowledgeBase()
+
+            # Extract vuln type for searching
+            if hasattr(vuln, 'get'):
+                vuln_type = vuln.get('vulnerability_type', vuln.get('category', vuln.get('title', '')))
+            else:
+                vuln_type = vuln.vulnerability_type
+
+            vuln_type_lower = str(vuln_type).lower().replace('_', ' ')
+
+            # Search using multiple keywords from the vuln type
+            matches = []
+            search_terms = [vuln_type_lower]
+            # Add individual words as fallback search terms
+            for word in vuln_type_lower.split():
+                if len(word) > 3:  # Skip short words
+                    search_terms.append(word)
+
+            seen_ids = set()
+            for term in search_terms:
+                for pattern in kb.search(term):
+                    if pattern.id not in seen_ids:
+                        seen_ids.add(pattern.id)
+                        matches.append(pattern)
+                if len(matches) >= 5:
+                    break
+
+            if not matches:
+                return "No similar historical exploits found in knowledge base."
+
+            lines = []
+            for p in matches[:5]:
+                examples = ', '.join(p.real_world_examples) if p.real_world_examples else 'N/A'
+                lines.append(
+                    f"- **{p.name}** [{p.severity.upper()}]: {p.description[:120]}... "
+                    f"(Real-world: {examples})"
+                )
+            return '\n'.join(lines)
+        except Exception:
+            return "Historical exploit lookup unavailable."
+
+    def _format_single_submission(self, primary: Any, audit: Dict[str, Any]) -> str:
+        """Format a single vulnerability into a bug bounty submission template."""
         # Handle both dict and VulnerabilityMatch objects for primary vulnerability
         if hasattr(primary, 'get'):
             # Dict-like object
@@ -453,6 +516,9 @@ The contract **{contract_name}** passed all security checks with no findings.
             impact = 'High - Significant security impact with potential for financial loss'
             fix_suggestion = 'Return the computed cap variable instead of beanstalk.totalUnharvestable(fieldId)'
 
+        # Get similar historical exploits from knowledge base
+        historical_exploits = self._get_similar_historical_exploits(primary)
+
         tmpl = f"""# Bug Submission
 
 ## Title
@@ -473,6 +539,9 @@ SWC: {swc}
 
 ## Proof of Concept
 {f'```solidity\n{poc}\n```' if poc else self._generate_poc_template(primary)}
+
+## Similar Historical Exploits
+{historical_exploits}
 
 ## Validation
 - Tool(s): {', '.join([k for k,v in audit.items() if isinstance(v, dict) and v.get('vulnerabilities')]) or 'Enhanced Pattern Analysis'}

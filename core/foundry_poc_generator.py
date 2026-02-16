@@ -107,6 +107,13 @@ class GenerationManifest:
     suites: List[PoCTestResult]
 
 
+@dataclass
+class _CompatTestSuite:
+    """Lightweight result matching the LLMFoundryGenerator.FoundryTestSuite API."""
+    test_file: str
+    exploit_contract: str
+
+
 class VulnerabilityClass(Enum):
     ACCESS_CONTROL = "access_control"
     REENTRANCY = "reentrancy"
@@ -3885,6 +3892,69 @@ interface {interface_name} {{
 
         except Exception as e:
             logger.error(f"Runtime repair failed: {e}")
+
+    async def generate_multiple_tests(
+        self,
+        vulnerabilities: List[Dict[str, Any]],
+        contract_code: str,
+        contract_name: str,
+        output_dir: str,
+        context_overrides: Optional[Dict[str, Any]] = None
+    ) -> List['_CompatTestSuite']:
+        """Adapter matching LLMFoundryGenerator.generate_multiple_tests() API.
+
+        Converts dict-based vulnerabilities into NormalizedFinding objects,
+        runs synthesize_poc + compile_and_repair_loop for each, writes files,
+        and returns lightweight objects with .test_file / .exploit_contract.
+        """
+        overrides = context_overrides or {}
+        suites: List[_CompatTestSuite] = []
+
+        for i, vuln in enumerate(vulnerabilities):
+            try:
+                logger.info(f"Generating test {i+1}/{len(vulnerabilities)}: {vuln.get('vulnerability_type', 'unknown')}")
+
+                vuln_type = vuln.get('vulnerability_type', 'unknown')
+                vuln_class = self._map_to_vulnerability_class(vuln_type)
+
+                finding = NormalizedFinding(
+                    id=f"vuln_{i+1}",
+                    vulnerability_type=vuln_type,
+                    vulnerability_class=vuln_class,
+                    severity=vuln.get('severity', 'medium'),
+                    confidence=0.8,
+                    description=vuln.get('description', ''),
+                    line_number=vuln.get('line_number', 0),
+                    swc_id='',
+                    file_path='',
+                    contract_name=contract_name,
+                    status='pending',
+                    validation_confidence=0.0,
+                    validation_reasoning='',
+                    models=[],
+                )
+
+                entrypoints = self.discover_entrypoints(contract_code, finding.line_number)
+                if not entrypoints:
+                    logger.warning(f"No entrypoints found for vulnerability {i+1}")
+                    continue
+
+                test_result = await self.synthesize_poc(finding, contract_code, entrypoints, output_dir)
+
+                vuln_output_dir = os.path.join(output_dir, f"vulnerability_{i+1}")
+                os.makedirs(vuln_output_dir, exist_ok=True)
+
+                test_result = await self.compile_and_repair_loop(test_result, vuln_output_dir, contract_code)
+
+                test_file = os.path.join(vuln_output_dir, f"{contract_name}_test.sol")
+                exploit_file = os.path.join(vuln_output_dir, f"{contract_name}Exploit.sol")
+
+                suites.append(_CompatTestSuite(test_file=test_file, exploit_contract=exploit_file))
+            except Exception as e:
+                logger.error(f"Failed to generate test for vulnerability {i+1}: {e}")
+                continue
+
+        return suites
 
     async def generate_comprehensive_poc_suite(
         self,

@@ -467,11 +467,15 @@ class AuditRunner:
         project_id: Optional[int] = None,
         scope_id: Optional[int] = None,
         fresh: bool = False,
+        reanalyze: bool = False,
     ) -> None:
         """Start a GitHub audit in a background daemon thread.
 
         The scope is already selected via the TUI dialogs, so
         interactive_scope=False and skip_scope_selector=True.
+
+        Args:
+            reanalyze: If True, force re-analysis even for cached contracts.
         """
         job = self._job_manager.get_job(job_id)
         if not job:
@@ -479,7 +483,7 @@ class AuditRunner:
 
         thread = threading.Thread(
             target=self._github_audit_worker,
-            args=(job, github_url, project_id, scope_id, fresh),
+            args=(job, github_url, project_id, scope_id, fresh, reanalyze),
             daemon=True,
             name=f"github-{job_id}",
         )
@@ -493,6 +497,7 @@ class AuditRunner:
         project_id: Optional[int],
         scope_id: Optional[int],
         fresh: bool,
+        reanalyze: bool = False,
     ) -> None:
         """Background thread: runs a GitHub audit via AetherCLI."""
         tracker = LLMUsageTracker.get_instance()
@@ -512,9 +517,10 @@ class AuditRunner:
             from cli.main import AetherCLI
             cli = AetherCLI()
 
-            cli.run_github_audit_command(
+            result_count = cli.run_github_audit_command(
                 github_url=github_url,
                 fresh=fresh,
+                reanalyze=reanalyze or fresh,  # Re-run full pipeline when requested or fresh
                 interactive_scope=False,
                 skip_scope_selector=True,
                 resume_scope_id=scope_id,
@@ -523,8 +529,10 @@ class AuditRunner:
             snapshot_after = tracker.snapshot()
             cost_delta = snapshot_after["total_cost"] - snapshot_before["total_cost"]
 
-            # Use stdout-parsed findings (GitHub audits don't return a results dict)
-            findings = job.audit_status.findings_count if job.audit_status else 0
+            # Use return value (actual vulnerability count), fall back to stdout-parsed
+            findings = result_count if isinstance(result_count, int) and result_count > 0 else 0
+            if job.audit_status and job.audit_status.findings_count > findings:
+                findings = job.audit_status.findings_count
 
             # Store per-job LLM stats from snapshot deltas
             if job.audit_status:

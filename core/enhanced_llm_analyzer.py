@@ -316,8 +316,10 @@ Provide a structured JSON response with ONLY verified vulnerabilities:
       "severity": "low|medium|high|critical",
       "confidence": 0.0-1.0,
       "exploitability": "Assessment of exploitability",
-      "attack_vector": "Specific attack steps if exploitable",
-      "financial_impact": "Potential impact",
+      "attack_vector": "REQUIRED: Specific attack vector describing how an attacker would exploit this (step by step)",
+      "financial_impact": "REQUIRED: Concrete financial impact assessment (e.g. 'Total loss of deposited funds', 'Theft of LP tokens')",
+      "exploit_steps": ["Step 1: ...", "Step 2: ...", "Step 3: ..."],
+      "code_snippet": "The exact vulnerable code lines from the contract",
       "exploit_complexity": "low|medium|high",
       "detection_difficulty": "low|medium|high",
       "immunefi_bounty_value": "Estimated bounty range",
@@ -330,6 +332,12 @@ Provide a structured JSON response with ONLY verified vulnerabilities:
   "best_practices": [],
   "summary": "Overall assessment"
 }
+
+**REQUIRED FIELDS:** Every vulnerability MUST include:
+- attack_vector: A concrete description of the attack path (not just "possible attack")
+- financial_impact: Specific impact assessment with estimated value at risk
+- exploit_steps: An array of ordered steps to reproduce the exploit
+- code_snippet: The exact vulnerable code lines copied from the contract
 
 CRITICAL: Your response must be valid JSON that can be parsed directly. Ensure:
 - All strings are properly quoted with double quotes
@@ -429,8 +437,8 @@ Before reporting any vulnerability, verify:
                     if current_model != model:
                         print(f"✅ Using fallback model: {current_model}")
                     
-                    # Clean the response text of control characters
-                    response_text = re.sub(r'[\x00-\x1F\x7F]', '', response_text)
+                    # Clean the response text of control characters (preserve \n and \t)
+                    response_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', response_text)
                     return response_text
                     
             except Exception as e:

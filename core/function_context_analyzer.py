@@ -390,8 +390,10 @@ class FunctionContextAnalyzer:
                     return ('high', 'Critical function - parameter validation is essential')
         
         # Reentrancy only matters for state-changing functions
+        # Exception: read-only reentrancy targets view functions (stale state reads)
         if 'reentrancy' in finding_type.lower():
-            if context.state_impact == StateImpact.READ_ONLY:
+            is_readonly_reentrancy = 'read-only' in finding_type.lower() or 'read_only' in finding_type.lower() or 'readonly' in finding_type.lower()
+            if context.state_impact == StateImpact.READ_ONLY and not is_readonly_reentrancy:
                 return ('info', 'Read-only function - reentrancy has no exploitable impact')
             elif not context.has_external_call:
                 return ('low', 'No external calls detected - reentrancy risk is theoretical')
@@ -432,7 +434,11 @@ class FunctionContextAnalyzer:
         if 'reentrancy' in finding_type.lower():
             if not context.has_external_call:
                 return (True, "Reentrancy finding but function makes no external calls")
-            if context.is_view or context.is_pure:
+            # Read-only reentrancy specifically targets view functions — stale reads
+            # during cross-contract reentrancy can return manipulated state.
+            # Do NOT mark view/pure functions as FP if this is a read-only reentrancy finding.
+            is_readonly_reentrancy = 'read-only' in finding_type.lower() or 'read_only' in finding_type.lower() or 'readonly' in finding_type.lower()
+            if (context.is_view or context.is_pure) and not is_readonly_reentrancy:
                 return (True, "Reentrancy finding on view/pure function (no state impact)")
         
         # Access control on internal/private functions (would be in function_code check)

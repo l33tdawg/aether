@@ -26,7 +26,6 @@ from core.basescan_fetcher import BasescanFetcher
 from core.config_manager import ConfigManager
 from utils.file_handler import FileHandler
 from core.foundry_poc_generator import FoundryPoCGenerator
-from core.llm_foundry_generator import LLMFoundryGenerator
 from core.github_auditor import GitHubAuditor, AuditOptions as GitHubAuditOptions
 from core.audit_result_formatter import AuditResultFormatter
 from core.graceful_shutdown import register_database
@@ -668,7 +667,7 @@ class AetherCLI:
                 gen_root = os.path.join(base_dir or 'output', f'foundry_gen_{ts}')
                 os.makedirs(gen_root, exist_ok=True)
 
-            generator = LLMFoundryGenerator()
+            generator = FoundryPoCGenerator()
             context_overrides = {}
             # Global DB-derived context (e.g., solc) if available
             try:
@@ -930,7 +929,16 @@ class AetherCLI:
             print(f"📁 Repo: {result.project_path}")
             print(f"🧰 Framework: {result.framework or 'unknown'}")
             print(formatter.format_for_display(result.findings))
-        return 0
+
+        # Count actual vulnerabilities across all contracts
+        total_findings = 0
+        for f in result.findings:
+            summary = f.get('summary', {})
+            if isinstance(summary, dict) and 'vulnerabilities' in summary:
+                total_findings += len(summary.get('vulnerabilities', []))
+            elif isinstance(summary, dict) and 'total_findings' in summary:
+                total_findings += summary.get('total_findings', 0)
+        return total_findings
 
     async def run_audit(
         self,
@@ -1164,10 +1172,10 @@ class AetherCLI:
                     # Generate bug bounty submission
                     if bug_bounty_submission:
                         bounty_path = os.path.join(scope_dir, contract_name, f"{contract_name}_bug_bounty_submission.md")
-                        bounty_content = report_generator.generate_bug_bounty_submission(report_data)
+                        bounty_submissions = report_generator.generate_bug_bounty_submission(report_data)
                         with open(bounty_path, 'w') as f:
-                            f.write(bounty_content)
-                        print(f"✅ Generated bug bounty submission: {bounty_path}")
+                            f.write("\n---\n\n".join(bounty_submissions) if bounty_submissions else "No HIGH/CRITICAL findings for bug bounty submission.")
+                        print(f"✅ Generated bug bounty submission ({len(bounty_submissions)} finding(s)): {bounty_path}")
                     
                     print(f"\n📂 All reports for {contract_name} saved to: {os.path.join(scope_dir, contract_name)}")
                     print(f"\n💡 To generate Foundry tests from these results:")
@@ -1224,10 +1232,10 @@ class AetherCLI:
                     # Use full_output_dir if it exists, otherwise use the regular output_dir
                     target_dir = full_output_dir or output_dir
                     bounty_path = os.path.join(target_dir, f"{contract_name}-bug_bounty_submission.md")
-                    bounty_content = report_generator.generate_bug_bounty_submission(report_data)
+                    bounty_submissions = report_generator.generate_bug_bounty_submission(report_data)
                     with open(bounty_path, 'w') as f:
-                        f.write(bounty_content)
-                    print(f"✅ Generated bug bounty submission: {bounty_path}")
+                        f.write("\n---\n\n".join(bounty_submissions) if bounty_submissions else "No HIGH/CRITICAL findings for bug bounty submission.")
+                    print(f"✅ Generated bug bounty submission ({len(bounty_submissions)} finding(s)): {bounty_path}")
 
             # Legacy report generation (keep for backward compatibility)
             if results and 'summary' in results and 'total_vulnerabilities' in results['summary']:
@@ -1339,9 +1347,9 @@ class AetherCLI:
             # Generate bug bounty submission template for quick copy-paste
                 bounty_path = os.path.join(full_output_dir, f"{contract_name}-bug_bounty_submission.md")
                 try:
-                    bounty_content = report_generator.generate_bug_bounty_submission(report_data)
+                    bounty_submissions = report_generator.generate_bug_bounty_submission(report_data)
                     with open(bounty_path, 'w') as f:
-                        f.write(bounty_content)
+                        f.write("\n---\n\n".join(bounty_submissions) if bounty_submissions else "No HIGH/CRITICAL findings for bug bounty submission.")
                 except Exception as e:
                     print(f"⚠️  Warning: Failed to generate bug bounty submission: {e}")
                     if verbose:
@@ -1716,9 +1724,9 @@ class AetherCLI:
             # Generate bug bounty submission template for quick copy-paste
             bounty_path = os.path.join(output_dir, f"{contract_name}-bug_bounty_submission.md")
             try:
-                bounty_content = report_generator.generate_bug_bounty_submission(report_data)
+                bounty_submissions = report_generator.generate_bug_bounty_submission(report_data)
                 with open(bounty_path, 'w') as f:
-                    f.write(bounty_content)
+                    f.write("\n---\n\n".join(bounty_submissions) if bounty_submissions else "No HIGH/CRITICAL findings for bug bounty submission.")
             except Exception as e:
                 print(f"⚠️  Warning: Failed to generate bug bounty submission: {e}")
                 if verbose:

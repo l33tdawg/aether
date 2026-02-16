@@ -480,24 +480,293 @@ class OracleManipulationDetector:
         ]
         return any(re.search(p, content, re.IGNORECASE) for p in l2_patterns)
 
+    def _check_l2_sequencer_missing(self, content: str, contract_path: str) -> List[OracleVulnerability]:
+        """Detect Chainlink usage on L2 without sequencer uptime feed check."""
+        vulnerabilities = []
+
+        # Detect L2 indicators in the contract
+        l2_indicators = [
+            r"Arbitrum|arbitrum|ARBITRUM",
+            r"Optimism|optimism|OPTIMISM",
+            r"L2|layer2|layerTwo",
+            r"arbSys|ArbSys",
+            r"iOVM|OVM_|optimismPortal",
+        ]
+        is_l2 = any(re.search(p, content) for p in l2_indicators)
+        if not is_l2:
+            return vulnerabilities
+
+        # Contract uses Chainlink on L2 — check for sequencer feed
+        if self._check_l2_sequencer_feed(content):
+            return vulnerabilities
+
+        # Find first latestRoundData call for the line number
+        match = re.search(r"latestRoundData\s*\(\s*\)", content)
+        if not match:
+            return vulnerabilities
+
+        line_number = content[:match.start()].count('\n') + 1
+        lines = content.split('\n')
+        start_line = max(0, line_number - 3)
+        end_line = min(len(lines), line_number + 3)
+        code_snippet = '\n'.join(lines[start_line:end_line])
+
+        vulnerabilities.append(OracleVulnerability(
+            vuln_type=OracleManipulationType.PRICE_MANIPULATION,
+            oracle_type=OracleType.CHAINLINK,
+            severity="high",
+            confidence=0.75,
+            line_number=line_number,
+            description="Chainlink oracle on L2 without sequencer uptime feed check — prices may be stale during sequencer downtime",
+            code_snippet=code_snippet,
+            attack_vector="L2 sequencer downtime allows stale Chainlink prices to be used for critical operations",
+            financial_impact="High - Stale prices during L2 sequencer outage enable arbitrage and liquidation exploits",
+            exploit_complexity="Low",
+            immunefi_bounty_potential="$10,000-$100,000",
+            poc_suggestion="Demonstrate stale price exploitation during simulated sequencer downtime on Arbitrum/Optimism",
+            fix_suggestion="Add sequencer uptime feed check: query sequencerUptimeFeed, require sequencer is up, enforce grace period after restart",
+            context={"contract_path": contract_path, "check_type": "l2_sequencer_missing"},
+            manipulation_method="L2 sequencer downtime stale price exploitation",
+            attack_prerequisites=["L2 deployment (Arbitrum/Optimism)", "Sequencer downtime event"],
+            mitigation_strategies=["Check sequencerUptimeFeed", "Enforce grace period after sequencer restart", "Pause protocol during downtime"],
+            historical_examples=["Arbitrum sequencer downtime events", "Optimism sequencer outage incidents"],
+        ))
+
+        return vulnerabilities
+
+    def _check_cross_oracle_arbitrage(self, content: str, contract_path: str, oracle_types: List[OracleType]) -> List[OracleVulnerability]:
+        """Detect contracts using 2+ oracle sources without price deviation check."""
+        vulnerabilities = []
+
+        # Collect all price-fetching call sites
+        price_call_patterns = [
+            (r"latestRoundData\s*\(\s*\)", "Chainlink"),
+            (r"getReferenceData\s*\([^)]*\)", "Band"),
+            (r"getCurrentValue\s*\([^)]*\)", "Tellor"),
+            (r"getPrice\s*\([^)]*\)|getPriceUnsafe\s*\([^)]*\)", "Pyth"),
+            (r"getReserves\s*\(\s*\)", "UniswapV2"),
+        ]
+
+        found_sources: List[Tuple[str, int]] = []
+        for pattern, source_name in price_call_patterns:
+            for match in re.finditer(pattern, content, re.IGNORECASE):
+                line_number = content[:match.start()].count('\n') + 1
+                found_sources.append((source_name, line_number))
+
+        # Need 2+ distinct oracle source types to flag cross-oracle arbitrage
+        distinct_sources = set(s[0] for s in found_sources)
+        if len(distinct_sources) < 2:
+            return vulnerabilities
+
+        # Check if a deviation/comparison check exists between prices
+        deviation_patterns = [
+            r"abs\s*\([^)]*price[^)]*-[^)]*price[^)]*\)",
+            r"price.*-.*price.*<.*threshold|price.*-.*price.*<.*deviation",
+            r"maxDeviation|priceDeviation|priceDiff|priceSpread",
+            r"require\s*\([^)]*price[^)]*-[^)]*price",
+            r"deviation.*check|spread.*check",
+        ]
+        has_deviation_check = any(
+            re.search(p, content, re.IGNORECASE) for p in deviation_patterns
+        )
+        if has_deviation_check:
+            return vulnerabilities
+
+        # Report at the first oracle call site
+        first_line = min(s[1] for s in found_sources)
+        lines = content.split('\n')
+        start_line = max(0, first_line - 3)
+        end_line = min(len(lines), first_line + 3)
+        code_snippet = '\n'.join(lines[start_line:end_line])
+
+        source_list = ", ".join(sorted(distinct_sources))
+        vulnerabilities.append(OracleVulnerability(
+            vuln_type=OracleManipulationType.CROSS_ORACLE_ARBITRAGE,
+            oracle_type=OracleType.AGGREGATED,
+            severity="high",
+            confidence=0.7,
+            line_number=first_line,
+            description=f"Contract uses multiple oracle sources ({source_list}) without cross-price deviation check — arbitrage between feeds possible",
+            code_snippet=code_snippet,
+            attack_vector="Attacker exploits price divergence between oracle feeds when no deviation threshold enforced",
+            financial_impact="High - Cross-oracle price discrepancy enables risk-free arbitrage or unfair liquidations",
+            exploit_complexity="Medium",
+            immunefi_bounty_potential="$10,000-$250,000",
+            poc_suggestion="Show that when oracle feeds diverge beyond a threshold, attacker can profit by choosing the favorable price path",
+            fix_suggestion="Add cross-price deviation check: require(abs(priceA - priceB) * 10000 / priceA < maxDeviationBps)",
+            context={"contract_path": contract_path, "oracle_sources": sorted(distinct_sources)},
+            manipulation_method="Cross-oracle price divergence arbitrage",
+            attack_prerequisites=["Multiple oracle sources", "No deviation check between feeds"],
+            mitigation_strategies=["Cross-price deviation threshold", "Use single canonical oracle", "Median-of-three pricing"],
+            historical_examples=["Mango Markets cross-oracle exploit ($116M)"],
+        ))
+
+        return vulnerabilities
+
+    def _check_twap_manipulation(self, content: str, contract_path: str) -> List[OracleVulnerability]:
+        """Detect short TWAP observation windows vulnerable to manipulation."""
+        vulnerabilities = []
+
+        # Detect TWAP usage patterns
+        twap_patterns = [
+            r"observe\s*\(",
+            r"consult\s*\(",
+            r"twap|TWAP|timeWeightedAverage",
+            r"getTimeWeightedTick",
+            r"OracleLibrary\.consult",
+        ]
+        has_twap = any(re.search(p, content) for p in twap_patterns)
+        if not has_twap:
+            return vulnerabilities
+
+        lines = content.split('\n')
+
+        # Look for short period constants or inline period values
+        # Match numeric literals that could be TWAP periods (in seconds)
+        short_period_patterns = [
+            # observe([secondsAgo, 0]) or similar with small values
+            (r"observe\s*\(\s*\[?\s*(\d+)", "observe"),
+            # consult(pool, period) with small period
+            (r"consult\s*\([^,]*,\s*(\d+)", "consult"),
+            # secondsAgo = N or period = N with small N
+            (r"(?:secondsAgo|period|twapPeriod|twapInterval|window)\s*=\s*(\d+)", "assignment"),
+            # uint32 constant declarations for TWAP period
+            (r"(?:TWAP_PERIOD|PERIOD|WINDOW|INTERVAL|SECONDS_AGO)\s*=\s*(\d+)", "constant"),
+        ]
+
+        for pattern, match_type in short_period_patterns:
+            for match in re.finditer(pattern, content, re.IGNORECASE):
+                period_value = int(match.group(1))
+                # Flag periods under 1800 seconds (30 minutes)
+                if period_value > 0 and period_value < 1800:
+                    line_number = content[:match.start()].count('\n') + 1
+                    start_line = max(0, line_number - 3)
+                    end_line = min(len(lines), line_number + 3)
+                    code_snippet = '\n'.join(lines[start_line:end_line])
+
+                    vulnerabilities.append(OracleVulnerability(
+                        vuln_type=OracleManipulationType.PRICE_MANIPULATION,
+                        oracle_type=OracleType.UNISWAP_V3,
+                        severity="high",
+                        confidence=0.75,
+                        line_number=line_number,
+                        description=f"TWAP oracle uses short observation window ({period_value}s) — vulnerable to single-block or multi-block manipulation",
+                        code_snippet=code_snippet,
+                        attack_vector="Attacker manipulates pool price for short duration to skew TWAP; shorter windows are easier and cheaper to attack",
+                        financial_impact="High - Short TWAP window can be manipulated within a few blocks for protocol drain",
+                        exploit_complexity="Medium",
+                        immunefi_bounty_potential="$10,000-$500,000",
+                        poc_suggestion="Demonstrate TWAP manipulation over the short window using flash loan or multi-block MEV",
+                        fix_suggestion=f"Increase TWAP window to at least 1800 seconds (30 minutes); current value is {period_value}s",
+                        context={"contract_path": contract_path, "twap_period": period_value, "match_type": match_type},
+                        manipulation_method="Short TWAP window manipulation",
+                        attack_prerequisites=["Short TWAP observation period", "Sufficient liquidity to move price"],
+                        mitigation_strategies=["Use TWAP window >= 30 minutes", "Add manipulation-resistant bounds", "Use Chainlink as primary oracle"],
+                        historical_examples=["Euler Finance TWAP manipulation", "Rari Fuse pool TWAP attacks"],
+                    ))
+                    break  # One finding per pattern type is sufficient
+
+        return vulnerabilities
+
+    def _check_pyth_confidence_interval(self, content: str, contract_path: str) -> List[OracleVulnerability]:
+        """Detect Pyth oracle usage without confidence interval validation."""
+        vulnerabilities = []
+
+        # Find Pyth price retrieval calls
+        pyth_price_patterns = [
+            r"getPrice\s*\([^)]*\)",
+            r"getPriceUnsafe\s*\([^)]*\)",
+            r"getPriceNoOlderThan\s*\([^)]*\)",
+            r"getEmaPrice\s*\([^)]*\)",
+            r"getEmaPriceUnsafe\s*\([^)]*\)",
+        ]
+
+        has_pyth_price = False
+        first_match = None
+        for pattern in pyth_price_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                has_pyth_price = True
+                if first_match is None or match.start() < first_match.start():
+                    first_match = match
+
+        if not has_pyth_price or first_match is None:
+            return vulnerabilities
+
+        # Check if confidence field is validated
+        confidence_patterns = [
+            r"\.conf\b",
+            r"confidence",
+            r"require\s*\([^)]*conf[^)]*<",
+            r"conf\s*[<>]=?\s*\d",
+            r"price\.conf",
+            r"maxConfWidth|confidenceRatio|confRatio",
+        ]
+        has_confidence_check = any(
+            re.search(p, content, re.IGNORECASE) for p in confidence_patterns
+        )
+        if has_confidence_check:
+            return vulnerabilities
+
+        line_number = content[:first_match.start()].count('\n') + 1
+        lines = content.split('\n')
+        start_line = max(0, line_number - 3)
+        end_line = min(len(lines), line_number + 3)
+        code_snippet = '\n'.join(lines[start_line:end_line])
+
+        vulnerabilities.append(OracleVulnerability(
+            vuln_type=OracleManipulationType.PRICE_MANIPULATION,
+            oracle_type=OracleType.PYTH,
+            severity="medium",
+            confidence=0.7,
+            line_number=line_number,
+            description="Pyth oracle price used without checking confidence interval — wide confidence means unreliable price",
+            code_snippet=code_snippet,
+            attack_vector="Attacker exploits periods of high price uncertainty when Pyth confidence interval is wide but contract trusts the price blindly",
+            financial_impact="Medium - Unreliable price during high volatility leads to unfavorable trades or liquidations",
+            exploit_complexity="Low",
+            immunefi_bounty_potential="$5,000-$50,000",
+            poc_suggestion="Show that during a period of wide Pyth confidence, the price can deviate significantly from true market price",
+            fix_suggestion="Validate Pyth confidence: require(price.conf * MAX_CONF_WIDTH < price.price) to reject wide-spread prices",
+            context={"contract_path": contract_path, "check_type": "pyth_confidence_missing"},
+            manipulation_method="Pyth wide confidence interval exploitation",
+            attack_prerequisites=["Pyth oracle usage", "Period of high price uncertainty"],
+            mitigation_strategies=["Check price.conf relative to price.price", "Set maxConfWidth threshold", "Pause on excessive confidence spread"],
+            historical_examples=["Pyth confidence interval issues on Solana DeFi protocols"],
+        ))
+
+        return vulnerabilities
+
     async def _analyze_oracle_specific_patterns(self, content: str, contract_path: str, oracle_types: List[OracleType]) -> List[OracleVulnerability]:
         """Analyze oracle-specific patterns."""
         vulnerabilities = []
-        
+
         for oracle_type in oracle_types:
             if oracle_type == OracleType.CHAINLINK:
                 vulnerabilities.extend(await self._analyze_chainlink_patterns(content, contract_path))
+                # Check for missing L2 sequencer feed on L2-targeted Chainlink usage
+                vulnerabilities.extend(self._check_l2_sequencer_missing(content, contract_path))
             elif oracle_type == OracleType.BAND:
                 vulnerabilities.extend(await self._analyze_band_patterns(content, contract_path))
             elif oracle_type == OracleType.TELLOR:
                 vulnerabilities.extend(await self._analyze_tellor_patterns(content, contract_path))
             elif oracle_type == OracleType.PYTH:
                 vulnerabilities.extend(await self._analyze_pyth_patterns(content, contract_path))
+                # Check for missing Pyth confidence interval validation
+                vulnerabilities.extend(self._check_pyth_confidence_interval(content, contract_path))
             elif oracle_type == OracleType.UNISWAP_V2:
                 vulnerabilities.extend(await self._analyze_uniswap_v2_patterns(content, contract_path))
             elif oracle_type == OracleType.UNISWAP_V3:
                 vulnerabilities.extend(await self._analyze_uniswap_v3_patterns(content, contract_path))
-        
+
+        # Cross-oracle checks (need 2+ oracle sources)
+        if len(oracle_types) >= 2:
+            vulnerabilities.extend(self._check_cross_oracle_arbitrage(content, contract_path, oracle_types))
+
+        # TWAP manipulation check for Uniswap oracles
+        if OracleType.UNISWAP_V3 in oracle_types or OracleType.UNISWAP_V2 in oracle_types:
+            vulnerabilities.extend(self._check_twap_manipulation(content, contract_path))
+
         return vulnerabilities
 
     async def _analyze_chainlink_patterns(self, content: str, contract_path: str) -> List[OracleVulnerability]:

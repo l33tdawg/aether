@@ -59,6 +59,14 @@ PHASE_MARKERS: Dict[str, AuditPhase] = {
     "Audit result saved": AuditPhase.SAVING,
     "Audit result updated": AuditPhase.SAVING,
     "vulnerability findings saved": AuditPhase.SAVING,
+    # GitHub audit markers
+    "Cloning repository": AuditPhase.STARTING,
+    "Repository ready": AuditPhase.STARTING,
+    "Resuming with saved scope": AuditPhase.STARTING,
+    "Running enhanced analysis": AuditPhase.STATIC_ANALYSIS,
+    "Generating comprehensive audit reports": AuditPhase.REPORTING,
+    "GitHub audit completed": AuditPhase.COMPLETED,
+    "Reports generated": AuditPhase.SAVING,
 }
 
 # Regex to extract finding counts from engine output
@@ -67,6 +75,9 @@ _FINDINGS_RE = re.compile(
     r"|(?:Reduced from \d+ to (\d+))"
     r"|(?:Collected (\d+) findings)"
 )
+
+# Regex to count individual findings in display format: [N] SEVERITY: ...
+_FINDING_LINE_RE = re.compile(r"^\[(\d+)\]\s+(?:CRITICAL|HIGH|MEDIUM|LOW|INFO)", re.MULTILINE)
 
 
 TOTAL_PHASES = 12  # QUEUED through COMPLETED/FAILED
@@ -151,6 +162,14 @@ class ContractAuditStatus:
                     with self._lock:
                         if count > self.findings_count:
                             self.findings_count = count
+
+        # Also count individual finding lines: [N] SEVERITY: ...
+        m2 = _FINDING_LINE_RE.search(line)
+        if m2:
+            finding_num = int(m2.group(1))
+            with self._lock:
+                if finding_num > self.findings_count:
+                    self.findings_count = finding_num
 
     @property
     def elapsed(self) -> Optional[float]:

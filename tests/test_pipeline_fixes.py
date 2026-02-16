@@ -202,7 +202,7 @@ class TestSingleAgentConfidencePenalty(unittest.TestCase):
         self.assertIn('complex_logic', ensemble._AGENT_SPECIALIZATIONS['anthropic_reasoning'])
 
     def test_specialist_finding_gets_reduced_penalty(self):
-        """Specialist finding should get only -0.05 penalty."""
+        """Specialist finding should get only -0.02 penalty."""
         from core.ai_ensemble import EnhancedAIEnsemble
         ensemble = EnhancedAIEnsemble()
 
@@ -210,11 +210,11 @@ class TestSingleAgentConfidencePenalty(unittest.TestCase):
         models = ['anthropic_reasoning']  # specialist for economic_attacks
 
         result = ensemble._merge_similar_findings([finding], models)
-        # Specialist penalty: 0.8 - 0.05 = 0.75
-        self.assertAlmostEqual(result['confidence'], 0.75, places=2)
+        # Specialist penalty: 0.8 - 0.02 = 0.78
+        self.assertAlmostEqual(result['confidence'], 0.78, places=2)
 
     def test_non_specialist_finding_gets_full_penalty(self):
-        """Non-specialist single finding should get -0.15 penalty."""
+        """Non-specialist single finding should get -0.08 penalty."""
         from core.ai_ensemble import EnhancedAIEnsemble
         ensemble = EnhancedAIEnsemble()
 
@@ -222,8 +222,8 @@ class TestSingleAgentConfidencePenalty(unittest.TestCase):
         models = ['gemini_verification']  # NOT specialist for reentrancy
 
         result = ensemble._merge_similar_findings([finding], models)
-        # Full penalty: 0.8 - 0.15 = 0.65
-        self.assertAlmostEqual(result['confidence'], 0.65, places=2)
+        # Full penalty: 0.8 - 0.08 = 0.72
+        self.assertAlmostEqual(result['confidence'], 0.72, places=2)
 
     def test_multi_agent_gets_boost(self):
         """Multiple agents agreeing should get confidence boost."""

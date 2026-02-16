@@ -454,56 +454,69 @@ If you cannot prove exploitability, DO NOT report it.
             return []
 
 
-class GasOptimizationExpert(BaseAIModel):
-    """Gas Optimization Expert - Focuses on gas efficiency and optimization opportunities"""
+class ProxyUpgradeSecurityExpert(BaseAIModel):
+    """Proxy/Upgrade Security Expert - Focuses on proxy patterns, storage layout, and upgrade safety"""
 
     def __init__(self):
         super().__init__(
-            agent_name="gas_expert",
-            role="Gas Optimization Expert",
-            focus_areas=["gas_optimization", "efficiency", "storage", "computation"]
+            agent_name="proxy_expert",
+            role="Proxy/Upgrade Security Expert",
+            focus_areas=["proxy_patterns", "storage_layout", "upgrade_safety", "initialization", "delegatecall"]
         )
 
     def _get_persona_prompt(self) -> str:
-        return """You are a **Gas Optimization Expert** specializing in Ethereum gas efficiency and smart contract optimization.
+        return """You are a **Proxy/Upgrade Security Expert** specializing in upgradeable contract patterns, storage layout safety, and delegatecall risks.
 
-**IMPORTANT: Gas optimizations are NOT security vulnerabilities. They are performance improvements.**
-
-**Your Mission:** Identify SIGNIFICANT gas inefficiencies that can meaningfully reduce transaction costs.
+**Your Mission:** Identify REAL, EXPLOITABLE vulnerabilities in proxy/upgrade patterns that could lead to fund loss, bricked contracts, or unauthorized upgrades.
 
 **CRITICAL: MANDATORY ANALYSIS PROCESS**
 
-For EVERY potential optimization:
+For EVERY potential finding:
 
-1. **IDENTIFY** - What inefficiency did you spot?
+1. **IDENTIFY** - What proxy/upgrade vulnerability pattern did you spot?
 
-2. **CALCULATE IMPACT** - Estimate realistic gas savings:
-   - High impact: 1000+ gas saved per transaction
-   - Medium impact: 200-1000 gas saved per transaction  
-   - Low impact: < 200 gas saved per transaction
-   
-3. **VERIFY NOT INTENTIONAL** - Check if the pattern is:
-   - Part of an external library/standard (OpenZeppelin, etc.)
-   - Intentional for readability/safety
-   - Required by an interface or standard
-   
-4. **ASSESS COMPLEXITY** - Implementation difficulty:
-   - Low: Simple change, no logic impact
-   - Medium: Moderate refactoring needed
-   - High: Significant restructuring required
-   
-5. **CONFIDENCE CHECK** - Only report if confidence >= 0.8 AND gas savings >= 200
+2. **CHECK IF STANDARD PATTERN** - Is this:
+   - Standard OpenZeppelin proxy (ERC1967, TransparentUpgradeable, UUPS, Beacon)?
+   - If standard OZ code working as designed, DO NOT report it
+   - Only report if there's a DEVIATION from the standard or a CUSTOM implementation error
 
-**AVOID REPORTING:**
-- Micro-optimizations saving < 50 gas
-- Optimizations in external libraries you can't control
-- Changes that harm readability for minimal gas savings
-- Already optimized patterns (e.g., existing use of immutable, cached storage reads)
+3. **VERIFY EXPLOITABILITY** - Can this actually lead to:
+   - Uninitialized proxy takeover?
+   - Storage collision between proxy and implementation?
+   - Unauthorized upgrade bypassing access controls?
+   - Selfdestruct of implementation contract?
+   - Function selector clashing?
 
-**OUTPUT FORMAT:** JSON array of gas optimization opportunities (NOT vulnerabilities)"""
+4. **PROVE THE ATTACK** - Write concrete exploit steps:
+   - Step 1: Attacker does X
+   - Step 2: This causes Y
+   - Step 3: Contract is compromised because Z
+   - Why existing protections DON'T prevent this
+
+5. **CONFIDENCE CHECK** - Only report if confidence >= 0.85
+
+**KEY VULNERABILITY PATTERNS TO CHECK:**
+- Uninitialized implementation contracts (missing disableInitializers)
+- Storage layout conflicts between proxy versions
+- Missing upgrade authorization checks in UUPS
+- Delegatecall to untrusted targets
+- Selfdestruct in implementation reachable by attacker
+- Function selector clashing between proxy admin and implementation
+- Incorrect storage gaps in inheritance chains
+- Missing initializer modifiers or re-initialization risks
+- Transparent proxy admin function shadowing
+
+**COMMON FALSE POSITIVES TO AVOID:**
+- Standard OpenZeppelin proxy patterns working as designed
+- ProxyAdmin ownership (governance decision, not code bug)
+- Constructor logic in proxy factories (executes once at deploy time)
+- Intentional upgradeability by authorized admin
+- Trust assumptions inherent to upgradeable architecture
+
+**OUTPUT FORMAT:** JSON array of proxy/upgrade security vulnerabilities"""
 
     async def analyze_contract(self, contract_content: str, contract_path: str = "", context: Dict[str, Any] = None) -> ModelResult:
-        """Analyze contract for gas optimization opportunities"""
+        """Analyze contract for proxy/upgrade security vulnerabilities"""
         start_time = time.time()
 
         try:
@@ -522,39 +535,36 @@ For EVERY potential optimization:
 {json.dumps(learning_context, indent=2)}
 
 **REQUIRED OUTPUT:**
-Return a JSON array of gas optimization opportunities. Each optimization MUST include:
-- type: "gas_optimization"
-- severity: "low" | "medium" | "high" (based on savings: high=1000+, medium=200-1000, low=<200)
-- confidence: 0.8-1.0 (ONLY report if >= 0.8)
-- description: What can be optimized
-- line: Line number where optimization applies
-- gas_savings_estimate: "~X-Y gas per call" (be specific)
-- implementation_complexity: "low" | "medium" | "high"
-- optimization_details: Technical details of the optimization
-- code_suggestion: Suggested code changes
+Return a JSON array of proxy/upgrade vulnerabilities found. Each finding MUST include:
+- type: Specific vulnerability type (e.g., "uninitialized_implementation", "storage_collision", "unauthorized_upgrade", "delegatecall_to_untrusted")
+- severity: "low" | "medium" | "high" | "critical"
+- confidence: 0.85-1.0 (ONLY report if >= 0.85)
+- description: Detailed explanation of the vulnerability
+- line: Approximate line number (or -1 if unclear)
+- swc_id: Relevant SWC ID if applicable
+- exploit_scenario: Step-by-step concrete attack path
+- upgrade_impact: How this affects the upgrade lifecycle
+- mitigation: How to fix this issue
 - reasoning_chain: {{
-    "inefficiency_identified": "what pattern is inefficient",
-    "gas_calculation": "how you calculated the savings",
-    "not_intentional_because": "why this isn't intentional design",
-    "implementation_impact": "what needs to change"
+    "pattern_identified": "what proxy/upgrade pattern you spotted",
+    "is_standard_oz": "yes/no and which OZ contract",
+    "protections_checked": ["list of protections you verified"],
+    "exploit_proof": "concrete attack steps proving it's exploitable",
+    "why_not_protected": "why existing protections don't prevent this"
   }}
 
-ONLY report optimizations with:
-- confidence >= 0.8
-- gas savings >= 200 per transaction
-- practical implementation path
-
-If optimization saves < 200 gas or is in external library, DO NOT report it.
+ONLY report findings with confidence >= 0.85 and complete reasoning chains.
+If this is standard OpenZeppelin code working as designed, DO NOT report it.
 """
 
             # Get OpenAI API key - check multiple sources for robustness
             import os
             api_key = os.getenv("OPENAI_API_KEY")  # First check environment variable
-            
+
             if not api_key:
                 # Fall back to config manager
                 api_key = self.config.config.openai_api_key
-            
+
             if not api_key:
                 raise Exception("OpenAI API key not found in environment (OPENAI_API_KEY) or config file (~/.aether/config.yaml)")
 
@@ -569,10 +579,11 @@ If optimization saves < 200 gas or is in external library, DO NOT report it.
                         {"role": "system", "content": self._get_persona_prompt()},
                         {"role": "user", "content": prompt}
                     ],
+                    max_completion_tokens=4000
                 )
                 self._track_openai_usage(response, model)
             except Exception as e:
-                # Fallback to gpt-4o if gpt-5-pro fails
+                # Fallback to gpt-4o if primary model fails
                 if 'model_not_found' in str(e).lower() or 'not available' in str(e).lower():
                     response = client.chat.completions.create(
                         model="gpt-4o",
@@ -587,8 +598,8 @@ If optimization saves < 200 gas or is in external library, DO NOT report it.
                     raise
 
             response_text = response.choices[0].message.content
-            logger.debug(f"Gas Expert raw response length: {len(response_text)}")
-            findings = self._parse_gas_findings(response_text)
+            logger.debug(f"Proxy Expert raw response length: {len(response_text)}")
+            findings = self._parse_proxy_findings(response_text)
 
             processing_time = time.time() - start_time
 
@@ -609,14 +620,14 @@ If optimization saves < 200 gas or is in external library, DO NOT report it.
             return result
 
         except Exception as e:
-            logger.error(f"Gas Expert failed: {e}")
+            logger.error(f"Proxy Expert failed: {e}")
             processing_time = time.time() - start_time
 
             error_msg = str(e)
             if 'OPENAI_API_KEY' in error_msg or 'api_key' in error_msg.lower():
-                logger.warning(f"⚠️  API Key Issue: {error_msg}")
-                print(f"⚠️  Gas Expert failed - API Key not configured: {error_msg}")
-            
+                logger.warning(f"API Key Issue: {error_msg}")
+                print(f"Proxy Expert failed - API Key not configured: {error_msg}")
+
             return ModelResult(
                 model_name=self.agent_name,
                 findings=[],
@@ -625,12 +636,11 @@ If optimization saves < 200 gas or is in external library, DO NOT report it.
                 metadata={"error": str(e), "role": self.role}
             )
 
-    def _parse_gas_findings(self, response: str) -> List[Dict[str, Any]]:
-        """Parse gas optimization findings from LLM response"""
+    def _parse_proxy_findings(self, response: str) -> List[Dict[str, Any]]:
+        """Parse proxy/upgrade security findings from LLM response"""
         try:
-            # Use the robust parse_llm_json utility instead of naive regex
             data = parse_llm_json(response, fallback=[])
-            logger.debug(f"Gas Expert parsed {len(data) if isinstance(data, list) else len(data.get('findings', []))} findings")
+            logger.debug(f"Proxy Expert parsed {len(data) if isinstance(data, list) else len(data.get('findings', []))} findings")
             if isinstance(data, list):
                 return data
             findings = data.get('findings', []) if isinstance(data, dict) else []
@@ -638,7 +648,7 @@ If optimization saves < 200 gas or is in external library, DO NOT report it.
                 return findings
             return []
         except Exception as e:
-            logger.error(f"Failed to parse gas findings: {e}")
+            logger.error(f"Failed to parse proxy findings: {e}")
             return []
 
 
@@ -748,16 +758,31 @@ If issue is style/documentation/preference with no security impact, DO NOT repor
             import openai
             client = openai.OpenAI(api_key=api_key)
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": self._get_persona_prompt()},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=2000
-                # Removed temperature - using default value for compatibility
-            )
-            self._track_openai_usage(response, "gpt-4o-mini")
+            model = _get_analysis_model()
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": self._get_persona_prompt()},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_completion_tokens=4000
+                )
+                self._track_openai_usage(response, model)
+            except Exception as e:
+                # Fallback to gpt-4o if primary model fails
+                if 'model_not_found' in str(e).lower() or 'not available' in str(e).lower():
+                    response = client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": self._get_persona_prompt()},
+                            {"role": "user", "content": prompt}
+                        ],
+                        max_tokens=2000
+                    )
+                    self._track_openai_usage(response, "gpt-4o")
+                else:
+                    raise
 
             response_text = response.choices[0].message.content
             logger.debug(f"Best Practices Expert raw response length: {len(response_text)}")
@@ -1909,7 +1934,7 @@ class AIEnsemble:
         # Three lightweight agents used by unit tests (legacy)
         self._legacy_agents = [
             DeFiSecurityExpert(),
-            GasOptimizationExpert(),
+            ProxyUpgradeSecurityExpert(),
             SecurityBestPracticesExpert(),
         ]
 
@@ -2162,6 +2187,7 @@ class AIEnsemble:
         'anthropic_security': ['access_control', 'reentrancy', 'logic_errors', 'privilege_escalation'],
         'anthropic_reasoning': ['complex_logic', 'cross_contract', 'economic_attacks', 'invariant_violations'],
         'defi_expert': ['flash_loan', 'oracle_manipulation', 'amm', 'lending'],
+        'proxy_expert': ['proxy', 'upgrade', 'delegatecall', 'storage_collision', 'initialization', 'uninitialized'],
     }
 
     def _is_specialist_finding(self, finding: Dict[str, Any], models: List[str]) -> bool:
@@ -2195,12 +2221,12 @@ class AIEnsemble:
             adjusted_confidence = min(1.0, avg_confidence + confidence_boost)
         else:
             # Single agent only: apply weighted penalty
-            # Reduced penalty (-0.05) if finding matches the agent's specialization
-            # Full penalty (-0.15) for non-specialist single-agent findings
+            # Reduced penalty (-0.02) if finding matches the agent's specialization
+            # Moderate penalty (-0.08) for non-specialist single-agent findings
             if self._is_specialist_finding(base_finding, models):
-                confidence_penalty = 0.05
+                confidence_penalty = 0.02
             else:
-                confidence_penalty = 0.15
+                confidence_penalty = 0.08
             adjusted_confidence = max(0.0, avg_confidence - confidence_penalty)
 
         # Update with consensus confidence
@@ -2250,7 +2276,7 @@ class AIEnsemble:
 
     def _get_provider_for_agent(self, agent_name: str) -> str:
         """Get the provider name for a given agent."""
-        if agent_name.startswith('gpt5') or agent_name in ('defi_expert', 'gas_expert', 'security_expert'):
+        if agent_name.startswith('gpt5') or agent_name in ('defi_expert', 'proxy_expert', 'security_expert'):
             return 'openai'
         elif agent_name.startswith('gemini'):
             return 'gemini'
@@ -2355,8 +2381,8 @@ class AIEnsemble:
                         elif is_valid is False or 'false positive' in desc or 'not a vulnerability' in desc or 'rejected' in desc:
                             rejections += 1
                     if not result.findings:
-                        # Empty findings from challenger = implicit rejection
-                        rejections += 1
+                        # Empty/failed responses are neutral, not negative evidence
+                        continue
 
             # Adjust confidence based on cross-validation
             idx = finding_indices.get(id(finding))

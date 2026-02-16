@@ -194,8 +194,11 @@ class JobDetailScreen(Screen):
 
         lines.append("")
 
-        # Findings
-        findings = str(job.findings_count) if job.findings_count > 0 else "-"
+        # Findings — prefer live count from audit_status while running
+        fc = job.findings_count
+        if job.audit_status and job.audit_status.findings_count > fc:
+            fc = job.audit_status.findings_count
+        findings = str(fc) if fc > 0 else "-"
         lines.append(f"[bold]Finds:[/]   {findings}")
 
         # Cost
