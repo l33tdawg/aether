@@ -111,8 +111,11 @@ class EnhancedAetherAuditEngine:
             # Step 6: Validation layer
             validated_results = await self._validate_findings(static_results, llm_results, contract_files, ai_ensemble_results, formal_verification_results)
 
-            # Step 6.5: Auto-generate PoCs for HIGH/CRITICAL findings
-            await self._auto_generate_pocs(validated_results, contract_files)
+            # Count high/critical findings and suggest PoC generation
+            high_crit = [v for v in validated_results.get('validated_vulnerabilities', [])
+                         if isinstance(v, dict) and v.get('severity', '').lower() in ('high', 'critical')]
+            if high_crit:
+                print(f"💡 {len(high_crit)} high/critical findings — press 'p' to generate Foundry PoCs", flush=True)
 
             # Step 7: Learning System Integration (removed - was simulated)
 
@@ -610,8 +613,8 @@ class EnhancedAetherAuditEngine:
 # Learning system integration method removed - was simulated
 
     async def _validate_findings(self, static_results: Dict[str, Any], llm_results: Dict[str, Any], contract_files: List[Dict[str, Any]], ai_ensemble_results: Dict[str, Any] = None, formal_verification_results: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Collect findings for Foundry verification - no simulated validation."""
-        print("🔍 Collecting findings for Foundry verification...")
+        """Collect and validate findings from all analysis sources."""
+        print("🔍 Collecting and validating findings...")
         
         all_vulnerabilities = []
         
@@ -732,7 +735,7 @@ class EnhancedAetherAuditEngine:
             
             validated_vulnerabilities = filtered_vulnerabilities
 
-        print(f"✅ Collected {len(validated_vulnerabilities)} findings for Foundry verification")
+        print(f"✅ Collected {len(validated_vulnerabilities)} validated findings")
         
         return {
             'validated_vulnerabilities': validated_vulnerabilities,
