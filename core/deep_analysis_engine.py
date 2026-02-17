@@ -1,17 +1,19 @@
 """
 Deep Analysis Engine — Multi-pass LLM analysis pipeline.
 
-Replaces single-shot "find bugs" prompts with a structured 5-pass pipeline
+Replaces single-shot "find bugs" prompts with a structured 6-pass pipeline
 that mirrors how professional auditors approach code review:
 
-    Pass 1: Protocol Understanding              (cheap model)
-    Pass 2: Attack Surface Mapping              (cheap model)
-    Pass 3: Invariant Violation Analysis        (strong model)
-    Pass 4: Cross-Function Interaction          (strong model)
-    Pass 5: Adversarial Modeling + Edge Cases   (strong model)
+    Pass 1:   Protocol Understanding              (cheap model)
+    Pass 2:   Attack Surface Mapping              (cheap model)
+    Pass 3:   Invariant Violation Analysis        (strong model)
+    Pass 3.5: Cross-Contract Vulnerability Analysis (strong model, multi-contract only)
+    Pass 4:   Cross-Function Interaction          (strong model)
+    Pass 5:   Adversarial Modeling + Edge Cases   (strong model)
 
 Each pass receives accumulated context from prior passes.
-Findings are collected from Passes 3-5.
+Findings are collected from Passes 3-5 (including 3.5).
+Pass 3.5 is skipped for single-contract audits.
 """
 
 import hashlib
@@ -74,6 +76,51 @@ def _get_medium_model() -> str:
         pass
     # Fallback to cheap model
     return _get_cheap_model()
+
+
+def _get_model_for_pass(pass_number: int) -> str:
+    """Select model for each deep analysis pass with provider rotation.
+
+    Rotates across providers for diverse perspectives:
+      Pass 1-2 (understanding): Cheap model -- prefer Gemini Flash (large context, cheapest)
+      Pass 3 (invariants):      Strong model -- prefer Anthropic Claude (strong reasoning)
+      Pass 4 (cross-function):  Strong model -- prefer OpenAI GPT (different perspective from Pass 3)
+      Pass 5 (adversarial):     Strong model -- prefer Anthropic Claude (best adversarial reasoning)
+
+    Falls back gracefully when preferred provider API key is not available.
+    """
+    has_gemini = bool(os.getenv('GEMINI_API_KEY'))
+    has_anthropic = bool(os.getenv('ANTHROPIC_API_KEY'))
+    has_openai = bool(os.getenv('OPENAI_API_KEY'))
+
+    if pass_number <= 2:
+        # Cheap/fast model for understanding passes
+        if has_gemini:
+            return 'gemini-2.5-flash'
+        return _get_cheap_model()
+
+    if pass_number == 3:
+        # Invariant analysis -- prefer Anthropic for reasoning depth
+        if has_anthropic:
+            return 'claude-sonnet-4-5-20250929'
+        if has_openai:
+            return 'gpt-4.1-2025-04-14'
+        return _get_strong_model()
+
+    if pass_number == 4:
+        # Cross-function -- rotate to different provider than Pass 3
+        if has_openai:
+            return 'gpt-4.1-2025-04-14'
+        if has_anthropic:
+            return 'claude-sonnet-4-5-20250929'
+        return _get_strong_model()
+
+    # Pass 5: Adversarial modeling -- strongest available
+    if has_anthropic:
+        return 'claude-sonnet-4-5-20250929'
+    if has_openai:
+        return 'gpt-4.1-2025-04-14'
+    return _get_strong_model()
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +293,69 @@ For EACH invariant identified in the protocol understanding, and EACH checklist 
 
 BE AGGRESSIVE — report potential violations even if you're only 60% sure. False negatives are worse than false positives here.
 
+## Examples of REAL Vulnerabilities (report these)
+
+**Example 1: First Depositor Share Inflation**
+```solidity
+function deposit(uint256 assets) external returns (uint256 shares) {{
+    shares = totalSupply == 0 ? assets : assets * totalSupply / totalAssets;
+    _mint(msg.sender, shares);
+}}
+```
+Vulnerability: Attacker deposits 1 wei, then donates large amount directly to vault. Next depositor gets 0 shares due to rounding. This is REAL because: (1) no minimum deposit check, (2) no virtual offset in share calculation, (3) totalAssets can be manipulated via direct transfer.
+
+**Example 2: Missing Slippage Protection**
+```solidity
+function swap(address tokenIn, uint256 amountIn) external returns (uint256 amountOut) {{
+    amountOut = getAmountOut(amountIn);
+    IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
+    IERC20(tokenOut).transfer(msg.sender, amountOut);
+}}
+```
+Vulnerability: No minimum amountOut parameter. Attacker can sandwich this transaction: front-run to move price, victim swap executes at bad price, back-run to profit. REAL because: (1) no slippage parameter, (2) no deadline check, (3) uses spot price.
+
+## Examples of FALSE POSITIVES (do NOT report these)
+
+**False Positive 1: Chainlink Oracle "Manipulation"**
+```solidity
+(, int256 price, , uint256 updatedAt, ) = priceFeed.latestRoundData();
+require(price > 0 && block.timestamp - updatedAt < 3600, "stale");
+```
+NOT vulnerable to flash loan manipulation — Chainlink is an off-chain oracle aggregated from multiple sources. The staleness check is present. Do not report this as "oracle manipulation."
+
+**False Positive 2: Owner-Only Parameter Setting**
+```solidity
+function setFee(uint256 newFee) external onlyOwner {{
+    require(newFee <= MAX_FEE, "too high");
+    fee = newFee;
+}}
+```
+NOT a vulnerability — this is a governance-controlled parameter with a bounds check. The owner being able to change fees is by design, not a bug. Do not report "centralization risk" for bounded admin functions.
+
+## Severity Calibration
+
+- **Critical**: Direct, unconditional fund theft or permanent protocol bricking. Exploit requires NO special roles/permissions, works with flash loans or minimal capital. Real-world precedent exists. Impact >$1M.
+- **High**: Significant fund loss or protocol disruption. Concrete exploit path exists but may require specific timing, market conditions, or moderate capital. Impact >$100K.
+- **Medium**: Conditional fund risk or protocol degradation. Requires uncommon conditions, specific parameter combinations, or partial trust assumptions to exploit. Impact >$10K.
+- **Low**: Theoretical risk with no practical exploit path demonstrated, or informational finding with security implications. Edge cases that are unlikely in practice.
+
+If you cannot articulate a concrete exploit path with specific function calls and parameters, the finding is at most Medium.
+
+## Reasoning Process (MANDATORY)
+
+Before producing JSON output, reason through each potential finding:
+1. What specific code pattern triggers this concern?
+2. What protections already exist in the code? (Check modifiers, require statements, access controls)
+3. Can those protections be bypassed? If so, HOW specifically?
+4. What is the concrete exploit sequence? (Exact function calls with parameters)
+5. What is the realistic financial impact?
+
+Only include a finding in your JSON output if you can answer ALL five questions with specific code references.
+
+Additionally, check this universal DeFi invariant:
+- **Rounding Direction**: For any vault, pool, or staking contract: deposits/mints should round DOWN shares issued (favor protocol), withdrawals/redeems should round UP assets required (favor protocol). Check every share calculation and identify any that round in the WRONG direction.
+- **First Depositor Safety**: For any vault with share-based accounting: is the first depositor protected from share inflation attacks? Check for: virtual offsets, minimum deposits, or dead shares.
+
 ## Required Output (JSON)
 {{
   "findings": [
@@ -271,14 +381,192 @@ Return ONLY findings that represent real vulnerabilities. Do NOT report informat
 """
 
 
+def _build_pass3_5_prompt(contract_content: str, pass1_result: str, pass2_result: str,
+                          pass3_findings: str, cross_contract_context: str) -> str:
+    """Pass 3.5: Cross-Contract Vulnerability Analysis.
+
+    Targets vulnerabilities that span multiple contracts: trust boundary
+    violations, cross-contract reentrancy, state consistency issues, interface
+    mismatches, and privilege escalation across contract boundaries.
+    """
+    previous_findings_section = ""
+    if pass3_findings:
+        previous_findings_section = f"""
+## Previous Analysis Findings (from Invariant Analysis)
+{pass3_findings}
+
+"""
+
+    return f"""You are an elite smart contract security auditor specializing in **cross-contract vulnerabilities** — bugs that only manifest when analyzing how multiple contracts interact.
+
+## Protocol Understanding
+{pass1_result}
+
+## Attack Surface
+{pass2_result}
+
+{previous_findings_section}## Cross-Contract Relationship Map
+{cross_contract_context}
+
+## Contract Code
+```solidity
+{contract_content}
+```
+
+## Instructions
+
+Analyze the interactions BETWEEN contracts for the following vulnerability classes:
+
+### 1. Trust Boundary Analysis
+For each external call between contracts:
+- What does the caller assume about the callee's behavior?
+- Can those assumptions be violated by a malicious or buggy callee?
+- Are return values from external calls validated?
+- Could a malicious implementation of an interface cause harm?
+
+### 2. Cross-Contract State Consistency
+- If Contract A reads state from Contract B, can B's state change between A's read and A's action? (TOCTOU across contracts)
+- Can Contract B's state be manipulated to affect Contract A's behavior?
+- Are there atomicity assumptions that cross contract boundaries (e.g., "B.balance will not change during my transaction")?
+- Do multiple contracts share a dependency whose state change affects them differently?
+
+### 3. Cross-Contract Reentrancy Paths
+- Contract A calls B, B calls back into A (or C which calls A)
+- Read-only reentrancy: A calls B, during B's execution, C reads stale state from A
+- nonReentrant on A does NOT protect against B calling C which reads A's inconsistent state
+- Check if ReentrancyGuard is shared vs per-contract
+
+### 4. Interface Compliance
+- Does the actual implementation match what the caller assumes via the interface?
+- Are there functions on the implementation not on the interface that could be called directly?
+- Could a token with non-standard behavior (fee-on-transfer, rebasing, callbacks) violate caller assumptions?
+
+### 5. Upgrade/Proxy Interactions
+- If any contract in the group is upgradeable, how does an upgrade affect other contracts that depend on it?
+- Storage layout compatibility across delegatecall boundaries
+- Can an upgrade change behavior that other contracts depend on?
+
+### 6. Privilege Escalation Across Contracts
+- Can permissions in Contract A be used to gain unauthorized access in Contract B?
+- Are admin roles properly separated across contracts?
+- Can a compromised contract in the group escalate to compromise others?
+
+## Examples of REAL Cross-Contract Vulnerabilities (report these)
+
+**Example 1: Read-Only Reentrancy Across Contracts**
+```solidity
+// Vault.sol
+function withdraw(uint256 shares) external nonReentrant {{
+    uint256 assets = shares * totalAssets / totalSupply;
+    _burn(msg.sender, shares);
+    // totalSupply decreased, totalAssets NOT YET decreased
+    token.transfer(msg.sender, assets); // ERC-777 callback here
+    totalAssets -= assets; // updated AFTER external call
+}}
+
+// PriceOracle.sol
+function getSharePrice() external view returns (uint256) {{
+    return vault.totalAssets() * 1e18 / vault.totalSupply();
+    // During Vault.withdraw callback, totalSupply is decreased but totalAssets is not
+    // -> inflated price returned
+}}
+```
+REAL because: nonReentrant only protects Vault re-entry. During the token.transfer callback, PriceOracle reads stale state (totalAssets not yet decremented while totalSupply already is), returning an inflated share price. Any contract using PriceOracle during this window (e.g., a lending market for collateral valuation) can be exploited.
+
+**Example 2: Interface Mismatch — Decimal Assumption**
+```solidity
+// LendingPool.sol
+function getCollateralValue(address user) public view returns (uint256) {{
+    uint256 price = IOracle(oracle).getPrice(collateralToken);
+    // Assumes price has 18 decimals
+    return userCollateral[user] * price / 1e18;
+}}
+
+// ChainlinkOracle.sol (actual implementation)
+function getPrice(address token) external view returns (uint256) {{
+    (, int256 answer, , , ) = priceFeed.latestRoundData();
+    return uint256(answer); // Returns 8 decimals, NOT 18!
+}}
+```
+REAL because: LendingPool assumes 18-decimal prices but oracle returns 8 decimals. Collateral is valued at 1e-10 of its actual value, enabling under-collateralized borrows.
+
+## Examples of FALSE POSITIVES (do NOT report these)
+
+**False Positive: Shared Owner Across Contracts**
+```solidity
+// ContractA.sol
+address public owner; // same deployer
+
+// ContractB.sol
+address public owner; // same deployer
+```
+Two contracts in the same project sharing an owner is by design, NOT privilege escalation. Only report if Contract A's owner role can be used to gain capabilities in Contract B that were not intended.
+
+**False Positive: Standard Interface Implementation**
+An ERC-20 token implementing IERC20 exactly as specified is NOT an interface mismatch, even if some functions are not called by the protocol. Only report if the implementation DEVIATES from what callers assume.
+
+## Severity Calibration
+
+- **Critical**: Direct, unconditional fund theft or permanent protocol bricking. Exploit requires NO special roles/permissions, works with flash loans or minimal capital. Real-world precedent exists. Impact >$1M.
+- **High**: Significant fund loss or protocol disruption. Concrete exploit path exists but may require specific timing, market conditions, or moderate capital. Impact >$100K.
+- **Medium**: Conditional fund risk or protocol degradation. Requires uncommon conditions, specific parameter combinations, or partial trust assumptions to exploit. Impact >$10K.
+- **Low**: Theoretical risk with no practical exploit path demonstrated, or informational finding with security implications. Edge cases that are unlikely in practice.
+
+If you cannot articulate a concrete exploit path with specific function calls and parameters, the finding is at most Medium.
+
+## Reasoning Process (MANDATORY)
+
+Before producing JSON output, reason through each potential finding:
+1. Which TWO (or more) contracts are involved and how do they interact?
+2. What does Contract A assume about Contract B's state or behavior?
+3. Can that assumption be violated? Under what conditions?
+4. What is the concrete exploit sequence? (Exact function calls with parameters, across contracts)
+5. What is the realistic financial impact?
+
+Only include a finding in your JSON output if you can answer ALL five questions with specific code references.
+
+## Required Output (JSON)
+{{
+  "findings": [
+    {{
+      "type": "cross_contract_reentrancy|trust_boundary_violation|interface_mismatch|state_inconsistency|privilege_escalation|upgrade_risk",
+      "severity": "critical|high|medium|low",
+      "confidence": 0.0-1.0,
+      "title": "concise title",
+      "description": "detailed description identifying which contracts are involved",
+      "contracts_involved": ["ContractA", "ContractB"],
+      "interaction_path": ["ContractA.funcX() calls ContractB.funcY()", "During callback, ContractC reads stale state from ContractA", "result: ..."],
+      "affected_functions": ["ContractA.funcX", "ContractB.funcY"],
+      "line": 0,
+      "trust_assumption_violated": "what the caller assumed vs. what actually happens",
+      "impact": "financial/functional impact",
+      "prerequisites": "what conditions must be true"
+    }}
+  ]
+}}
+
+Return ONLY findings that represent real cross-contract vulnerabilities. Do NOT report single-contract issues (those are covered by other passes).
+"""
+
+
 def _build_pass4_prompt(contract_content: str, pass1_result: str, pass2_result: str,
-                        pass3_findings: str = "") -> str:
+                        pass3_findings: str = "", cross_contract_context: str = "") -> str:
     """Pass 4: Cross-Function Interaction Analysis."""
     previous_findings_section = ""
     if pass3_findings:
         previous_findings_section = f"""
 ## Previous Analysis Findings
 {pass3_findings}
+
+"""
+
+    cross_contract_section = ""
+    if cross_contract_context:
+        cross_contract_section = f"""
+## Cross-Contract Context
+{cross_contract_context}
+
+NOTE: Use this cross-contract context to identify cross-function interactions that SPAN contract boundaries. State dependencies that cross contracts are especially dangerous.
 
 """
 
@@ -290,7 +578,7 @@ def _build_pass4_prompt(contract_content: str, pass1_result: str, pass2_result: 
 ## Attack Surface & State Dependencies
 {pass2_result}
 
-{previous_findings_section}## Contract Code
+{previous_findings_section}{cross_contract_section}## Contract Code
 ```solidity
 {contract_content}
 ```
@@ -306,6 +594,64 @@ Using the state dependency graph from the attack surface, analyze dangerous cros
 5. **State Staleness**: Can function A read state that function B has modified in an uncommitted way?
 
 For each dangerous interaction found, trace the EXACT execution path.
+
+## Examples of REAL Cross-Function Vulnerabilities
+
+**Example: Read-Only Reentrancy**
+```solidity
+// Contract A
+function withdraw(uint256 shares) external nonReentrant {{
+    uint256 assets = shares * totalAssets / totalSupply;
+    _burn(msg.sender, shares);
+    // totalSupply decreased but totalAssets not yet
+    token.transfer(msg.sender, assets); // callback here
+    totalAssets -= assets; // updated after external call
+}}
+// Contract B reads totalAssets/totalSupply during callback — gets inflated price
+```
+REAL because: nonReentrant only protects Contract A. Contract B's view of share price is stale during the callback window. The external call (token.transfer) happens between the _burn (which updates totalSupply) and the totalAssets update, creating a window where totalAssets/totalSupply is inflated.
+
+**Example: Flash Loan + Deposit/Borrow Sequence**
+```solidity
+function deposit(uint256 amount) external {{
+    balances[msg.sender] += amount;
+    token.transferFrom(msg.sender, address(this), amount);
+}}
+function borrow(uint256 amount) external {{
+    require(balances[msg.sender] >= amount * 2, "undercollateralized");
+    borrowed[msg.sender] += amount;
+    token.transfer(msg.sender, amount);
+}}
+```
+REAL because: Flash loan → deposit(1000) → borrow(500) → withdraw(1000) → repay flash loan. The protocol uses the same token as collateral and borrow asset, and there is no same-block restriction preventing this sequence.
+
+## FALSE POSITIVE Cross-Function Examples
+
+**FP: Independent State Updates**
+Two functions that modify different state variables with no dependency between them are NOT cross-function vulnerabilities even if called in sequence. For example, setFee() and setAdmin() modifying separate variables with separate access controls are independent operations.
+
+**FP: Properly Guarded Reentrancy**
+If ALL state-modifying functions that share state have nonReentrant from the SAME ReentrancyGuard, cross-function reentrancy through those functions is protected. Only report if there is an unguarded function that shares state with a guarded one.
+
+## Severity Calibration
+
+- **Critical**: Direct, unconditional fund theft or permanent protocol bricking. Exploit requires NO special roles/permissions, works with flash loans or minimal capital. Real-world precedent exists. Impact >$1M.
+- **High**: Significant fund loss or protocol disruption. Concrete exploit path exists but may require specific timing, market conditions, or moderate capital. Impact >$100K.
+- **Medium**: Conditional fund risk or protocol degradation. Requires uncommon conditions, specific parameter combinations, or partial trust assumptions to exploit. Impact >$10K.
+- **Low**: Theoretical risk with no practical exploit path demonstrated, or informational finding with security implications. Edge cases that are unlikely in practice.
+
+If you cannot articulate a concrete exploit path with specific function calls and parameters, the finding is at most Medium.
+
+## Reasoning Process (MANDATORY)
+
+Before producing JSON output, reason through each potential finding:
+1. What specific code pattern triggers this concern?
+2. What protections already exist in the code? (Check modifiers, require statements, access controls)
+3. Can those protections be bypassed? If so, HOW specifically?
+4. What is the concrete exploit sequence? (Exact function calls with parameters)
+5. What is the realistic financial impact?
+
+Only include a finding in your JSON output if you can answer ALL five questions with specific code references.
 
 ## Required Output (JSON)
 {{
@@ -373,6 +719,18 @@ Design the **most profitable attacks** against this protocol. For each attack:
 DO NOT hold back. DO NOT worry about false positives. If an attack MIGHT work, report it.
 Every missed real vulnerability is worth $50K-$500K in bug bounties.
 
+## Real-World Attack Precedents
+
+**Euler Finance ($197M)**: donateToReserves() allowed inflating collateral value without corresponding debt. Attacker: flash loan → deposit → borrow max → donate collateral to reserves (inflating health) → borrow more → profit.
+
+**Beanstalk ($182M)**: Flash-loaned governance tokens to pass malicious proposal in single transaction. No timelock between proposal and execution for emergency actions.
+
+**Nomad Bridge ($190M)**: Message validation accepted zero-hash as valid proof. Anyone could copy a valid transaction, change the recipient, and replay it because the Merkle proof was not validated against the actual message.
+
+**Cream Finance ($130M)**: Flash loan to inflate self-referencing token price on Cream's own lending market, then used as collateral to drain other assets.
+
+**Ronin Bridge ($625M)**: Compromised validator keys (5 of 9 multisig). Social engineering attack obtained enough private keys to forge withdrawal messages.
+
 ## Boundary & Edge Cases
 
 Also systematically check for boundary and edge-case vulnerabilities in each function:
@@ -385,6 +743,26 @@ Also systematically check for boundary and edge-case vulnerabilities in each fun
 - **Empty/null inputs**: empty bytes, zero address (address(0)), empty arrays, block.timestamp edge cases
 
 Include any edge-case findings alongside your attack findings in the same output.
+
+## Severity Calibration
+
+- **Critical**: Direct, unconditional fund theft or permanent protocol bricking. Exploit requires NO special roles/permissions, works with flash loans or minimal capital. Real-world precedent exists. Impact >$1M.
+- **High**: Significant fund loss or protocol disruption. Concrete exploit path exists but may require specific timing, market conditions, or moderate capital. Impact >$100K.
+- **Medium**: Conditional fund risk or protocol degradation. Requires uncommon conditions, specific parameter combinations, or partial trust assumptions to exploit. Impact >$10K.
+- **Low**: Theoretical risk with no practical exploit path demonstrated, or informational finding with security implications. Edge cases that are unlikely in practice.
+
+If you cannot articulate a concrete exploit path with specific function calls and parameters, the finding is at most Medium.
+
+## Reasoning Process (MANDATORY)
+
+Before producing JSON output, reason through each potential finding:
+1. What specific code pattern triggers this concern?
+2. What protections already exist in the code? (Check modifiers, require statements, access controls)
+3. Can those protections be bypassed? If so, HOW specifically?
+4. What is the concrete exploit sequence? (Exact function calls with parameters)
+5. What is the realistic financial impact?
+
+Only include a finding in your JSON output if you can answer ALL five questions with specific code references.
 
 ## Required Output (JSON)
 {{
@@ -486,27 +864,33 @@ class DeepAnalysisEngine:
             truncated_content = f"{file_context}\n\n{truncated_content}"
 
         # --- Pass 1: Protocol Understanding ---
+        pass1_model = _get_model_for_pass(1)
+        logger.info(f"Pass 1: Using {pass1_model} (provider rotation)")
+        print(f"   \U0001f4e1 Pass 1: {pass1_model}", flush=True)
         pass1_text = await self._run_pass(
             "Pass 1: Protocol Understanding",
             _build_pass1_prompt(truncated_content, archetype, file_context=file_context),
-            _get_cheap_model(),
+            pass1_model,
             cache_key=f"p1_{content_key}",
         )
         if pass1_text:
-            result.pass_results.append(PassResult("protocol_understanding", pass1_text, model_used=_get_cheap_model()))
+            result.pass_results.append(PassResult("protocol_understanding", pass1_text, model_used=pass1_model))
         else:
             print("⚠️  Pass 1 failed, continuing with reduced context", flush=True)
             pass1_text = "{}"
 
         # --- Pass 2: Attack Surface Mapping ---
+        pass2_model = _get_model_for_pass(2)
+        logger.info(f"Pass 2: Using {pass2_model} (provider rotation)")
+        print(f"   \U0001f4e1 Pass 2: {pass2_model}", flush=True)
         pass2_text = await self._run_pass(
             "Pass 2: Attack Surface Mapping",
             _build_pass2_prompt(truncated_content, pass1_text),
-            _get_cheap_model(),
+            pass2_model,
             cache_key=f"p2_{content_key}",
         )
         if pass2_text:
-            result.pass_results.append(PassResult("attack_surface", pass2_text, model_used=_get_cheap_model()))
+            result.pass_results.append(PassResult("attack_surface", pass2_text, model_used=pass2_model))
         else:
             print("⚠️  Pass 2 failed, continuing with reduced context", flush=True)
             pass2_text = "{}"
@@ -521,32 +905,80 @@ class DeepAnalysisEngine:
         exploit_text = self.exploit_kb.format_for_prompt(exploit_patterns, max_patterns=20)
 
         # --- Pass 3: Invariant Violation Analysis ---
+        pass3_model = _get_model_for_pass(3)
+        logger.info(f"Pass 3: Using {pass3_model} (provider rotation)")
+        print(f"   \U0001f4e1 Pass 3: {pass3_model}", flush=True)
         pass3_findings = await self._run_finding_pass(
             "Pass 3: Invariant Violations",
             _build_pass3_prompt(truncated_content, pass1_text, pass2_text, checklist_text, file_context=file_context),
-            _get_strong_model(),
+            pass3_model,
             result,
         )
 
         # Format Pass 3 findings summary for subsequent passes
         p3_summary = self._summarize_findings(pass3_findings, "Invariant Analysis")
 
+        # --- Pass 3.5: Cross-Contract Vulnerability Analysis ---
+        # Only runs when multiple contracts are in scope
+        cc_context_text = ""
+        if len(contract_files) >= 2:
+            try:
+                from core.cross_contract_analyzer import InterContractAnalyzer
+                cc_analyzer = InterContractAnalyzer()
+                cc_context = cc_analyzer.analyze_relationships(contract_files)
+                cc_context_text = cc_analyzer.format_for_llm(cc_context)
+
+                if cc_context.relationships:
+                    pass3_5_model = _get_model_for_pass(3)  # Same strong model as Pass 3
+                    logger.info(f"Pass 3.5: Using {pass3_5_model} (cross-contract analysis)")
+                    print(f"   \U0001f4e1 Pass 3.5: {pass3_5_model} (cross-contract)", flush=True)
+                    pass3_5_findings = await self._run_finding_pass(
+                        "Pass 3.5: Cross-Contract Vulnerabilities",
+                        _build_pass3_5_prompt(
+                            truncated_content, pass1_text, pass2_text,
+                            p3_summary, cc_context_text,
+                        ),
+                        pass3_5_model,
+                        result,
+                    )
+                    if pass3_5_findings:
+                        p3_5_summary = self._summarize_findings(
+                            pass3_5_findings, "Cross-Contract Analysis"
+                        )
+                        # Append cross-contract findings to p3_summary for downstream passes
+                        p3_summary = p3_summary + "\n\n" + p3_5_summary
+                else:
+                    print("   ℹ️  Pass 3.5: No cross-contract relationships detected, skipping", flush=True)
+            except Exception as e:
+                logger.warning(f"Pass 3.5 (cross-contract) failed: {e}")
+                print(f"   ⚠️  Pass 3.5 failed: {e}", flush=True)
+        else:
+            logger.info("Pass 3.5: Skipped (single contract)")
+
         # --- Pass 4: Cross-Function Interaction ---
+        pass4_model = _get_model_for_pass(4)
+        logger.info(f"Pass 4: Using {pass4_model} (provider rotation)")
+        print(f"   \U0001f4e1 Pass 4: {pass4_model}", flush=True)
         pass4_findings = await self._run_finding_pass(
             "Pass 4: Cross-Function Interactions",
-            _build_pass4_prompt(truncated_content, pass1_text, pass2_text, pass3_findings=p3_summary),
-            _get_strong_model(),
+            _build_pass4_prompt(truncated_content, pass1_text, pass2_text,
+                                pass3_findings=p3_summary,
+                                cross_contract_context=cc_context_text),
+            pass4_model,
             result,
         )
 
         p4_summary = self._summarize_findings(pass4_findings, "Cross-Function Analysis")
 
         # --- Pass 5: Adversarial Modeling ---
+        pass5_model = _get_model_for_pass(5)
+        logger.info(f"Pass 5: Using {pass5_model} (provider rotation)")
+        print(f"   \U0001f4e1 Pass 5: {pass5_model}", flush=True)
         pass5_findings = await self._run_finding_pass(
             "Pass 5: Adversarial Modeling",
             _build_pass5_prompt(truncated_content, pass1_text, pass2_text,
                                 p3_summary, p4_summary, exploit_text),
-            _get_strong_model(),
+            pass5_model,
             result,
         )
 

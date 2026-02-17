@@ -19,8 +19,7 @@ from core.enhanced_vulnerability_detector import EnhancedVulnerabilityDetector, 
 from core.enhanced_llm_analyzer import EnhancedLLMAnalyzer
 from core.vulnerability_validator import VulnerabilityValidator, ValidationResult
 from core.file_handler import FileHandler
-# Phase 3: Advanced AI Integration
-from core.ai_ensemble import EnhancedAIEnsemble, ConsensusResult
+# AI Ensemble retired in v4.0 — provider rotation in DeepAnalysisEngine
 # Learning system removed - was simulated, not real
 # Formal verification removed - was simulated, not real
 from core.llm_false_positive_filter import LLMFalsePositiveFilter
@@ -41,9 +40,6 @@ class EnhancedAetherAuditEngine:
         self.llm_analyzer = EnhancedLLMAnalyzer(api_key=openai_api_key)
         self.validator = VulnerabilityValidator()
 
-        # Phase 3: Advanced AI Integration
-        self.ai_ensemble = EnhancedAIEnsemble()
-
         # Database integration
         self.database = database if database is not None else DatabaseManager()
         # Learning system removed - was simulated
@@ -63,7 +59,6 @@ class EnhancedAetherAuditEngine:
             'validated_findings': 0,
             'false_positives': 0,
             'accuracy_rate': 0.0,
-            'ai_consensus_findings': 0,
             'formal_verification_proofs': 0,
             'learning_feedback_entries': 0
         }
@@ -101,54 +96,14 @@ class EnhancedAetherAuditEngine:
             # Step 3: Enhanced LLM analysis
             llm_results = await self._run_enhanced_llm_analysis(contract_files, static_results)
             
-            # Step 4: Phase 3 AI Ensemble Analysis (opt-in via AETHER_ENSEMBLE=1)
-            use_ensemble = os.getenv('AETHER_ENSEMBLE', '0') == '1'
-            if use_ensemble:
-                ai_ensemble_results = await self._run_ai_ensemble_analysis(contract_files, static_results)
-
-                # Step 4.5: Deep-dive analysis on high-confidence findings
-                if ai_ensemble_results and hasattr(ai_ensemble_results, 'consensus_findings') and ai_ensemble_results.consensus_findings:
-                    try:
-                        print("🔬 Running deep-dive analysis on top findings...", flush=True)
-                        deep_dive_findings = await self.ai_ensemble.deep_dive_analysis(
-                            ai_ensemble_results.consensus_findings,
-                            contract_files[0]['content'] if contract_files else ''
-                        )
-                        # Update consensus findings with deep-dive results
-                        ai_ensemble_results = ConsensusResult(
-                            consensus_findings=deep_dive_findings,
-                            model_agreement=ai_ensemble_results.model_agreement,
-                            confidence_score=ai_ensemble_results.confidence_score,
-                            processing_time=ai_ensemble_results.processing_time,
-                            individual_results=ai_ensemble_results.individual_results
-                        )
-                    except Exception as e:
-                        logger.warning(f"Deep-dive analysis failed: {e}")
-
-                # Step 4.6: Cross-contract interaction analysis (if multiple contracts)
-                if len(contract_files) >= 2:
-                    try:
-                        print("🔗 Analyzing cross-contract interactions...", flush=True)
-                        cross_contract_findings = await self.ai_ensemble.analyze_cross_contract_interactions(contract_files)
-                        if cross_contract_findings and ai_ensemble_results and hasattr(ai_ensemble_results, 'consensus_findings'):
-                            merged_findings = list(ai_ensemble_results.consensus_findings) + cross_contract_findings
-                            ai_ensemble_results = ConsensusResult(
-                                consensus_findings=merged_findings,
-                                model_agreement=ai_ensemble_results.model_agreement,
-                                confidence_score=ai_ensemble_results.confidence_score,
-                                processing_time=ai_ensemble_results.processing_time,
-                                individual_results=ai_ensemble_results.individual_results
-                            )
-                    except Exception as e:
-                        logger.warning(f"Cross-contract analysis failed: {e}")
-            else:
-                print("⏭️  AI ensemble disabled (set AETHER_ENSEMBLE=1 to enable)", flush=True)
-                ai_ensemble_results = {
-                    'consensus_findings': [],
-                    'model_agreement': 0.0,
-                    'confidence_score': 0.0,
-                    'processing_time': 0.0,
-                }
+            # AI Ensemble retired in v4.0 — multi-provider diversity now handled
+            # by per-pass provider rotation in DeepAnalysisEngine
+            ai_ensemble_results = {
+                'consensus_findings': [],
+                'model_agreement': 0.0,
+                'confidence_score': 0.0,
+                'processing_time': 0.0,
+            }
 
             # Step 5: Formal Verification for Critical Findings (DISABLED - too many false positives)
             formal_verification_results = None  # Disabled due to excessive false positives
@@ -496,62 +451,7 @@ class EnhancedAetherAuditEngine:
 
         return llm_results
 
-    async def _run_ai_ensemble_analysis(self, contract_files: List[Dict[str, Any]], static_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Run Phase 3 AI ensemble analysis with multi-model consensus."""
-        print("🤖 Running Phase 3 AI ensemble analysis...", flush=True)
-        
-        # Combine all contract content
-        combined_content = "\n\n".join([cf['content'] for cf in contract_files])
-        
-        try:
-            # Run AI ensemble analysis
-            ensemble_result = await self.ai_ensemble.analyze_contract_ensemble(combined_content)
-            
-            # Process consensus findings
-            consensus_findings = []
-            for finding in ensemble_result.consensus_findings:
-                # Extract relevant code snippet around the vulnerability line
-                code_snippet = self._extract_code_snippet(combined_content, finding.get('line', 0))
-
-                consensus_findings.append({
-                    'type': finding['type'],
-                    'severity': finding['severity'],
-                    'confidence': finding.get('confidence', 0.85),
-                    'description': finding['description'],
-                    'line': finding.get('line', 0),
-                    'swc_id': finding.get('swc_id', ''),
-                    'models': finding.get('models', []),
-                    'model_count': finding.get('consensus_count', 0),
-                    'source': 'ai_ensemble',
-                    'code_snippet': code_snippet,
-                    'contract_content': combined_content  # Include full contract for context
-                })
-            
-            # Update statistics
-            self.stats['ai_consensus_findings'] = len(consensus_findings)
-            
-            print(f"✅ AI ensemble found {len(consensus_findings)} consensus findings")
-            print(f"✅ Model agreement: {ensemble_result.model_agreement:.2f}")
-            print(f"✅ Confidence score: {ensemble_result.confidence_score:.2f}")
-            
-            return {
-                'consensus_findings': consensus_findings,
-                'model_agreement': ensemble_result.model_agreement,
-                'confidence_score': ensemble_result.confidence_score,
-                'processing_time': ensemble_result.processing_time,
-                'individual_results': ensemble_result.individual_results
-            }
-            
-        except Exception as e:
-            print(f"⚠️  AI ensemble analysis failed: {e}")
-            return {
-                'consensus_findings': [],
-                'model_agreement': 0.0,
-                'confidence_score': 0.0,
-                'processing_time': 0.0,
-                'error': str(e)
-            }
-
+# AI Ensemble method removed in v4.0 - replaced by provider rotation in DeepAnalysisEngine
 # Formal verification method removed - was simulated
 
     def _normalize_vulnerability_dict(self, vuln: Any) -> Dict[str, Any]:

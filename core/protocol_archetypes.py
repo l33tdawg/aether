@@ -284,6 +284,24 @@ _ARCHETYPE_CHECKLISTS: Dict[ProtocolArchetype, List[ChecklistItem]] = {
             exploit_precedent="Yield vault exploits",
             detection_prompt="What does totalAssets() include? Does it count pending rewards, donated tokens, or accrued fees that could be manipulated?",
         ),
+        ChecklistItem(
+            name="Share inflation / first depositor attack",
+            severity="critical",
+            description="Does the vault use virtual offsets or minimum deposits to prevent share price manipulation?",
+            code_indicators=["totalSupply", "totalAssets", "deposit(", "convertToShares"],
+            missing_protections=["_decimalsOffset()", "virtual shares/assets", "minimum initial deposit", "dead shares"],
+            exploit_precedent="Multiple ERC-4626 vaults (2022-2023), $128M+ in cumulative losses",
+            detection_prompt="Share inflation / first depositor attack: Does the vault use virtual offsets or minimum deposits to prevent share price manipulation?",
+        ),
+        ChecklistItem(
+            name="Rebasing Token Support",
+            severity="high",
+            description="If the vault accepts rebasing tokens (stETH, AMPL), balance changes without transfers corrupt share-to-asset accounting.",
+            code_indicators=["totalAssets()", "balanceOf", "deposit(", "convertToShares"],
+            missing_protections=["Wrapped non-rebasing version (wstETH)", "share-based internal accounting", "balance re-read before use"],
+            exploit_precedent="Multiple vault protocols with stETH/AMPL integration bugs",
+            detection_prompt="If the vault accepts rebasing tokens (stETH, AMPL), does it wrap them or handle balance changes? Does totalAssets() remain correct after a rebase?",
+        ),
     ],
     ProtocolArchetype.LENDING_POOL: [
         ChecklistItem(
@@ -331,6 +349,24 @@ _ARCHETYPE_CHECKLISTS: Dict[ProtocolArchetype, List[ChecklistItem]] = {
             exploit_precedent="Multiple lending protocols",
             detection_prompt="Does borrow() transfer tokens before updating debt state? Does repay() update state before transferring tokens?",
         ),
+        ChecklistItem(
+            name="Share/exchange rate manipulation",
+            severity="high",
+            description="Can the first depositor or a large depositor manipulate the exchange rate between deposit tokens and pool shares?",
+            code_indicators=["exchangeRate", "totalSupply", "totalDeposits", "shares"],
+            missing_protections=["Virtual offsets", "minimum deposit", "exchange rate bounds", "dead shares"],
+            exploit_precedent="Multiple lending pool share price manipulation exploits",
+            detection_prompt="Share/exchange rate manipulation: Can the first depositor or a large depositor manipulate the exchange rate between deposit tokens and pool shares?",
+        ),
+        ChecklistItem(
+            name="Non-Standard Token Handling",
+            severity="high",
+            description="Lending pools must handle fee-on-transfer, rebasing, blocklist, and non-standard-return tokens safely or risk accounting bugs and DoS.",
+            code_indicators=["transferFrom(", "balanceOf", "IERC20", "safeTransfer"],
+            missing_protections=["SafeERC20 usage", "balance delta checks for fee-on-transfer", "share-based accounting for rebasing tokens"],
+            exploit_precedent="Aave/Compound issues with non-standard tokens, fee-on-transfer accounting bugs",
+            detection_prompt="Does the pool use SafeERC20, handle rebasing tokens, and check for fee-on-transfer? Does it handle blocklist-induced transfer failures gracefully?",
+        ),
     ],
     ProtocolArchetype.DEX_AMM: [
         ChecklistItem(
@@ -368,6 +404,15 @@ _ARCHETYPE_CHECKLISTS: Dict[ProtocolArchetype, List[ChecklistItem]] = {
             missing_protections=["Internal balance tracking separate from actual balance"],
             exploit_precedent="Various DEX implementations",
             detection_prompt="Can direct token transfers affect reserve calculations? Does sync() create arbitrage opportunities?",
+        ),
+        ChecklistItem(
+            name="Fee-on-Transfer Token Support",
+            severity="high",
+            description="Fee-on-transfer tokens cause the DEX to receive less than the amount parameter, leading to accounting mismatches and drainable reserves.",
+            code_indicators=["transferFrom(", "amount", "balanceOf", "getReserves("],
+            missing_protections=["Balance-before/after delta check on deposits", "token whitelist excluding fee tokens"],
+            exploit_precedent="Multiple DEXes drained via fee-on-transfer token accounting bugs",
+            detection_prompt="Does the DEX handle tokens where received amount < transferred amount? Does it use a balance delta pattern or trust the amount parameter directly?",
         ),
     ],
     ProtocolArchetype.BRIDGE: [
@@ -646,6 +691,15 @@ _ARCHETYPE_CHECKLISTS: Dict[ProtocolArchetype, List[ChecklistItem]] = {
             exploit_precedent="Various liquid staking reward gaming",
             detection_prompt="Can a user stake just before rewards are distributed and immediately unstake to capture rewards? Are rewards time-weighted?",
         ),
+        ChecklistItem(
+            name="Staking share inflation",
+            severity="critical",
+            description="Does the staking derivative use virtual offsets or minimum stakes to prevent share price manipulation?",
+            code_indicators=["totalShares", "totalPooledEther", "exchangeRate", "stake("],
+            missing_protections=["Virtual offsets", "minimum stake amount", "dead shares", "exchange rate smoothing"],
+            exploit_precedent="Liquid staking share inflation attacks",
+            detection_prompt="Staking share inflation: Does the staking derivative use virtual offsets or minimum stakes to prevent share price manipulation?",
+        ),
     ],
     ProtocolArchetype.PERPETUAL_DEX: [
         ChecklistItem(
@@ -768,6 +822,24 @@ _ARCHETYPE_CHECKLISTS: Dict[ProtocolArchetype, List[ChecklistItem]] = {
             missing_protections=["Accounting reconciliation after emergency", "pro-rata emergency distribution", "emergency state tracking"],
             exploit_precedent="Various DeFi emergency withdrawal accounting bugs",
             detection_prompt="Does emergencyWithdraw() properly update all accounting state? Can it leave the vault with inconsistent share/asset ratios?",
+        ),
+        ChecklistItem(
+            name="Vault share manipulation",
+            severity="critical",
+            description="Can yield vault shares be inflated through direct token transfers or first-depositor attacks?",
+            code_indicators=["totalAssets", "totalSupply", "deposit(", "shares"],
+            missing_protections=["Virtual offsets", "minimum deposit", "dead shares", "donation detection"],
+            exploit_precedent="Multiple yield vault share inflation exploits",
+            detection_prompt="Vault share manipulation: Can yield vault shares be inflated through direct token transfers or first-depositor attacks?",
+        ),
+        ChecklistItem(
+            name="Token Compatibility",
+            severity="high",
+            description="Yield aggregators interact with many token types. Fee-on-transfer, rebasing, and pausable tokens can break harvest, deposit, and withdrawal accounting.",
+            code_indicators=["transferFrom(", "harvest(", "deposit(", "withdraw(", "strategy"],
+            missing_protections=["SafeERC20 for non-standard returns", "balance delta for fee-on-transfer", "wrapped versions for rebasing", "graceful failure for pausable tokens"],
+            exploit_precedent="Various yield aggregator exploits from non-standard token handling",
+            detection_prompt="Does the aggregator handle fee-on-transfer, rebasing, and pausable tokens safely? Does harvest() handle tokens that may revert or return unexpected values?",
         ),
     ],
 }

@@ -114,13 +114,12 @@ class TestEngineInit(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
     @patch(f"{_ENGINE_MODULE}.FileHandler")
     def test_init_defaults(self, mock_fh, mock_evd, mock_llm, mock_vv,
-                           mock_aie, mock_lpf, mock_fpg, mock_erg, mock_db):
+                           mock_lpf, mock_fpg, mock_erg, mock_db):
         from core.enhanced_audit_engine import EnhancedAetherAuditEngine
         engine = EnhancedAetherAuditEngine()
         self.assertFalse(engine.verbose)
@@ -134,13 +133,12 @@ class TestEngineInit(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
     @patch(f"{_ENGINE_MODULE}.FileHandler")
     def test_init_with_api_key(self, mock_fh, mock_evd, mock_llm, mock_vv,
-                               mock_aie, mock_lpf, mock_fpg, mock_erg, mock_db):
+                               mock_lpf, mock_fpg, mock_erg, mock_db):
         from core.enhanced_audit_engine import EnhancedAetherAuditEngine
         engine = EnhancedAetherAuditEngine(openai_api_key="sk-test")
         mock_llm.assert_called_once_with(api_key="sk-test")
@@ -149,13 +147,12 @@ class TestEngineInit(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
     @patch(f"{_ENGINE_MODULE}.FileHandler")
     def test_init_with_custom_database(self, mock_fh, mock_evd, mock_llm, mock_vv,
-                                       mock_aie, mock_lpf, mock_fpg, mock_erg, mock_db):
+                                       mock_lpf, mock_fpg, mock_erg, mock_db):
         from core.enhanced_audit_engine import EnhancedAetherAuditEngine
         custom_db = MagicMock()
         engine = EnhancedAetherAuditEngine(database=custom_db)
@@ -167,13 +164,12 @@ class TestEngineInit(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
     @patch(f"{_ENGINE_MODULE}.FileHandler")
     def test_init_verbose(self, mock_fh, mock_evd, mock_llm, mock_vv,
-                          mock_aie, mock_lpf, mock_fpg, mock_erg, mock_db):
+                          mock_lpf, mock_fpg, mock_erg, mock_db):
         from core.enhanced_audit_engine import EnhancedAetherAuditEngine
         engine = EnhancedAetherAuditEngine(verbose=True)
         self.assertTrue(engine.verbose)
@@ -186,7 +182,6 @@ class TestReadContractFiles(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -262,7 +257,6 @@ class TestNormalizeVulnerability(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -305,7 +299,6 @@ class TestCalibrateSeverity(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -337,7 +330,6 @@ class TestGenerateFinalReport(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -419,7 +411,6 @@ class TestSaveAuditToDatabase(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -485,7 +476,6 @@ class TestExtractCodeSnippet(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -519,7 +509,6 @@ class TestRunAuditPipeline(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -582,16 +571,7 @@ class TestRunAuditPipeline(unittest.TestCase):
             "analysis": {"vulnerabilities": []}
         })
 
-        # Mock AI ensemble
-        mock_ensemble_result = MagicMock()
-        mock_ensemble_result.consensus_findings = []
-        mock_ensemble_result.model_agreement = 0.0
-        mock_ensemble_result.confidence_score = 0.0
-        mock_ensemble_result.processing_time = 0.5
-        mock_ensemble_result.individual_results = []
-        self.engine.ai_ensemble.analyze_contract_ensemble = AsyncMock(
-            return_value=mock_ensemble_result
-        )
+        # AI Ensemble retired in v4.0 — no longer mocked
 
         with tempfile.NamedTemporaryFile(suffix=".sol", mode="w", delete=False) as f:
             f.write(SAMPLE_CONTRACT)
@@ -624,7 +604,6 @@ class TestValidateFindings(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -705,7 +684,6 @@ class TestTriageVulnerabilities(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")
@@ -747,7 +725,6 @@ class TestGetEnhancementSummary(unittest.TestCase):
     @patch(f"{_ENGINE_MODULE}.EnhancedReportGenerator")
     @patch(f"{_ENGINE_MODULE}.FoundryPoCGenerator")
     @patch(f"{_ENGINE_MODULE}.LLMFalsePositiveFilter")
-    @patch(f"{_ENGINE_MODULE}.EnhancedAIEnsemble")
     @patch(f"{_ENGINE_MODULE}.VulnerabilityValidator")
     @patch(f"{_ENGINE_MODULE}.EnhancedLLMAnalyzer")
     @patch(f"{_ENGINE_MODULE}.EnhancedVulnerabilityDetector")

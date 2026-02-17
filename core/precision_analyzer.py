@@ -18,6 +18,11 @@ class PrecisionIssue(Enum):
     INCORRECT_PRECISION = "incorrect_precision"
     DIVISION_PRECISION = "division_precision"
     MULTIPLICATION_PRECISION = "multiplication_precision"
+    SHARE_INFLATION = "share_inflation"
+    ROUNDING_DIRECTION = "rounding_direction"
+    DIVISION_TRUNCATION_AMPLIFICATION = "division_truncation_amplification"
+    DUST_EXPLOITATION = "dust_exploitation"
+    ACCUMULATOR_OVERFLOW = "accumulator_overflow"
 
 
 class PrecisionRisk(Enum):
@@ -189,7 +194,22 @@ class PrecisionAnalyzer:
         
         # Detect complex arithmetic expressions
         vulnerabilities.extend(self._detect_complex_arithmetic_precision(contract_content, lines))
-        
+
+        # Detect share inflation / first depositor attacks
+        vulnerabilities.extend(self._detect_share_inflation(contract_content, lines))
+
+        # Detect rounding direction errors in deposit/withdraw paths
+        vulnerabilities.extend(self._detect_rounding_direction_errors(contract_content, lines))
+
+        # Detect division truncation amplification (stored truncated values later multiplied)
+        vulnerabilities.extend(self._detect_division_truncation_amplification(contract_content, lines))
+
+        # Detect dust amount exploitation (rounding to zero allows free operations)
+        vulnerabilities.extend(self._detect_dust_exploitation(contract_content, lines))
+
+        # Detect accumulator overflow in reward distribution patterns
+        vulnerabilities.extend(self._detect_accumulator_overflow(contract_content, lines))
+
         return vulnerabilities
     
     def _detect_precision_loss_divisions(self, contract_content: str, lines: List[str]) -> List[PrecisionVulnerability]:
@@ -383,6 +403,439 @@ class PrecisionAnalyzer:
         
         return vulnerabilities
     
+    # ------------------------------------------------------------------
+    # Share Inflation / First Depositor Attack Detection
+    # ------------------------------------------------------------------
+
+    def _detect_share_inflation(self, contract_content: str, lines: List[str]) -> List[PrecisionVulnerability]:
+        """Detect ERC-4626 or vault-like share inflation / first depositor attack vectors.
+
+        Looks for vault-style share calculation (shares = assets * totalSupply / totalAssets)
+        and then checks whether any of the standard protections are present:
+        - Virtual offset (``_decimalsOffset()``, ``+ 1`` in denominator, ``+ OFFSET``)
+        - Minimum deposit enforcement (``require(assets >= MIN_DEPOSIT)``)
+        - Initial dead-share deposit in constructor / initializer
+        - ``totalAssets`` not manipulable via direct ``transfer()``
+        """
+        vulnerabilities: List[PrecisionVulnerability] = []
+
+        # Quick gate: does this look like a vault / share-based contract?
+        vault_signals = [
+            r'\btotalSupply\b', r'\btotalAssets\b', r'\bconvertToShares\b',
+            r'\bconvertToAssets\b', r'\bpreviewDeposit\b', r'\bpreviewMint\b',
+            r'\bERC4626\b',
+        ]
+        vault_signal_count = sum(
+            1 for sig in vault_signals if re.search(sig, contract_content)
+        )
+        if vault_signal_count < 2:
+            return vulnerabilities
+
+        # Look for the vulnerable share calculation pattern:
+        # shares = assets * totalSupply / totalAssets  (or equivalent orderings)
+        share_calc_patterns = [
+            r'(\w+)\s*\*\s*totalSupply\s*/\s*totalAssets',
+            r'(\w+)\s*\*\s*totalSupply\s*\)\s*/\s*totalAssets',
+            r'totalSupply\s*\*\s*(\w+)\s*/\s*totalAssets',
+            r'(\w+)\s*\.mulDiv\s*\(\s*totalSupply\s*,\s*totalAssets',
+            r'assets\s*\*\s*totalSupply\b.*?/\s*totalAssets',
+            r'amount\s*\*\s*totalSupply\b.*?/\s*totalAssets',
+            # Generic: anything * supply-like / assets-like
+            r'(\w+)\s*\*\s*(\w*[Ss]upply\w*)\s*/\s*(\w*[Aa]ssets?\w*)',
+            r'(\w+)\s*\*\s*(\w*[Ss]hares?\w*)\s*/\s*(\w*[Aa]ssets?\w*)',
+        ]
+
+        has_share_calc = False
+        share_calc_line = 0
+        share_calc_snippet = ''
+        for pat in share_calc_patterns:
+            m = re.search(pat, contract_content)
+            if m:
+                has_share_calc = True
+                share_calc_line = self._get_line_number(m.start(), contract_content)
+                share_calc_snippet = lines[share_calc_line - 1].strip() if share_calc_line <= len(lines) else ''
+                break
+
+        if not has_share_calc:
+            return vulnerabilities
+
+        # --- Check protections ---
+        has_virtual_offset = bool(
+            re.search(r'_decimalsOffset\s*\(', contract_content)
+            or re.search(r'totalAssets\s*\+\s*1\b', contract_content)
+            or re.search(r'totalAssets\s*\+\s*OFFSET', contract_content, re.IGNORECASE)
+            or re.search(r'\+\s*1\s*\)', contract_content)  # (totalAssets + 1) in denominator
+            or re.search(r'totalSupply\s*\+\s*\w*[Oo]ffset', contract_content)
+        )
+
+        has_min_deposit = bool(
+            re.search(r'require\s*\(\s*\w*[Aa]ssets?\w*\s*>=\s*\w*MIN', contract_content)
+            or re.search(r'require\s*\(\s*\w*amount\w*\s*>=\s*\w*MIN', contract_content, re.IGNORECASE)
+            or re.search(r'require\s*\(\s*\w*assets?\w*\s*>\s*0', contract_content, re.IGNORECASE)
+        )
+
+        has_initial_deposit = bool(
+            re.search(r'constructor\s*\([^)]*\)[^}]*_mint\s*\(', contract_content, re.DOTALL)
+            or re.search(r'initializ\w*\s*\([^)]*\)[^}]*_mint\s*\(', contract_content, re.DOTALL)
+        )
+
+        # If any strong protection is present, skip
+        if has_virtual_offset or has_initial_deposit:
+            return vulnerabilities
+
+        # Weak protection only (min deposit) — still flag but lower confidence
+        confidence = 0.90 if not has_min_deposit else 0.70
+
+        vulnerability = PrecisionVulnerability(
+            vulnerability_type='share_inflation',
+            severity='high',
+            description=(
+                'Share inflation / first depositor attack detected. The vault uses a share calculation '
+                'pattern (shares = assets * totalSupply / totalAssets) without virtual offsets or dead shares. '
+                'Exploit scenario: Attacker deposits 1 wei as first depositor, then directly transfers a large '
+                'amount to the vault. Next depositor\'s share calculation rounds to 0 due to inflated '
+                'totalAssets/totalSupply ratio, allowing the attacker to steal the deposited funds by '
+                'redeeming their single share.'
+            ),
+            line_number=share_calc_line,
+            code_snippet=share_calc_snippet,
+            confidence=confidence,
+            swc_id='SWC-101',
+            recommendation=(
+                'Use OpenZeppelin\'s ERC-4626 implementation with _decimalsOffset() for virtual shares/assets, '
+                'OR mint dead shares (e.g., deposit a minimum amount in the constructor and send shares to address(0)), '
+                'OR enforce a minimum deposit amount via require(assets >= MIN_DEPOSIT). '
+                'See: https://docs.openzeppelin.com/contracts/4.x/erc4626'
+            ),
+            operation_type='share_inflation',
+            precision_impact='critical'
+        )
+        vulnerabilities.append(vulnerability)
+
+        return vulnerabilities
+
+    # ------------------------------------------------------------------
+    # Rounding Direction Analysis
+    # ------------------------------------------------------------------
+
+    def _detect_rounding_direction_errors(self, contract_content: str, lines: List[str]) -> List[PrecisionVulnerability]:
+        """Detect incorrect rounding direction in deposit vs withdraw paths.
+
+        - Deposit/mint: division should round DOWN (Solidity default) — fewer shares for user (correct).
+        - Withdraw/redeem: division should round UP — more assets required from user, or fewer assets paid out (correct).
+
+        If withdraw paths use plain integer division (rounds down), the user gets slightly more than
+        they should, which can be exploited via many small withdrawals.
+        """
+        vulnerabilities: List[PrecisionVulnerability] = []
+
+        # Identify withdraw / redeem / unstake / burn function bodies
+        withdraw_keywords = [r'\bwithdraw\b', r'\bredeem\b', r'\bunstake\b', r'\b_burn\b']
+        # Look for function definitions containing these keywords
+        func_pattern = r'function\s+(\w*(?:withdraw|redeem|unstake|burn)\w*)\s*\([^)]*\)[^{]*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}'
+        func_matches = list(re.finditer(func_pattern, contract_content, re.IGNORECASE | re.DOTALL))
+
+        for func_match in func_matches:
+            func_name = func_match.group(1)
+            func_body = func_match.group(2)
+            func_start_line = self._get_line_number(func_match.start(), contract_content)
+
+            # Check if this function has share/asset division
+            div_patterns = [
+                r'(\w+)\s*\*\s*(\w*[Aa]ssets?\w*)\s*/\s*(\w*[Ss]upply\w*)',
+                r'(\w+)\s*\*\s*totalAssets\s*/\s*totalSupply',
+                r'shares?\s*\*\s*totalAssets\s*/\s*totalSupply',
+                r'(\w+)\s*\*\s*(\w+)\s*/\s*(\w+)',
+            ]
+
+            has_division = False
+            div_line = 0
+            div_snippet = ''
+            for dp in div_patterns:
+                dm = re.search(dp, func_body)
+                if dm:
+                    has_division = True
+                    div_line = self._get_line_number(func_match.start() + dm.start(), contract_content)
+                    div_snippet = lines[div_line - 1].strip() if div_line <= len(lines) else ''
+                    break
+
+            if not has_division:
+                continue
+
+            # Check for rounding-up protections
+            has_round_up = bool(
+                re.search(r'mulDivUp', func_body)
+                or re.search(r'ceilDiv', func_body)
+                or re.search(r'Math\.Rounding\.Up', func_body)
+                or re.search(r'Rounding\.Ceil', func_body)
+                or re.search(r'\+\s*\(\s*\w+\s*-\s*1\s*\)', func_body)  # + (denominator - 1)
+                or re.search(r'roundUp', func_body, re.IGNORECASE)
+                or re.search(r'\.mulDiv\s*\([^)]*,\s*[^)]*,\s*Math\.Rounding\.Up\)', func_body)
+            )
+
+            if not has_round_up:
+                vulnerability = PrecisionVulnerability(
+                    vulnerability_type='rounding_direction_error',
+                    severity='medium',
+                    description=(
+                        f'Rounding direction error in {func_name}(): withdrawal/redeem path uses plain '
+                        f'integer division which rounds DOWN, favoring the withdrawer over the protocol. '
+                        f'In withdraw/redeem functions, division should round UP so that users receive '
+                        f'slightly fewer assets (or burn slightly more shares), preventing value extraction '
+                        f'through many small withdrawals. This is a well-known vault accounting invariant: '
+                        f'deposits round DOWN shares (favor protocol), withdrawals round UP assets required '
+                        f'(favor protocol).'
+                    ),
+                    line_number=div_line,
+                    code_snippet=div_snippet,
+                    confidence=0.80,
+                    swc_id='SWC-101',
+                    recommendation=(
+                        'Use mulDivUp or Math.mulDiv(a, b, c, Math.Rounding.Up) for withdrawal calculations. '
+                        'Alternatively, add rounding: (a * b + c - 1) / c instead of plain (a * b) / c. '
+                        'OpenZeppelin\'s Math library provides mulDiv with configurable rounding direction.'
+                    ),
+                    operation_type='rounding_direction',
+                    precision_impact='medium'
+                )
+                vulnerabilities.append(vulnerability)
+
+        return vulnerabilities
+
+    # ------------------------------------------------------------------
+    # Division Truncation Amplification
+    # ------------------------------------------------------------------
+
+    def _detect_division_truncation_amplification(self, contract_content: str, lines: List[str]) -> List[PrecisionVulnerability]:
+        """Detect division results stored in state then later multiplied, amplifying truncation error.
+
+        Pattern: rate = totalRewards / totalStaked;  (truncated)
+        Later:   reward = userStake * rate;           (error amplified)
+
+        The fix is to use a PRECISION multiplier: rate = totalRewards * PRECISION / totalStaked
+        """
+        vulnerabilities: List[PrecisionVulnerability] = []
+
+        # Look for rate/ratio calculation stored in variable via division
+        rate_patterns = [
+            # rate = X / Y  (simple)
+            (r'(\w*[Rr]ate\w*)\s*=\s*(\w+)\s*/\s*(\w+)\s*;', 'rate'),
+            # ratio = X / Y
+            (r'(\w*[Rr]atio\w*)\s*=\s*(\w+)\s*/\s*(\w+)\s*;', 'ratio'),
+            # perToken = X / Y
+            (r'(\w*[Pp]er[A-Z]\w*)\s*=\s*(\w+)\s*/\s*(\w+)\s*;', 'perToken'),
+            # rewardPerTokenStored = ... / totalSupply
+            (r'(\w*reward\w*[Pp]er\w*)\s*[+=]\s*\w+\s*/\s*(\w*[Ss]upply\w*|totalStaked\w*)\s*;', 'rewardRate'),
+        ]
+
+        for pat, pat_name in rate_patterns:
+            for m in re.finditer(pat, contract_content, re.IGNORECASE):
+                var_name = m.group(1)
+                line_num = self._get_line_number(m.start(), contract_content)
+                code_snippet = lines[line_num - 1].strip() if line_num <= len(lines) else ''
+
+                # Check if the line already uses a PRECISION multiplier
+                full_line = lines[line_num - 1] if line_num <= len(lines) else ''
+                has_precision = bool(
+                    re.search(r'PRECISION|SCALE|WAD|RAY|1e18|1e27|1e36|MULTIPLIER', full_line, re.IGNORECASE)
+                )
+                if has_precision:
+                    continue
+
+                # Check if this variable is later used in a multiplication
+                # (search content after this match)
+                # Use a permissive LHS/RHS pattern to handle array accesses like userStake[msg.sender]
+                after_content = contract_content[m.end():]
+                multiply_pattern = rf'[\w\[\]\.]+\s*\*\s*{re.escape(var_name)}\b|{re.escape(var_name)}\s*\*\s*[\w\[\]\.]+'
+                multiply_match = re.search(multiply_pattern, after_content)
+                if multiply_match:
+                    vulnerability = PrecisionVulnerability(
+                        vulnerability_type='division_truncation_amplification',
+                        severity='medium',
+                        description=(
+                            f'Division truncation amplification: \'{var_name}\' is calculated via integer '
+                            f'division (which truncates), and later multiplied by another value, amplifying '
+                            f'the precision error. For example, if totalRewards=10 and totalStaked=3, '
+                            f'rate=3 (not 3.33), and for a user with stake=100, reward=300 instead of 333. '
+                            f'The larger the divisor relative to the dividend, the worse the error.'
+                        ),
+                        line_number=line_num,
+                        code_snippet=code_snippet,
+                        confidence=0.80,
+                        swc_id='SWC-101',
+                        recommendation=(
+                            f'Multiply by a precision factor before dividing: '
+                            f'{var_name} = numerator * PRECISION / denominator, then later '
+                            f'divide by PRECISION after multiplication. Common precision factors: '
+                            f'1e18 (WAD), 1e27 (RAY). This is the standard fixed-point arithmetic pattern.'
+                        ),
+                        operation_type='division_truncation_amplification',
+                        precision_impact='medium'
+                    )
+                    vulnerabilities.append(vulnerability)
+
+        return vulnerabilities
+
+    # ------------------------------------------------------------------
+    # Dust Amount Exploitation
+    # ------------------------------------------------------------------
+
+    def _detect_dust_exploitation(self, contract_content: str, lines: List[str]) -> List[PrecisionVulnerability]:
+        """Detect patterns where rounding to 0 allows free operations.
+
+        Pattern: shares = amount * totalSupply / totalAssets
+        If amount is small enough, shares rounds to 0 and the deposit effectively gives
+        assets to the vault for free. Similarly in withdraw, assets can round to 0.
+        Checks for missing require(shares > 0) or require(amount > 0) guards.
+        """
+        vulnerabilities: List[PrecisionVulnerability] = []
+
+        # Look for deposit / mint / withdraw / redeem functions
+        func_pattern = r'function\s+(\w*(?:deposit|mint|withdraw|redeem|stake|unstake|burn)\w*)\s*\([^)]*\)[^{]*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}'
+        func_matches = list(re.finditer(func_pattern, contract_content, re.IGNORECASE | re.DOTALL))
+
+        for func_match in func_matches:
+            func_name = func_match.group(1)
+            func_body = func_match.group(2)
+            func_start = func_match.start()
+
+            # Look for division that produces shares or assets
+            share_div_patterns = [
+                r'(\w+)\s*=\s*[^;]*\*[^;]*/[^;]*;',  # x = ... * ... / ...;
+                r'(\w+)\s*=\s*[^;]*/[^;]*;',           # x = ... / ...;
+            ]
+
+            for sdp in share_div_patterns:
+                for dm in re.finditer(sdp, func_body):
+                    result_var = dm.group(1).strip()
+
+                    # Check if there's a require(result > 0) or require(result != 0)
+                    zero_check_patterns = [
+                        rf'require\s*\(\s*{re.escape(result_var)}\s*>\s*0',
+                        rf'require\s*\(\s*{re.escape(result_var)}\s*!=\s*0',
+                        rf'require\s*\(\s*{re.escape(result_var)}\s*>=\s*1',
+                        rf'if\s*\(\s*{re.escape(result_var)}\s*==\s*0\s*\)\s*revert',
+                        rf'assert\s*\(\s*{re.escape(result_var)}\s*>\s*0',
+                    ]
+                    has_zero_check = any(
+                        re.search(zp, func_body) for zp in zero_check_patterns
+                    )
+
+                    # Also check for general amount > 0 checks
+                    general_zero_checks = [
+                        r'require\s*\(\s*\w*amount\w*\s*>\s*0',
+                        r'require\s*\(\s*\w*assets?\w*\s*>\s*0',
+                        r'require\s*\(\s*\w*shares?\w*\s*>\s*0',
+                        r'if\s*\(\s*\w*amount\w*\s*==\s*0\s*\)\s*revert',
+                    ]
+                    has_general_check = any(
+                        re.search(gc, func_body, re.IGNORECASE) for gc in general_zero_checks
+                    )
+
+                    if not has_zero_check and not has_general_check and '/' in dm.group(0):
+                        div_line = self._get_line_number(func_start + dm.start(), contract_content)
+                        div_snippet = lines[div_line - 1].strip() if div_line <= len(lines) else ''
+
+                        # Avoid duplicate findings — only report once per function
+                        already_reported = any(
+                            v.vulnerability_type == 'dust_exploitation'
+                            and func_name in v.description
+                            for v in vulnerabilities
+                        )
+                        if not already_reported:
+                            vulnerability = PrecisionVulnerability(
+                                vulnerability_type='dust_exploitation',
+                                severity='medium',
+                                description=(
+                                    f'Dust amount exploitation in {func_name}(): division result \'{result_var}\' '
+                                    f'has no zero-value check. If the input amount is small enough, integer '
+                                    f'division rounds the result to 0, allowing the caller to perform the '
+                                    f'operation for free (e.g., deposit assets but receive 0 shares, or '
+                                    f'withdraw with 0 assets deducted). An attacker can repeatedly call this '
+                                    f'with dust amounts to drain value over time.'
+                                ),
+                                line_number=div_line,
+                                code_snippet=div_snippet,
+                                confidence=0.75,
+                                swc_id='SWC-101',
+                                recommendation=(
+                                    f'Add a zero-value check after the division: '
+                                    f'require({result_var} > 0, "zero amount"). Also consider adding '
+                                    f'require(amount > 0) at the function entry to reject dust inputs early.'
+                                ),
+                                operation_type='dust_exploitation',
+                                precision_impact='medium'
+                            )
+                            vulnerabilities.append(vulnerability)
+                        break  # one finding per function is enough
+
+        return vulnerabilities
+
+    # ------------------------------------------------------------------
+    # Accumulator Overflow Check
+    # ------------------------------------------------------------------
+
+    def _detect_accumulator_overflow(self, contract_content: str, lines: List[str]) -> List[PrecisionVulnerability]:
+        """Detect reward accumulator patterns that could overflow.
+
+        Pattern: rewardPerTokenStored += reward * PRECISION / totalSupply
+        With very large PRECISION (1e27, 1e36) and frequent updates, the accumulator
+        can theoretically overflow uint256.
+        """
+        vulnerabilities: List[PrecisionVulnerability] = []
+
+        # Look for accumulator-style updates
+        accum_patterns = [
+            r'(\w*[Rr]eward\w*[Pp]er\w*)\s*\+=\s*[^;]*\*\s*(1e(?:18|27|36)|PRECISION|SCALE|WAD|RAY)\s*/\s*(\w+)',
+            r'(\w*[Rr]eward\w*[Pp]er\w*)\s*\+=\s*[^;]*\*\s*(\w+)\s*/\s*(\w*[Ss]upply\w*|totalStaked\w*)',
+            r'(\w*[Pp]er[Tt]oken\w*)\s*\+=\s*[^;]*\*\s*(1e(?:18|27|36)|PRECISION|SCALE)\s*/\s*(\w+)',
+        ]
+
+        for pat in accum_patterns:
+            for m in re.finditer(pat, contract_content, re.IGNORECASE):
+                accum_var = m.group(1)
+                precision_val = m.group(2) if m.lastindex >= 2 else ''
+                line_num = self._get_line_number(m.start(), contract_content)
+                code_snippet = lines[line_num - 1].strip() if line_num <= len(lines) else ''
+
+                # Check if using very high precision
+                high_precision = precision_val in ('1e27', '1e36', 'RAY') or (
+                    re.search(r'1e2[7-9]|1e3[0-9]', code_snippet)
+                )
+
+                severity = 'low'
+                confidence = 0.50
+                if high_precision:
+                    confidence = 0.65
+
+                vulnerability = PrecisionVulnerability(
+                    vulnerability_type='accumulator_overflow',
+                    severity=severity,
+                    description=(
+                        f'Reward accumulator \'{accum_var}\' is incremented with a high-precision '
+                        f'multiplier. Over many update cycles with large reward amounts and/or '
+                        f'small totalSupply, this uint256 accumulator could theoretically overflow. '
+                        f'While uint256 has a very large range (~1.15e77), contracts with very high '
+                        f'precision multipliers (1e27, 1e36) and long operational lifetimes should '
+                        f'verify that overflow is impossible given realistic parameters.'
+                    ),
+                    line_number=line_num,
+                    code_snippet=code_snippet,
+                    confidence=confidence,
+                    swc_id='SWC-101',
+                    recommendation=(
+                        'Verify that the accumulator cannot overflow given maximum realistic values: '
+                        'max_reward * PRECISION / min_totalSupply * max_update_count < type(uint256).max. '
+                        'Consider using a lower precision multiplier if 1e27+ is not necessary, or add '
+                        'periodic accumulator checkpointing to reset the value.'
+                    ),
+                    operation_type='accumulator_overflow',
+                    precision_impact='low'
+                )
+                vulnerabilities.append(vulnerability)
+
+        return vulnerabilities
+
     def _is_in_import_statement(self, contract_content: str, match_position: int, lines: List[str], line_number: int) -> bool:
         """Check if the match is within an import statement"""
         # Get the full line
