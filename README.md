@@ -1,8 +1,75 @@
-# Aether v3.5 — Smart Contract Security Analysis Framework
+# Aether v4.0 — Smart Contract Security Analysis Framework
 
-**Version 3.5** | [What's New in v3.5](#whats-new-in-v35) | [Changelog](#changelog)
+**Version 4.0** | [What's New in v4.0](#whats-new-in-v40) | [Changelog](#changelog)
 
-Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines 160+ pattern-based static detectors, a structured 6-pass deep analysis LLM pipeline (GPT/Gemini/Claude), protocol archetype detection, a 50+ exploit knowledge base, AI-ensemble reasoning, invariant extraction, and advanced context-aware filtering into a single persistent full-screen TUI.
+Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines Solidity AST parsing, taint analysis, cross-contract analysis, 180+ pattern-based static detectors, a structured deep analysis LLM pipeline (GPT/Gemini/Claude), 14 protocol archetypes, a 75+ exploit knowledge base, token quirks detection, invariant extraction, and advanced context-aware filtering into a single persistent full-screen TUI.
+
+## What's New in v4.0
+
+**Solidity AST Parsing** — Aether v4.0 adds compiler-backed code analysis via `py-solc-x`, moving beyond regex-only static analysis:
+
+- Full `solc --ast-json` integration for proper inheritance resolution, function visibility, storage layout with slot numbers, and state variable read/write tracking per function
+- Graceful regex fallback when compilation fails (missing imports, wrong compiler version)
+- AST structural summary automatically fed into the deep analysis LLM pipeline for better protocol understanding
+
+**Taint Analysis Engine** — Tracks user-controlled inputs through contracts to identify dangerous data flows:
+
+- 8 taint source types: function parameters, msg.sender, msg.value, calldata, external call returns, block.timestamp, block.number, tx.origin
+- 12 dangerous sink types: delegatecall, selfdestruct, external calls, ETH transfers, storage writes, array indexing, division by zero, and more
+- Sanitizer detection: recognizes require bounds checks, access control modifiers, conditional reverts, Math.min/max clamping, SafeCast
+- Cross-contract taint tracking across multiple files
+- Integrated into the validation pipeline (Stage 1.85) for taint-aware finding corroboration/refutation
+
+**Cross-Contract Analysis (Pass 3.5)** — New deep analysis pass targeting multi-contract vulnerabilities:
+
+- Inter-contract relationship analyzer: detects inheritance, interface calls, delegatecall, staticcall, typed state variable relationships
+- Union-find grouping of related contracts with trust boundary detection
+- Dedicated LLM pass analyzing: trust boundary violations, cross-contract state consistency, cross-contract reentrancy, interface compliance, upgrade interactions, privilege escalation
+- Cross-contract context also fed into Pass 4 for cross-function awareness
+
+**Token Quirks Database** — 12 categories of non-standard ERC-20 behaviors that cause real exploits:
+
+| Category | Severity | Example Tokens |
+|----------|----------|---------------|
+| Fee-on-transfer | HIGH | USDT, STA, PAXG |
+| Rebasing tokens | HIGH | stETH, AMPL, OHM |
+| ERC-777 callbacks | HIGH | imBTC |
+| Flash-mintable | HIGH | DAI |
+| Non-standard return | MEDIUM | Old USDT |
+| Blocklist tokens | MEDIUM | USDC, USDT |
+| Pausable tokens | MEDIUM | USDC |
+| Low-decimal tokens | MEDIUM | USDC (6), WBTC (8) |
+| Transfer hooks | MEDIUM | LINK (ERC-677) |
+| Approval race | LOW | Various |
+| Multiple entry points | LOW | TUSD |
+| Upgradeable tokens | LOW | USDC v2 |
+
+Integrated into static detection pipeline and archetype checklists.
+
+**Enhanced Precision Engine** — Advanced rounding and precision vulnerability detection:
+
+- **Share inflation / first depositor attack** detection for ERC-4626 vaults, lending pools, staking
+- **Rounding direction analysis** — deposits should round DOWN, withdrawals should round UP
+- **Division truncation tracking** — catches truncated rate variables later used in multiplication
+- **Dust exploitation** detection — rounding to zero allows free operations
+- **Accumulator overflow** — reward accumulator overflow risk assessment
+
+**Runnable PoC Generation** — Generated Foundry tests now actually compile and run:
+
+- Mock contract library: MockERC20, MockOracle, MockWETH, MockFlashLoanProvider
+- Intelligent setUp() generator: extracts constructor params, deploys mocks, handles upgradeable contracts, mints tokens, sets approvals
+- Max compile attempts increased from 3 to 5
+- LLM prompts include mock API documentation and recommended setUp
+
+**LLM Pipeline Improvements**:
+
+- **Few-shot examples** in Passes 3, 4, 5 — real vulnerability + false positive examples from exploit knowledge base
+- **Severity calibration** — concrete thresholds tied to financial impact (Critical >$1M, High >$100K, Medium >$10K)
+- **Chain-of-thought enforcement** — mandatory 5-step reasoning before JSON output
+- **Multi-provider rotation** — Gemini Flash for cheap passes, Anthropic Claude for reasoning, OpenAI GPT for diversity
+- **AI ensemble retired** — the 6-agent ensemble (6x cost, worse context) replaced by provider rotation within the structured pipeline
+
+---
 
 ## What's New in v3.5
 
@@ -146,6 +213,7 @@ That's it. The TUI guides you through everything via keyboard shortcuts and moda
 - **Node.js 22+** (for Hardhat/npm-based projects)
 - **Foundry (forge/anvil)** on PATH for PoC generation and validation
 - **solc-select** for multiple Solidity compiler versions
+- **py-solc-x** (optional) for Solidity AST parsing — falls back to regex analysis if unavailable
 - **API keys for LLM features:**
   - `OPENAI_API_KEY` (for GPT models)
   - `GEMINI_API_KEY` (for Gemini models)
@@ -206,7 +274,7 @@ Multi-step wizard with three source types:
 **Local file or directory:**
 1. Select path via PathDialog
 2. If directory, select contracts via CheckboxDialog
-3. Choose features (Enhanced, AI Ensemble, LLM Validation, Foundry PoC, Enhanced Reports)
+3. Choose features (Enhanced, LLM Validation, Foundry PoC, Enhanced Reports)
 4. Set output directory
 5. Confirm and launch as background job(s)
 
@@ -269,17 +337,21 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 
 ## Scope and Capabilities
 
-- **Deep analysis engine** — 6-pass LLM pipeline (understand → map attack surface → check invariants → cross-function analysis → adversarial modeling → edge cases) with per-pass model tier selection and caching
-- **Protocol archetype detection** — Automatic identification of protocol type (vault, lending, DEX, bridge, staking, governance, oracle, etc.) with archetype-specific vulnerability checklists
-- **Exploit knowledge base** — 50+ categorized real-world exploit patterns with code indicators, missing protections, and precedents; filterable by archetype and focus area
+- **Solidity AST parsing** — Compiler-backed code analysis via py-solc-x for proper inheritance resolution, function visibility, storage layout, and state variable read/write tracking; graceful regex fallback
+- **Taint analysis engine** — Tracks user-controlled inputs (8 source types) through contracts to 12 dangerous sink types with sanitizer detection and cross-contract tracking
+- **Cross-contract analysis** — Inter-contract relationship analyzer with trust boundary detection, union-find grouping, and dedicated LLM pass (Pass 3.5) for multi-contract vulnerabilities
+- **Deep analysis engine** — 6-pass LLM pipeline plus Pass 3.5 (cross-contract): understand → map attack surface → check invariants → cross-contract analysis → cross-function analysis → adversarial modeling → edge cases; per-pass model tier selection, caching, few-shot examples, and chain-of-thought enforcement
+- **Protocol archetype detection** — Automatic identification of 14 protocol types (vault, lending, DEX, bridge, staking, governance, oracle, liquid staking, perpetual DEX, CDP stablecoin, yield aggregator, and more) with archetype-specific vulnerability checklists
+- **Exploit knowledge base** — 75+ categorized real-world exploit patterns across 14 categories with code indicators, missing protections, and precedents; filterable by archetype and focus area
+- **Token quirks database** — 12 categories of non-standard ERC-20 behaviors (fee-on-transfer, rebasing, ERC-777, flash-mintable, blocklist, pausable, low-decimal, etc.) integrated into detection pipeline
 - **Invariant engine** — Extracts protocol invariants from NatSpec, LLM analysis, and code patterns; generates Foundry invariant tests
-- **Static analysis** — 160+ pattern-based detectors (reentrancy, access control, arithmetic, oracle manipulation, flash loans, MEV, governance, DeFi-specific, and more)
-- **LLM analysis** — Structured, validation-oriented analysis with OpenAI, Gemini, and Claude; automatic provider fallback
-- **AI ensemble** — Multi-agent coordination with specialist-aware consensus reasoning (6 agents: 2 OpenAI, 2 Gemini, 2 Anthropic)
-- **Context-aware filtering** — Severity calibration that checks risk context (unchecked blocks, value operations, oracle usage) before downgrading; pending findings preserved for LLM validation
+- **Static analysis** — 180+ pattern-based detectors (reentrancy, access control, arithmetic, oracle manipulation, flash loans, MEV, governance, DeFi-specific, token quirks, precision/rounding, and more)
+- **Enhanced precision engine** — Share inflation detection, rounding direction analysis, division truncation tracking, dust exploitation, accumulator overflow assessment
+- **LLM analysis** — Structured, validation-oriented analysis with OpenAI, Gemini, and Claude; multi-provider rotation with automatic fallback; severity calibration tied to financial impact thresholds
+- **Context-aware filtering** — Severity calibration that checks risk context (unchecked blocks, value operations, oracle usage) before downgrading; taint-aware validation stage; pending findings preserved for LLM validation
 - **Parallel auditing** — Concurrent multi-contract analysis with live progress in the jobs table
 - **GitHub audit workflow** — Clone repos, detect frameworks, discover contracts, inline scope selection, persistent state
-- **Foundry PoC generation** — AST-based analysis, iterative compilation feedback, production-ready exploit prompts
+- **Foundry PoC generation** — AST-based analysis, iterative compilation feedback (up to 5 attempts), mock contract library (ERC20, Oracle, WETH, FlashLoan), intelligent setUp() generation, production-ready exploit prompts
 - **Multi-chain contract fetching** — 10+ EVM networks + Solana support
 - **Reporting** — Markdown, JSON, HTML report generation from audit data
 - **LLM usage tracking** — Token usage, cost tracking, and post-audit summary across all providers
@@ -319,32 +391,39 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 - `core/enhanced_audit_engine.py` — Main audit engine with deep analysis integration
 - `core/post_audit_summary.py` — Post-audit panel with cost-by-provider breakdown
 
-### Deep Analysis Layer (v3.5)
-- `core/deep_analysis_engine.py` — 6-pass LLM pipeline (understand → attack surface → invariants → cross-function → adversarial → edge cases) with model tier selection and caching
-- `core/protocol_archetypes.py` — Protocol archetype detection (10 types) with per-archetype vulnerability checklists
-- `core/exploit_knowledge_base.py` — 50+ categorized real-world exploit patterns with code indicators and precedents
+### Deep Analysis Layer (v4.0)
+- `core/deep_analysis_engine.py` — 6-pass LLM pipeline plus Pass 3.5 (cross-contract): understand → attack surface → invariants → cross-contract → cross-function → adversarial → edge cases; model tier selection, caching, few-shot examples, chain-of-thought enforcement
+- `core/protocol_archetypes.py` — Protocol archetype detection (14 types including LIQUID_STAKING, PERPETUAL_DEX, CDP_STABLECOIN, YIELD_AGGREGATOR) with per-archetype vulnerability checklists
+- `core/exploit_knowledge_base.py` — 75+ categorized real-world exploit patterns across 14 categories (including CROSS_CONTRACT, SIGNATURE_AUTH, TOKEN_INTEGRATION, PROXY_UPGRADE, TYPE_SAFETY)
 - `core/invariant_engine.py` — Invariant extraction (NatSpec + LLM + pattern) and Foundry invariant test generation
+- `core/solidity_ast.py` — Solidity AST parsing via py-solc-x with regex fallback for inheritance, visibility, storage layout, state read/write tracking
+- `core/taint_analyzer.py` — Data flow / taint analysis with 8 source types, 12 sink types, sanitizer detection, cross-contract tracking
+- `core/cross_contract_analyzer.py` — Inter-contract relationship analysis with trust boundary detection and union-find grouping
+- `core/token_quirks.py` — Token quirks database (12 categories of non-standard ERC-20 behaviors)
 
 ### Detection Layer
 - `core/enhanced_vulnerability_detector.py` — Primary detector with 60+ patterns
 - `core/business_logic_detector.py`, `core/state_management_detector.py`, `core/data_inconsistency_detector.py`, `core/centralization_detector.py`, `core/looping_detector.py` — Move-inspired detectors
 - `core/defi_vulnerability_detector.py`, `core/mev_detector.py`, `core/oracle_manipulation_detector.py` — DeFi-specific detectors (DeFi detector integrated into enhanced engine in v3.5)
-- `core/arithmetic_analyzer.py`, `core/precision_analyzer.py`, `core/gas_analyzer.py`, `core/input_validation_detector.py`, `core/data_decoding_analyzer.py` — Specialized analyzers
+- `core/arithmetic_analyzer.py`, `core/precision_analyzer.py`, `core/gas_analyzer.py`, `core/input_validation_detector.py`, `core/data_decoding_analyzer.py` — Specialized analyzers (precision analyzer enhanced with share inflation, rounding direction, division truncation, dust exploitation, accumulator overflow detection)
+- Token quirks detection integrated into static detection pipeline via `core/token_quirks.py`
 
 ### Validation Layer
-- `core/validation_pipeline.py` — 4-stage pipeline: built-in protection check, governance detection, deployment verification, local validation
+- `core/validation_pipeline.py` — Multi-stage pipeline: built-in protection check, governance detection, taint-aware validation (Stage 1.85), deployment verification, local validation
 - `core/governance_detector.py`, `core/deployment_analyzer.py`, `core/llm_false_positive_filter.py`
 - `core/control_flow_guard_detector.py`, `core/inheritance_verifier.py`
 
 ### LLM & AI Layer
-- `core/enhanced_llm_analyzer.py` — Structured LLM analysis (GPT/Gemini/Claude) with JSON output
-- `core/ai_ensemble.py` — Multi-agent coordination with specialist-aware consensus reasoning
-- `core/enhanced_prompts.py` — Production prompt templates with dynamic exploit pattern loading from knowledge base
+- `core/enhanced_llm_analyzer.py` — Structured LLM analysis (GPT/Gemini/Claude) with JSON output and multi-provider rotation
+- `core/ai_ensemble.py` — Multi-agent coordination (retained for backward compatibility; retired from production pipeline in v3.8, replaced by multi-provider rotation)
+- `core/enhanced_prompts.py` — Production prompt templates with dynamic exploit pattern loading from knowledge base, few-shot examples, severity calibration, and chain-of-thought enforcement
 
 ### PoC Generation Layer
-- `core/foundry_poc_generator.py` (~8000 lines) — AST-based analysis, iterative compilation feedback
-- `core/llm_foundry_generator.py` — LLM-based test generation
+- `core/foundry_poc_generator.py` (~8000 lines) — AST-based analysis, iterative compilation feedback (up to 5 attempts)
+- `core/llm_foundry_generator.py` — LLM-based test generation with mock API documentation and recommended setUp patterns
 - `core/enhanced_foundry_integration.py` — Foundry validation and formatting
+- `core/poc_templates.py` — Mock contract templates (MockERC20, MockOracle, MockWETH, MockFlashLoanProvider)
+- `core/poc_setup_generator.py` — Intelligent setUp() generation: constructor param extraction, mock deployment, upgradeable contract handling, token minting and approvals
 
 ### Persistence Layer
 - `core/database_manager.py` — `DatabaseManager` (local audits) + `AetherDatabase` (GitHub audits)
@@ -364,10 +443,10 @@ Audit flows defined in YAML configs (`configs/`). Enhanced audit pipeline:
 
 ## Tests
 
-1489 tests across 56 test files, running in ~40 seconds:
+1839 tests across 67 test files, running in ~23 seconds:
 
 ```bash
-python -m pytest tests/                                    # All tests (~40s, 1489 tests)
+python -m pytest tests/                                    # All tests (~23s, 1839 tests)
 python -m pytest tests/test_enhanced_detectors.py -v       # Single file
 python -m pytest tests/test_enhanced_detectors.py::TestArithmeticAnalyzer -v  # Single class
 python -m pytest tests/ -k "governance" -v                 # Pattern match
@@ -385,6 +464,30 @@ python -m pytest tests/ --cov=core --cov-report=html       # With coverage
 ---
 
 ## Changelog
+
+### v4.0 — Solidity AST Parsing, Taint Analysis & Data Flow Tracking
+- **Solidity AST parser** — full solc integration via py-solc-x for proper inheritance resolution, function visibility, storage layout, state read/write tracking; graceful regex fallback
+- **Taint analysis engine** — tracks user-controlled inputs through 8 source types to 12 dangerous sinks with sanitizer detection and cross-contract tracking
+- **Pipeline integration** — AST data fed into Pass 1, taint data fed into Pass 2, taint-aware validation stage 1.85
+- **1839 tests** passing across 67 test files (~23 seconds)
+
+### v3.8 — Enhanced Detection & PoC Generation
+- **Cross-contract analysis** — new Pass 3.5 with inter-contract relationship analyzer, trust boundary detection, union-find grouping
+- **Token quirks database** — 12 categories of non-standard ERC-20 behaviors (fee-on-transfer, rebasing, ERC-777, etc.)
+- **Enhanced precision engine** — share inflation detection, rounding direction analysis, division truncation tracking, dust exploitation, accumulator overflow
+- **Runnable PoC generation** — mock contract library (ERC20, Oracle, WETH, FlashLoan), intelligent setUp(), max compile attempts 3→5
+- **Few-shot examples** in deep analysis Passes 3, 4, 5 with real vulnerability and false positive examples
+- **Severity calibration** — concrete thresholds (Critical >$1M, High >$100K, Medium >$10K, Low theoretical)
+- **Chain-of-thought enforcement** — mandatory 5-step reasoning before JSON output
+- **AI ensemble retired** — replaced by multi-provider rotation across deep analysis passes
+- **Multi-provider rotation** — Gemini Flash (cheap passes), Anthropic Claude (reasoning), OpenAI GPT (diversity)
+- **1682 tests** passing
+
+### v3.7 — Expanded Archetypes & Exploit Patterns
+- **4 new protocol archetypes** — LIQUID_STAKING, PERPETUAL_DEX, CDP_STABLECOIN, YIELD_AGGREGATOR (10→14 total)
+- **25 new exploit patterns** — CROSS_CONTRACT, SIGNATURE_AUTH, TOKEN_INTEGRATION, PROXY_UPGRADE, TYPE_SAFETY categories (50→75 total)
+- **Improved contract scanner** — abstracts now scored, adjusted thresholds for monorepo support
+- **1528 tests** passing
 
 ### v3.5.2 — False Positive Reduction
 - **Script detection in contract discovery** — files under `script/`/`scripts/`, `.s.sol` files, and contracts importing `forge-std/Script.sol` or inheriting `is Script` are tagged as deployment scripts and excluded from LLM vulnerability analysis. Eliminates an entire class of false positives from Foundry deployment helpers being analyzed as production code
