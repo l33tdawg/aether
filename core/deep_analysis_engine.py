@@ -16,6 +16,7 @@ Findings are collected from Passes 3-5 (including 3.5).
 Pass 3.5 is skipped for single-contract audits.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -35,6 +36,13 @@ from core.protocol_archetypes import (
 from core.exploit_knowledge_base import ExploitKnowledgeBase
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Per-pass and pipeline timeout constants (seconds)
+# ---------------------------------------------------------------------------
+_PASS_TIMEOUT_CHEAP = 180    # 3 minutes for Gemini Flash / GPT-mini
+_PASS_TIMEOUT_STRONG = 300   # 5 minutes for Claude / GPT-4
+_PIPELINE_MAX_DURATION = 1500  # 25 minutes max for entire pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -996,6 +1004,7 @@ class DeepAnalysisEngine:
             taint_reports: Optional taint analysis reports (enhances Pass 2)
         """
         start_time = time.time()
+        self._pipeline_start = start_time  # Used by _run_pass for time budget
 
         # Detect archetype
         archetype = self.archetype_detector.detect(combined_content)
@@ -1289,15 +1298,29 @@ class DeepAnalysisEngine:
     async def _run_pass(self, name: str, prompt: str, model: str,
                         cache_key: Optional[str] = None) -> Optional[str]:
         """Run a single analysis pass and return the raw LLM response."""
+        # Check pipeline time budget
+        if hasattr(self, '_pipeline_start'):
+            elapsed = time.time() - self._pipeline_start
+            if elapsed > _PIPELINE_MAX_DURATION:
+                print(f"   ⏱️  Pipeline time budget exceeded ({elapsed:.0f}s), skipping {name}", flush=True)
+                return None
+
         # Check cache
         if cache_key and cache_key in self._cache:
             print(f"   📋 {name} (cached)", flush=True)
             return self._cache[cache_key]
 
-        print(f"   🔍 {name} ({model})...", flush=True)
+        # Per-pass timeout: shorter for cheap models, longer for strong models
+        is_cheap = any(tag in (model or '') for tag in ('flash', 'mini'))
+        pass_timeout = _PASS_TIMEOUT_CHEAP if is_cheap else _PASS_TIMEOUT_STRONG
+
+        print(f"   🔍 {name} ({model}, timeout {pass_timeout}s)...", flush=True)
         start = time.time()
         try:
-            response = await self.llm._call_llm(prompt, model)
+            response = await asyncio.wait_for(
+                self.llm._call_llm(prompt, model),
+                timeout=pass_timeout,
+            )
             duration = time.time() - start
             if response:
                 print(f"   ✅ {name} done ({duration:.1f}s)", flush=True)
@@ -1307,6 +1330,11 @@ class DeepAnalysisEngine:
             else:
                 print(f"   ⚠️  {name} returned empty response", flush=True)
                 return None
+        except asyncio.TimeoutError:
+            duration = time.time() - start
+            print(f"   ⏱️  {name} timed out after {duration:.0f}s, skipping", flush=True)
+            logger.warning(f"{name} timed out after {duration:.0f}s")
+            return None
         except Exception as e:
             logger.warning(f"{name} failed: {e}")
             print(f"   ⚠️  {name} failed: {e}", flush=True)

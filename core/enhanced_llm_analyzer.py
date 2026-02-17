@@ -101,14 +101,14 @@ class EnhancedLLMAnalyzer:
         }
 
         if self.api_key:
-            self.client = OpenAI(api_key=self.api_key)
+            self.client = OpenAI(api_key=self.api_key, timeout=120.0)
         else:
             self.client = None
 
         if self.anthropic_api_key:
             try:
                 import anthropic
-                self.anthropic_client = anthropic.Anthropic(api_key=self.anthropic_api_key)
+                self.anthropic_client = anthropic.Anthropic(api_key=self.anthropic_api_key, timeout=120.0)
             except ImportError:
                 self.anthropic_client = None
                 print("⚠️  anthropic package not installed - Claude features disabled")
@@ -145,9 +145,12 @@ class EnhancedLLMAnalyzer:
         prompt = self._create_enhanced_analysis_prompt(contract_content, static_analysis_results)
 
         try:
-            # Use the configured model
-            response = await self._call_llm(prompt, model=self.model)
-            
+            # Use the configured model with timeout to prevent indefinite hang
+            response = await asyncio.wait_for(
+                self._call_llm(prompt, model=self.model),
+                timeout=300,  # 5 min max for one-shot analysis
+            )
+
             if response:
                 # Parse and validate the response
                 analysis_result = self._parse_and_validate_response(response, contract_content)
@@ -155,6 +158,9 @@ class EnhancedLLMAnalyzer:
             else:
                 return self._create_fallback_response()
 
+        except asyncio.TimeoutError:
+            print("⏰ LLM analysis timed out after 300s, falling back to static-only")
+            return self._create_fallback_response()
         except Exception as e:
             print(f"❌ LLM analysis failed: {e}")
             return self._create_fallback_response()
@@ -375,25 +381,29 @@ Before reporting any vulnerability, verify:
         estimated_input_tokens = len(prompt) // 3  # Rough estimate: 3 chars per token
         # Removed: print(f"📊 Estimated request: ~{estimated_input_tokens:,} input tokens for {model}")
             
-        # Try primary model first, then fallbacks
+        # Try primary model first, then fallbacks (limit actual API attempts)
         models_to_try = [model] + [m for m in self.fallback_models if m != model]
-        
+        _max_attempts = 3  # primary + 2 fallbacks max
+        attempts = 0
+
         for current_model in models_to_try:
             try:
                 # Check if this is a Gemini or Anthropic model
                 is_gemini = current_model.startswith('gemini-')
                 is_anthropic = current_model.startswith('claude-')
 
-                # Skip if we don't have the right API key
+                # Skip if we don't have the right API key (doesn't count as attempt)
                 if is_gemini and not self.gemini_api_key:
-                    print(f"⚠️  Skipping {current_model} - no Gemini API key")
                     continue
                 elif is_anthropic and not self.anthropic_api_key:
-                    print(f"⚠️  Skipping {current_model} - no Anthropic API key")
                     continue
                 elif not is_gemini and not is_anthropic and not self.api_key:
-                    print(f"⚠️  Skipping {current_model} - no OpenAI API key")
                     continue
+
+                # Limit actual API call attempts to avoid wasting time on serial failures
+                attempts += 1
+                if attempts > _max_attempts:
+                    break
                 
                 # Get context limit for current model (COMBINED input + output)
                 context_limit = self.model_context_limits.get(current_model, 128000)  # Default to 128k for unknown models
@@ -483,7 +493,7 @@ Before reporting any vulnerability, verify:
             else:
                 api_params["max_tokens"] = max_tokens
                 
-            response = self.client.chat.completions.create(**api_params)
+            response = await asyncio.to_thread(self.client.chat.completions.create, **api_params)
 
             if hasattr(response, 'usage') and response.usage:
                 from core.llm_usage_tracker import LLMUsageTracker
@@ -521,13 +531,14 @@ Before reporting any vulnerability, verify:
             for attempt in range(max_retries):
                 try:
                     # Increased timeout for thinking mode (can take 90-120 seconds)
-                    response = requests.post(url, json=payload, timeout=120)
+                    # Run in thread to keep event loop responsive for timeout handling
+                    response = await asyncio.to_thread(requests.post, url, json=payload, timeout=120)
                     response.raise_for_status()
                     break  # Success, exit retry loop
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                     if attempt < max_retries - 1:
                         print(f"⚠️  Gemini timeout on attempt {attempt + 1}/{max_retries}, retrying...")
-                        time.sleep(3)  # Wait before retry
+                        await asyncio.sleep(3)  # Non-blocking wait before retry
                     else:
                         raise e
             
@@ -574,7 +585,8 @@ Before reporting any vulnerability, verify:
             if not self.anthropic_client:
                 return None
 
-            response = self.anthropic_client.messages.create(
+            response = await asyncio.to_thread(
+                self.anthropic_client.messages.create,
                 model=model,
                 max_tokens=max_tokens,
                 temperature=0.1,
@@ -670,11 +682,13 @@ Before reporting any vulnerability, verify:
             
         except json.JSONDecodeError as e:
             print(f"❌ Failed to parse LLM response: {e}")
-            # One-shot repair retry: send schema error hint back to model
+            # Try to extract valid JSON from the response using regex fallback
             try:
                 hint = "Your previous output was invalid JSON. Return ONLY JSON matching: {\"vulnerabilities\":[], \"gas_optimizations\":[], \"best_practices\":[], \"summary\":\"...\"}."
                 repair_prompt = hint + "\n\nPrior response (sanitize and fix):\n" + response[:4000]
-                repaired = asyncio.run(self._call_llm(repair_prompt, model=self.model))
+                # Use get_event_loop to schedule repair in the running loop
+                loop = asyncio.get_event_loop()
+                repaired = loop.run_until_complete(self._call_llm(repair_prompt, model=self.model)) if not loop.is_running() else None
                 from .json_utils import parse_llm_json
                 analysis_data = parse_llm_json(repaired or "{}", schema='analyzer', fallback=self._create_fallback_response())
                 return {
