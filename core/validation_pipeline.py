@@ -60,6 +60,9 @@ class ValidationPipeline:
         
         # NEW: Enhanced severity calibrator (Dec 2025)
         self._severity_calibrator = None
+
+        # NEW: Taint data for validation (Feb 2026)
+        self._taint_reports = None
     
     @property
     def governance_detector(self):
@@ -248,6 +251,10 @@ class ValidationPipeline:
                 self._severity_calibrator = None
         return self._severity_calibrator
     
+    def set_taint_reports(self, taint_reports: List) -> None:
+        """Provide taint analysis reports for enhanced validation."""
+        self._taint_reports = taint_reports
+
     def _extract_contract_name(self) -> str:
         """Extract primary contract name from code."""
         import re
@@ -346,6 +353,13 @@ class ValidationPipeline:
             results.append(param_origin_check)
             return results  # Early exit
         
+        # Stage 1.85: Taint-based validation (NEW - Feb 2026)
+        # Use taint analysis data to validate or downgrade data-flow findings
+        taint_check = self._validate_with_taint_data(vulnerability)
+        if taint_check and taint_check.is_false_positive:
+            results.append(taint_check)
+            return results  # Early exit
+
         # Stage 1.9: Impact analysis check (NEW - fast, deterministic)
         impact_check = self._check_impact_alignment(vulnerability)
         if impact_check and impact_check.is_false_positive:
@@ -1715,6 +1729,59 @@ class ValidationPipeline:
         
         return None
     
+    def _validate_with_taint_data(self, finding: Dict) -> Optional[ValidationStage]:
+        """Use taint analysis to validate finding's data flow claims.
+
+        If taint reports are available and the finding claims user-controlled
+        input reaches a dangerous sink, but taint analysis shows the variable
+        is NOT tainted (e.g., it only comes from admin-only state or constants),
+        downgrade or mark the finding as a false positive.
+
+        Returns None if taint data is unavailable or inconclusive.
+        """
+        if not self._taint_reports:
+            return None
+
+        description = (finding.get('description', '') or '').lower()
+        vuln_type = (finding.get('vulnerability_type', '') or '').lower()
+        line_num = finding.get('line_number', finding.get('line', 0)) or 0
+
+        # Only apply to findings that claim user-controlled data flow
+        data_flow_keywords = [
+            'user-controlled', 'user controlled', 'attacker-controlled',
+            'untrusted input', 'tainted', 'arbitrary input', 'external input',
+            'user-supplied', 'user supplied',
+        ]
+        if not any(kw in description for kw in data_flow_keywords):
+            return None
+
+        # Check if any taint report has a dangerous flow at or near this line
+        for report in self._taint_reports:
+            for flow in report.dangerous_flows:
+                # If taint analysis found a dangerous flow at this line,
+                # the finding is corroborated -- not a false positive
+                if abs(flow.sink_line - line_num) <= 3:
+                    return None  # Inconclusive / corroborated
+
+            # Check sanitized flows -- if there's a SANITIZED flow at this line,
+            # the finding's claim of unsanitized data flow is wrong
+            for flow in report.sanitized_flows:
+                if abs(flow.sink_line - line_num) <= 3:
+                    sanitizer_names = ', '.join(flow.sanitizers) if flow.sanitizers else 'guards'
+                    return ValidationStage(
+                        stage_name="taint_validation",
+                        is_false_positive=True,
+                        confidence=0.75,
+                        reasoning=(
+                            f"Taint analysis shows the data flow at line {line_num} "
+                            f"is sanitized by: {sanitizer_names}. "
+                            f"The finding's claim of unsanitized user-controlled "
+                            f"input is contradicted by taint analysis."
+                        ),
+                    )
+
+        return None
+
     def _check_parameter_origin(self, vuln: Dict) -> Optional[ValidationStage]:
         """
         Check if parameters are admin-configured vs user-controlled.

@@ -615,5 +615,49 @@ contract Vault {
             self.assertGreater(len(vuln.recommendation), 0)
 
 
+class TestNatSpecCommentFalsePositives(unittest.TestCase):
+    """Regression tests for comment-line false positives in precision detectors."""
+
+    def setUp(self):
+        self.analyzer = PrecisionAnalyzer()
+
+    def test_no_false_positive_in_natspec_comments(self):
+        """NatSpec comments containing '/' should not trigger precision_loss_division."""
+        code = '''
+    pragma solidity ^0.7.0;
+    contract TestContract {
+        /**
+         * @dev Calls the Pool hook to get the amounts in/out plus protocol fee amounts.
+         * Handles join/exit operations and/or other balance changes.
+         */
+        function doSomething(uint256 a) external pure returns (uint256) {
+            return a;
+        }
+    }
+    '''
+        vulns = self.analyzer.analyze_precision_loss(code)
+        precision_vulns = [v for v in vulns if v.vulnerability_type == 'precision_loss_division']
+        self.assertEqual(len(precision_vulns), 0,
+                         "Should not flag division in NatSpec comments")
+
+    def test_no_false_positive_rounding_in_natspec_comments(self):
+        """NatSpec comments with division-then-multiply patterns should not trigger rounding_error."""
+        code = '''
+    pragma solidity ^0.7.0;
+    contract TestContract {
+        /**
+         * @dev Calculates x/y*z for the user's benefit.
+         */
+        function doSomething(uint256 a) external pure returns (uint256) {
+            return a;
+        }
+    }
+    '''
+        vulns = self.analyzer.analyze_precision_loss(code)
+        rounding_vulns = [v for v in vulns if v.vulnerability_type == 'rounding_error']
+        self.assertEqual(len(rounding_vulns), 0,
+                         "Should not flag rounding in NatSpec comments")
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -833,10 +833,19 @@ class DeepAnalysisEngine:
         combined_content: str,
         contract_files: List[Dict[str, Any]],
         static_results: Dict[str, Any],
+        ast_data: Optional[Any] = None,
+        taint_reports: Optional[List[Any]] = None,
     ) -> DeepAnalysisResult:
         """Run the full 5-pass deep analysis pipeline.
 
         Falls back gracefully if any individual pass fails.
+
+        Args:
+            combined_content: Combined Solidity source code
+            contract_files: List of contract file dicts
+            static_results: Results from static analysis
+            ast_data: Optional SolidityAST from AST parser (enhances Pass 1)
+            taint_reports: Optional taint analysis reports (enhances Pass 2)
         """
         start_time = time.time()
 
@@ -851,6 +860,29 @@ class DeepAnalysisEngine:
 
         # Build file context header for LLM prompts
         file_context = _build_file_context_header(contract_files)
+
+        # Build extra LLM context from AST data
+        ast_context = ""
+        if ast_data is not None:
+            try:
+                from core.solidity_ast import SolidityASTParser
+                ast_parser = SolidityASTParser()
+                ast_context = ast_parser.format_for_llm(ast_data)
+            except Exception as e:
+                logger.debug(f"AST context formatting failed: {e}")
+
+        # Build extra LLM context from taint analysis
+        taint_context = ""
+        if taint_reports:
+            try:
+                from core.taint_analyzer import TaintAnalyzer
+                ta = TaintAnalyzer()
+                taint_summaries = []
+                for report in taint_reports:
+                    taint_summaries.append(ta.format_for_llm(report))
+                taint_context = "\n".join(taint_summaries)
+            except Exception as e:
+                logger.debug(f"Taint context formatting failed: {e}")
 
         # Truncate contract to fit within model context (keep first 300K chars)
         max_contract_chars = 300000
@@ -867,11 +899,14 @@ class DeepAnalysisEngine:
         pass1_model = _get_model_for_pass(1)
         logger.info(f"Pass 1: Using {pass1_model} (provider rotation)")
         print(f"   \U0001f4e1 Pass 1: {pass1_model}", flush=True)
+        pass1_prompt = _build_pass1_prompt(truncated_content, archetype, file_context=file_context)
+        if ast_context:
+            pass1_prompt += f"\n\n{ast_context}"
         pass1_text = await self._run_pass(
             "Pass 1: Protocol Understanding",
-            _build_pass1_prompt(truncated_content, archetype, file_context=file_context),
+            pass1_prompt,
             pass1_model,
-            cache_key=f"p1_{content_key}",
+            cache_key=f"p1_{content_key}" if not ast_context else None,
         )
         if pass1_text:
             result.pass_results.append(PassResult("protocol_understanding", pass1_text, model_used=pass1_model))
@@ -883,11 +918,14 @@ class DeepAnalysisEngine:
         pass2_model = _get_model_for_pass(2)
         logger.info(f"Pass 2: Using {pass2_model} (provider rotation)")
         print(f"   \U0001f4e1 Pass 2: {pass2_model}", flush=True)
+        pass2_prompt = _build_pass2_prompt(truncated_content, pass1_text)
+        if taint_context:
+            pass2_prompt += f"\n\n{taint_context}"
         pass2_text = await self._run_pass(
             "Pass 2: Attack Surface Mapping",
-            _build_pass2_prompt(truncated_content, pass1_text),
+            pass2_prompt,
             pass2_model,
-            cache_key=f"p2_{content_key}",
+            cache_key=f"p2_{content_key}" if not taint_context else None,
         )
         if pass2_text:
             result.pass_results.append(PassResult("attack_surface", pass2_text, model_used=pass2_model))

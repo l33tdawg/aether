@@ -217,7 +217,28 @@ class EnhancedAetherAuditEngine:
         # Store delegation flow for later use
         self.context = getattr(self, 'context', {})
         self.context['delegation_flow'] = delegation_flow
-        
+
+        # NEW: Parse Solidity AST for enhanced analysis
+        ast_data = None
+        try:
+            from core.solidity_ast import SolidityASTParser
+            ast_parser = SolidityASTParser()
+            if ast_parser.ast_available:
+                print("🌳 Parsing Solidity AST for enhanced analysis...", flush=True)
+                ast_data = ast_parser.parse(contract_files)
+                if ast_data.errors:
+                    print(f"   ⚠️  AST parsing had {len(ast_data.errors)} warnings (using regex fallback for affected contracts)", flush=True)
+                else:
+                    print(f"   ✅ AST parsed: {len(ast_data.contracts)} contracts, {sum(len(c.functions) for c in ast_data.contracts)} functions", flush=True)
+            else:
+                print("   ℹ️  solc not available — using regex-based analysis", flush=True)
+        except Exception as e:
+            print(f"   ℹ️  AST parsing skipped: {e}", flush=True)
+            logger.debug(f"AST parsing failed: {e}")
+
+        # Store for later use by LLM analysis
+        self.context['ast_data'] = ast_data
+
         # Initialize DeFi detector for semantic two-stage analysis
         from core.defi_vulnerability_detector import DeFiVulnerabilityDetector
         defi_detector = DeFiVulnerabilityDetector()
@@ -340,7 +361,50 @@ class EnhancedAetherAuditEngine:
                     print(f"   ↓  Downgraded {function_name}() severity due to {access_info['access_control_type']} protection", flush=True)
             
             access_adjusted_vulns.append(vuln)
-        
+
+        # NEW: Taint analysis
+        try:
+            from core.taint_analyzer import TaintAnalyzer
+            taint_analyzer = TaintAnalyzer()
+            print("🔍 Running taint analysis...", flush=True)
+
+            taint_reports = taint_analyzer.analyze_multiple(
+                contract_files,
+                ast_data=self.context.get('ast_data')
+            )
+
+            # Convert dangerous taint flows to vulnerability findings
+            for report in taint_reports:
+                for flow in report.dangerous_flows:
+                    access_adjusted_vulns.append({
+                        'vulnerability_type': f'taint_{flow.sink.value}',
+                        'severity': flow.severity,
+                        'confidence': 0.8,
+                        'line_number': flow.sink_line,
+                        'description': flow.description,
+                        'code_snippet': flow.sink_expression,
+                        'validation_status': 'validated',
+                        'source': 'taint_analysis',
+                        'context': {
+                            'taint_source': flow.source.value,
+                            'taint_path': flow.taint_path,
+                            'sanitizers': flow.sanitizers,
+                            'file_path': report.contract_name,
+                        }
+                    })
+
+            total_dangerous = sum(len(r.dangerous_flows) for r in taint_reports)
+            total_sanitized = sum(len(r.sanitized_flows) for r in taint_reports)
+            if total_dangerous > 0:
+                print(f"   ⚠️  Found {total_dangerous} unsanitized taint flows", flush=True)
+            print(f"   ✅ Taint analysis: {total_dangerous} dangerous, {total_sanitized} sanitized flows", flush=True)
+
+            # Store taint reports for LLM context
+            self.context['taint_reports'] = taint_reports
+        except Exception as e:
+            print(f"   ℹ️  Taint analysis skipped: {e}", flush=True)
+            logger.debug(f"Taint analysis failed: {e}")
+
         # Filter out only explicit false positives; allow pending findings through
         validated_vulnerabilities = []
         for vuln in access_adjusted_vulns:
@@ -439,7 +503,11 @@ class EnhancedAetherAuditEngine:
 
                 print("🧠 Using deep analysis engine (multi-pass)...", flush=True)
                 deep_engine = DeepAnalysisEngine(self.llm_analyzer, ProtocolArchetypeDetector())
-                deep_result = await deep_engine.analyze(combined_content, contract_files, static_results)
+                deep_result = await deep_engine.analyze(
+                    combined_content, contract_files, static_results,
+                    ast_data=self.context.get('ast_data'),
+                    taint_reports=self.context.get('taint_reports'),
+                )
                 return deep_result.to_llm_results_format()
             except Exception as e:
                 print(f"⚠️  Deep analysis failed, falling back to one-shot: {e}", flush=True)

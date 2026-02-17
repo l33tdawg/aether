@@ -268,7 +268,7 @@ class PrecisionAnalyzer:
             code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
             
             # Skip import statements and comment-only lines
-            if code_snippet.startswith('import ') or code_snippet.startswith('//') or code_snippet.startswith('/*'):
+            if code_snippet.startswith('import ') or self._is_comment_line(code_snippet):
                 continue
             
             # Check if match is within an import statement (even if not at start of line)
@@ -314,7 +314,11 @@ class PrecisionAnalyzer:
         for match in matches:
             line_number = self._get_line_number(match.start(), contract_content)
             code_snippet = lines[line_number - 1].strip() if line_number <= len(lines) else ""
-            
+
+            # Skip import statements and comment-only lines
+            if code_snippet.startswith('import ') or self._is_comment_line(code_snippet):
+                continue
+
             # Check if this is a false positive
             if self._is_false_positive_rounding(match, code_snippet):
                 continue
@@ -914,7 +918,16 @@ class PrecisionAnalyzer:
             return True
         
         return False
-    
+
+    def _is_comment_line(self, line: str) -> bool:
+        """Check if a line is a comment (single-line, multi-line body, or NatSpec)."""
+        stripped = line.strip()
+        if not stripped:
+            return False
+        if stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*') or stripped.endswith('*/'):
+            return True
+        return False
+
     def _is_false_positive_rounding(self, match: re.Match, code_snippet: str) -> bool:
         """Check if rounding detection is a false positive"""
         # Skip if using fixed-point arithmetic libraries
