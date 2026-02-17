@@ -137,6 +137,44 @@ class EnhancedAetherAuditEngine:
                     'name': os.path.basename(contract_path),
                     'is_script': ContractDiscovery._is_script_file(Path(contract_path), content),
                 })
+
+                # Single-file context discovery: scan parent dir (up to 2 levels)
+                # for sibling .sol files to provide as context for deep analysis.
+                # Only activate in project directories (those with foundry.toml,
+                # hardhat.config.js, package.json, etc. within 2 levels up).
+                try:
+                    from core.cross_contract_analyzer import RelatedContractResolver
+                    project_root = RelatedContractResolver._detect_project_root(contract_path)
+                    parent_dir = Path(contract_path).parent
+                    target_abs = os.path.abspath(contract_path)
+                    context_files_found = 0
+                    if not project_root:
+                        raise ValueError("No project root detected — skip sibling discovery")
+                    for level_dir in [parent_dir, parent_dir.parent]:
+                        if not level_dir.exists():
+                            continue
+                        for sol_file in level_dir.glob('*.sol'):
+                            if os.path.abspath(str(sol_file)) == target_abs:
+                                continue
+                            if context_files_found >= 20:
+                                break
+                            try:
+                                ctx_content = sol_file.read_text(encoding='utf-8', errors='ignore')
+                                if ctx_content.strip():
+                                    contract_files.append({
+                                        'path': str(sol_file),
+                                        'content': ctx_content,
+                                        'name': sol_file.name,
+                                        'is_script': ContractDiscovery._is_script_file(sol_file, ctx_content),
+                                        'is_context_only': True,
+                                    })
+                                    context_files_found += 1
+                            except Exception:
+                                continue
+                    if context_files_found > 0:
+                        print(f"   📂 Discovered {context_files_found} sibling contract(s) for context", flush=True)
+                except Exception as e:
+                    logger.debug(f"Single-file context discovery failed: {e}")
             except Exception as e:
                 print(f"❌ Error reading contract file: {e}")
         elif os.path.isdir(contract_path):
@@ -222,6 +260,10 @@ class EnhancedAetherAuditEngine:
         defi_detector = DeFiVulnerabilityDetector()
 
         for contract_file in contract_files:
+            # Skip context-only files from static analysis (used for LLM context only)
+            if contract_file.get('is_context_only', False):
+                continue
+
             content = contract_file['content']
             total_lines += len(content.split('\n'))
 

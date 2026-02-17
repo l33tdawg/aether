@@ -174,7 +174,8 @@ class DeepAnalysisResult:
 # Prompt builders
 # ---------------------------------------------------------------------------
 
-def _build_pass1_prompt(contract_content: str, archetype: ArchetypeResult, file_context: str = "") -> str:
+def _build_pass1_prompt(contract_content: str, archetype: ArchetypeResult,
+                        file_context: str = "", related_context: str = "") -> str:
     """Pass 1: Protocol Understanding."""
     archetype_hint = f"Detected archetype: {archetype.primary.value} (confidence: {archetype.confidence:.0%})"
     if archetype.secondary:
@@ -184,10 +185,14 @@ def _build_pass1_prompt(contract_content: str, archetype: ArchetypeResult, file_
     if file_context:
         file_context_section = f"\n{file_context}\n\nIMPORTANT: Files marked [DEPLOYMENT SCRIPT] are deploy-time helpers (e.g. Foundry scripts). Do NOT report vulnerabilities in deployment scripts — focus only on [PRODUCTION] contracts.\n"
 
+    related_section = ""
+    if related_context:
+        related_section = f"\n{related_context}\n"
+
     return f"""You are a senior smart contract security auditor. Your task is to **understand** this protocol before looking for bugs.
 
 {archetype_hint}
-{file_context_section}
+{file_context_section}{related_section}
 Analyze the following Solidity contract(s) and produce a structured understanding.
 
 ## Contract Code
@@ -220,13 +225,18 @@ Return ONLY a JSON object with these fields:
 """
 
 
-def _build_pass2_prompt(contract_content: str, pass1_result: str) -> str:
+def _build_pass2_prompt(contract_content: str, pass1_result: str,
+                        related_context: str = "") -> str:
     """Pass 2: Attack Surface Mapping."""
+    related_section = ""
+    if related_context:
+        related_section = f"\n{related_context}\n"
+
     return f"""You are a senior smart contract security auditor mapping the attack surface of a protocol.
 
 ## Protocol Understanding (from prior analysis)
 {pass1_result}
-
+{related_section}
 ## Contract Code
 ```solidity
 {contract_content}
@@ -262,11 +272,16 @@ For EVERY external and public function, analyze and return a JSON object:
 
 
 def _build_pass3_prompt(contract_content: str, pass1_result: str, pass2_result: str,
-                        checklist_text: str, file_context: str = "") -> str:
+                        checklist_text: str, file_context: str = "",
+                        related_context: str = "") -> str:
     """Pass 3: Invariant Violation Analysis."""
     file_context_section = ""
     if file_context:
         file_context_section = f"\n{file_context}\n\nIMPORTANT: Files marked [DEPLOYMENT SCRIPT] are deploy-time helpers. Do NOT report vulnerabilities in deployment scripts — focus only on [PRODUCTION] contracts.\n"
+
+    related_section = ""
+    if related_context:
+        related_section = f"\n{related_context}\n"
 
     return f"""You are an elite smart contract security auditor. Your mission: systematically check every protocol invariant against every code path.
 {file_context_section}
@@ -275,7 +290,7 @@ def _build_pass3_prompt(contract_content: str, pass1_result: str, pass2_result: 
 
 ## Attack Surface
 {pass2_result}
-
+{related_section}
 {checklist_text}
 
 ## Contract Code
@@ -382,7 +397,8 @@ Return ONLY findings that represent real vulnerabilities. Do NOT report informat
 
 
 def _build_pass3_5_prompt(contract_content: str, pass1_result: str, pass2_result: str,
-                          pass3_findings: str, cross_contract_context: str) -> str:
+                          pass3_findings: str, cross_contract_context: str,
+                          related_context: str = "") -> str:
     """Pass 3.5: Cross-Contract Vulnerability Analysis.
 
     Targets vulnerabilities that span multiple contracts: trust boundary
@@ -397,6 +413,10 @@ def _build_pass3_5_prompt(contract_content: str, pass1_result: str, pass2_result
 
 """
 
+    related_section = ""
+    if related_context:
+        related_section = f"\n{related_context}\n"
+
     return f"""You are an elite smart contract security auditor specializing in **cross-contract vulnerabilities** — bugs that only manifest when analyzing how multiple contracts interact.
 
 ## Protocol Understanding
@@ -407,6 +427,7 @@ def _build_pass3_5_prompt(contract_content: str, pass1_result: str, pass2_result
 
 {previous_findings_section}## Cross-Contract Relationship Map
 {cross_contract_context}
+{related_section}
 
 ## Contract Code
 ```solidity
@@ -805,7 +826,76 @@ def _build_file_context_header(contract_files: List[Dict[str, Any]]) -> str:
     for cf in contract_files:
         name = os.path.basename(cf.get('path', 'unknown'))
         label = "[DEPLOYMENT SCRIPT]" if cf.get('is_script', False) else "[PRODUCTION]"
+        if cf.get('is_context_only', False):
+            label = "[CONTEXT]"
         lines.append(f"- {name} {label}")
+    return "\n".join(lines)
+
+
+def _build_related_context_section(
+    related_sources: List[Any],
+    budget_chars: int,
+    full_source: bool = True,
+) -> str:
+    """Build a labeled prompt section with related contract source code.
+
+    Args:
+        related_sources: List of RelatedContractSource objects
+        budget_chars: Maximum character budget for this section
+        full_source: If True, include full source; if False, include only
+                     a one-liner reference list.
+
+    Returns:
+        Formatted prompt section string, or "" if no related sources.
+    """
+    if not related_sources:
+        return ""
+
+    # Import here to avoid circular imports
+    from core.cross_contract_analyzer import RelatedContractResolver
+
+    if not full_source:
+        # One-liner reference list (for Pass 5)
+        refs = [
+            f"- {src.name} ({src.relationship})"
+            for src in related_sources[:20]
+        ]
+        return (
+            "\n## Related Contracts (Reference)\n"
+            + "\n".join(refs)
+            + "\n"
+        )
+
+    selected = RelatedContractResolver.select_within_budget(
+        related_sources, budget_chars
+    )
+    if not selected:
+        return ""
+
+    lines = [
+        "## Related Contract Source Code (Dependencies)",
+        "IMPORTANT: These are dependencies of the target contract(s). Use them to verify",
+        "inherited access control, interface compliance, library behavior, and cross-contract state.",
+        "",
+    ]
+
+    relationship_labels = {
+        'parent': 'Parent',
+        'interface': 'Interface',
+        'library': 'Library',
+        'dependency': 'Dependency',
+        'sibling': 'Sibling',
+    }
+
+    for src in selected:
+        label = relationship_labels.get(src.relationship, src.relationship.title())
+        short_path = os.path.basename(src.file_path)
+        lines.append(f"### {label}: {src.name} (from {short_path})")
+        lines.append("```solidity")
+        lines.append(src.content)
+        lines.append("```")
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -967,6 +1057,34 @@ class DeepAnalysisEngine:
             except Exception as e:
                 logger.debug(f"CFG context building failed: {e}")
 
+        # Resolve related contract sources for LLM context
+        related_sources = []
+        try:
+            from core.cross_contract_analyzer import RelatedContractResolver
+            resolver = RelatedContractResolver()
+            # Separate target files from context-only files
+            target_files = [cf for cf in contract_files if not cf.get('is_context_only', False)]
+            related_sources = resolver.resolve_related_sources(
+                target_files, contract_files,
+                project_root=self._detect_project_root(contract_files),
+            )
+            if related_sources:
+                names = [f"{s.name} ({s.relationship})" for s in related_sources[:8]]
+                extra = f" (+{len(related_sources) - 8} more)" if len(related_sources) > 8 else ""
+                print(f"📎 Found {len(related_sources)} related contracts: {', '.join(names)}{extra}", flush=True)
+        except Exception as e:
+            logger.debug(f"Related contract resolution failed: {e}")
+
+        # Per-pass character budgets for related context
+        related_budgets = {
+            1: 200_000,    # Gemini Flash (2M ctx)
+            2: 150_000,    # Gemini Flash (2M ctx)
+            3: 100_000,    # Claude Sonnet (200K ctx)
+            3.5: 80_000,   # Claude Sonnet (200K ctx) — highest value for cross-contract
+            4: 50_000,     # GPT-4.1 (1M ctx) — summary only
+            5: 0,          # One-liner reference only
+        }
+
         # Truncate contract to fit within model context (keep first 300K chars)
         max_contract_chars = 300000
         truncated_content = combined_content
@@ -982,7 +1100,12 @@ class DeepAnalysisEngine:
         pass1_model = _get_model_for_pass(1)
         logger.info(f"Pass 1: Using {pass1_model} (provider rotation)")
         print(f"   \U0001f4e1 Pass 1: {pass1_model}", flush=True)
-        pass1_prompt = _build_pass1_prompt(truncated_content, archetype, file_context=file_context)
+        related_ctx_p1 = _build_related_context_section(
+            related_sources, related_budgets.get(1, 0), full_source=True
+        )
+        pass1_prompt = _build_pass1_prompt(truncated_content, archetype,
+                                           file_context=file_context,
+                                           related_context=related_ctx_p1)
         if ast_context:
             pass1_prompt += f"\n\n{ast_context}"
         pass1_text = await self._run_pass(
@@ -1001,7 +1124,11 @@ class DeepAnalysisEngine:
         pass2_model = _get_model_for_pass(2)
         logger.info(f"Pass 2: Using {pass2_model} (provider rotation)")
         print(f"   \U0001f4e1 Pass 2: {pass2_model}", flush=True)
-        pass2_prompt = _build_pass2_prompt(truncated_content, pass1_text)
+        related_ctx_p2 = _build_related_context_section(
+            related_sources, related_budgets.get(2, 0), full_source=True
+        )
+        pass2_prompt = _build_pass2_prompt(truncated_content, pass1_text,
+                                           related_context=related_ctx_p2)
         if taint_context:
             pass2_prompt += f"\n\n{taint_context}"
         if cfg_context:
@@ -1031,9 +1158,13 @@ class DeepAnalysisEngine:
         pass3_model = _get_model_for_pass(3)
         logger.info(f"Pass 3: Using {pass3_model} (provider rotation)")
         print(f"   \U0001f4e1 Pass 3: {pass3_model}", flush=True)
+        related_ctx_p3 = _build_related_context_section(
+            related_sources, related_budgets.get(3, 0), full_source=True
+        )
         pass3_findings = await self._run_finding_pass(
             "Pass 3: Invariant Violations",
-            _build_pass3_prompt(truncated_content, pass1_text, pass2_text, checklist_text, file_context=file_context),
+            _build_pass3_prompt(truncated_content, pass1_text, pass2_text, checklist_text,
+                                file_context=file_context, related_context=related_ctx_p3),
             pass3_model,
             result,
         )
@@ -1055,11 +1186,15 @@ class DeepAnalysisEngine:
                     pass3_5_model = _get_model_for_pass(3)  # Same strong model as Pass 3
                     logger.info(f"Pass 3.5: Using {pass3_5_model} (cross-contract analysis)")
                     print(f"   \U0001f4e1 Pass 3.5: {pass3_5_model} (cross-contract)", flush=True)
+                    related_ctx_p35 = _build_related_context_section(
+                        related_sources, related_budgets.get(3.5, 0), full_source=True
+                    )
                     pass3_5_findings = await self._run_finding_pass(
                         "Pass 3.5: Cross-Contract Vulnerabilities",
                         _build_pass3_5_prompt(
                             truncated_content, pass1_text, pass2_text,
                             p3_summary, cc_context_text,
+                            related_context=related_ctx_p35,
                         ),
                         pass3_5_model,
                         result,
@@ -1082,11 +1217,17 @@ class DeepAnalysisEngine:
         pass4_model = _get_model_for_pass(4)
         logger.info(f"Pass 4: Using {pass4_model} (provider rotation)")
         print(f"   \U0001f4e1 Pass 4: {pass4_model}", flush=True)
+        related_ctx_p4 = _build_related_context_section(
+            related_sources, related_budgets.get(4, 0), full_source=True
+        )
+        pass4_prompt = _build_pass4_prompt(truncated_content, pass1_text, pass2_text,
+                                           pass3_findings=p3_summary,
+                                           cross_contract_context=cc_context_text)
+        if related_ctx_p4:
+            pass4_prompt += f"\n{related_ctx_p4}"
         pass4_findings = await self._run_finding_pass(
             "Pass 4: Cross-Function Interactions",
-            _build_pass4_prompt(truncated_content, pass1_text, pass2_text,
-                                pass3_findings=p3_summary,
-                                cross_contract_context=cc_context_text),
+            pass4_prompt,
             pass4_model,
             result,
         )
@@ -1101,6 +1242,12 @@ class DeepAnalysisEngine:
             truncated_content, pass1_text, pass2_text,
             p3_summary, p4_summary, exploit_text,
         )
+        # Append one-liner related contract reference for Pass 5
+        related_ref_p5 = _build_related_context_section(
+            related_sources, budget_chars=0, full_source=False
+        )
+        if related_ref_p5:
+            pass5_prompt += related_ref_p5
         # ML Feedback Loop: inject severity calibration warning if needed
         calibration_note = self._build_severity_calibration_note()
         if calibration_note:
@@ -1118,6 +1265,26 @@ class DeepAnalysisEngine:
               f"({len(result.pass_results)} passes)", flush=True)
 
         return result
+
+    @staticmethod
+    def _detect_project_root(contract_files: List[Dict[str, Any]]) -> Optional[str]:
+        """Detect project root by walking up from contract file paths."""
+        markers = ('foundry.toml', 'hardhat.config.js', 'hardhat.config.ts',
+                   'package.json', 'remappings.txt')
+        for cf in contract_files:
+            path = cf.get('path', '')
+            if not path:
+                continue
+            current = os.path.dirname(os.path.abspath(path))
+            for _ in range(5):
+                for marker in markers:
+                    if os.path.exists(os.path.join(current, marker)):
+                        return current
+                parent = os.path.dirname(current)
+                if parent == current:
+                    break
+                current = parent
+        return None
 
     async def _run_pass(self, name: str, prompt: str, model: str,
                         cache_key: Optional[str] = None) -> Optional[str]:

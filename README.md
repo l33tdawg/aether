@@ -1,8 +1,58 @@
-# Aether v4.0 — Smart Contract Security Analysis Framework
+# Aether v4.7 — Smart Contract Security Analysis Framework
 
-**Version 4.0** | [What's New in v4.0](#whats-new-in-v40) | [Changelog](#changelog)
+**Version 4.7** | [What's New in v4.7](#whats-new-in-v47) | [Changelog](#changelog)
 
-Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines Solidity AST parsing, taint analysis, cross-contract analysis, 180+ pattern-based static detectors, a structured deep analysis LLM pipeline (GPT/Gemini/Claude), 14 protocol archetypes, a 75+ exploit knowledge base, token quirks detection, invariant extraction, and advanced context-aware filtering into a single persistent full-screen TUI.
+Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines Solidity AST parsing, taint analysis, control flow graph analysis, cross-contract analysis, Halmos symbolic execution, 180+ pattern-based static detectors, a structured deep analysis LLM pipeline (GPT/Gemini/Claude), 14 protocol archetypes, a 75+ exploit knowledge base, ML-calibrated detection, token quirks detection, invariant extraction, related contract context resolution, and advanced context-aware filtering into a single persistent full-screen TUI.
+
+## What's New in v4.7
+
+**PoC Auto-Execution** — Generated Foundry PoCs now automatically compile and execute:
+
+- `forge test --json` integration runs PoCs immediately after compilation
+- JSON result parsing with `PoCTestResult` dataclass for structured pass/fail/error reporting
+- Fork-mode support for mainnet validation of exploits against live state
+- New `POC_TESTING` phase in JobManager for live progress tracking in the TUI
+
+**Halmos Symbolic Execution** — Formal verification via symbolic execution:
+
+- `HalmosRunner` for executing Halmos symbolic tests against generated properties
+- `HalmosPropertyGenerator` for auto-generating verification properties from extracted invariants
+- `HalmosSymbolicNode` pipeline node integrated at validation Stage 1.95
+- Config options: `enable_symbolic_verification`, `halmos_timeout`
+- Graceful degradation if Halmos is not installed — skips symbolic verification without errors
+
+**Control Flow Graph Analysis** — Compiler-level control flow understanding:
+
+- `BasicBlock`, `CFGEdge`, `ControlFlowGraph` dataclasses in `solidity_ast.py`
+- `build_cfg()`, `get_dominators()`, `get_loop_headers()`, `format_cfg_for_llm()` for structural analysis
+- Assembly block parsing via `parse_assembly_block()` for inline assembly support
+- Branch-aware taint propagation in the taint analyzer for path-sensitive analysis
+- CFG context injected into deep analysis Pass 2 alongside taint data
+
+**ML Feedback Loop** — Historical outcome-based calibration:
+
+- `AccuracyTracker.record_finding_outcome()` for tracking submission results and bounty earnings
+- `get_detector_accuracy()` and `get_detector_weights()` for per-detector performance stats
+- `DetectorStats` dataclass tracking true/false positives and historical accuracy
+- Confidence weight adjustment in `EnhancedVulnerabilityDetector` based on detector track record
+- Severity calibration from historical data injected into deep analysis Pass 5
+
+**Related Contract Context** — LLM analysis now sees full dependency source code:
+
+- `RelatedContractResolver` automatically discovers parent, interface, library, and dependency contracts
+- Project mode uses inter-contract relationship analysis; single-file mode parses import statements
+- Per-pass budget system: 200K chars for Gemini Flash passes, 100K for Claude, 50K for GPT
+- Standard libraries (@openzeppelin, solmate, solady) summarized to interface-only to save budget
+- Single-file audits auto-discover sibling .sol files for context
+
+**Tech Debt Cleanup** — 8,500 lines of dead code removed:
+
+- Deleted: `ai_ensemble.py`, `audit_engine.py`, `fork_verifier.py`
+- Removed all ai_ensemble references from CLI, audit runner, TUI screens, report generator
+- Removed `slither_project_cache` from database manager
+- Removed formal verification stubs from enhanced audit engine
+
+---
 
 ## What's New in v4.0
 
@@ -338,9 +388,13 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 ## Scope and Capabilities
 
 - **Solidity AST parsing** — Compiler-backed code analysis via py-solc-x for proper inheritance resolution, function visibility, storage layout, and state variable read/write tracking; graceful regex fallback
-- **Taint analysis engine** — Tracks user-controlled inputs (8 source types) through contracts to 12 dangerous sink types with sanitizer detection and cross-contract tracking
-- **Cross-contract analysis** — Inter-contract relationship analyzer with trust boundary detection, union-find grouping, and dedicated LLM pass (Pass 3.5) for multi-contract vulnerabilities
-- **Deep analysis engine** — 6-pass LLM pipeline plus Pass 3.5 (cross-contract): understand → map attack surface → check invariants → cross-contract analysis → cross-function analysis → adversarial modeling → edge cases; per-pass model tier selection, caching, few-shot examples, and chain-of-thought enforcement
+- **Control flow graph analysis** — `build_cfg()` constructs basic blocks with dominator trees and loop header detection; assembly block parsing; CFG context fed into deep analysis and taint propagation
+- **Taint analysis engine** — Tracks user-controlled inputs (8 source types) through contracts to 12 dangerous sink types with sanitizer detection, cross-contract tracking, and branch-aware CFG propagation
+- **Cross-contract analysis** — Inter-contract relationship analyzer with trust boundary detection, union-find grouping, dedicated LLM pass (Pass 3.5) for multi-contract vulnerabilities, and `RelatedContractResolver` for dependency context
+- **Deep analysis engine** — 6-pass LLM pipeline plus Pass 3.5 (cross-contract): understand → map attack surface → check invariants → cross-contract analysis → cross-function analysis → adversarial modeling → edge cases; per-pass model tier selection, caching, few-shot examples, chain-of-thought enforcement, CFG context in Pass 2, ML severity calibration in Pass 5, related contract context per pass
+- **Halmos symbolic execution** — `HalmosRunner` + `HalmosPropertyGenerator` for formal verification of invariants; integrated at validation Stage 1.95; graceful degradation if Halmos not installed
+- **ML feedback loop** — `AccuracyTracker` records submission outcomes and generates per-detector confidence weights; severity calibration from historical data injected into deep analysis
+- **Related contract context** — `RelatedContractResolver` discovers parent, interface, library, and dependency contracts; per-pass budget system with standard library summarization
 - **Protocol archetype detection** — Automatic identification of 14 protocol types (vault, lending, DEX, bridge, staking, governance, oracle, liquid staking, perpetual DEX, CDP stablecoin, yield aggregator, and more) with archetype-specific vulnerability checklists
 - **Exploit knowledge base** — 75+ categorized real-world exploit patterns across 14 categories with code indicators, missing protections, and precedents; filterable by archetype and focus area
 - **Token quirks database** — 12 categories of non-standard ERC-20 behaviors (fee-on-transfer, rebasing, ERC-777, flash-mintable, blocklist, pausable, low-decimal, etc.) integrated into detection pipeline
@@ -351,7 +405,7 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 - **Context-aware filtering** — Severity calibration that checks risk context (unchecked blocks, value operations, oracle usage) before downgrading; taint-aware validation stage; pending findings preserved for LLM validation
 - **Parallel auditing** — Concurrent multi-contract analysis with live progress in the jobs table
 - **GitHub audit workflow** — Clone repos, detect frameworks, discover contracts, inline scope selection, persistent state
-- **Foundry PoC generation** — AST-based analysis, iterative compilation feedback (up to 5 attempts), mock contract library (ERC20, Oracle, WETH, FlashLoan), intelligent setUp() generation, production-ready exploit prompts
+- **Foundry PoC generation** — AST-based analysis, iterative compilation feedback (up to 5 attempts), mock contract library (ERC20, Oracle, WETH, FlashLoan), intelligent setUp() generation, production-ready exploit prompts, auto-execution via `forge test --json` with fork-mode support
 - **Multi-chain contract fetching** — 10+ EVM networks + Solana support
 - **Reporting** — Markdown, JSON, HTML report generation from audit data
 - **LLM usage tracking** — Token usage, cost tracking, and post-audit summary across all providers
@@ -391,15 +445,18 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 - `core/enhanced_audit_engine.py` — Main audit engine with deep analysis integration
 - `core/post_audit_summary.py` — Post-audit panel with cost-by-provider breakdown
 
-### Deep Analysis Layer (v4.0)
-- `core/deep_analysis_engine.py` — 6-pass LLM pipeline plus Pass 3.5 (cross-contract): understand → attack surface → invariants → cross-contract → cross-function → adversarial → edge cases; model tier selection, caching, few-shot examples, chain-of-thought enforcement
+### Deep Analysis Layer (v4.7)
+- `core/deep_analysis_engine.py` — 6-pass LLM pipeline plus Pass 3.5 (cross-contract): understand → attack surface → invariants → cross-contract → cross-function → adversarial → edge cases; model tier selection, caching, few-shot examples, chain-of-thought enforcement, CFG context in Pass 2, ML severity calibration in Pass 5, related contract context per pass
 - `core/protocol_archetypes.py` — Protocol archetype detection (14 types including LIQUID_STAKING, PERPETUAL_DEX, CDP_STABLECOIN, YIELD_AGGREGATOR) with per-archetype vulnerability checklists
 - `core/exploit_knowledge_base.py` — 75+ categorized real-world exploit patterns across 14 categories (including CROSS_CONTRACT, SIGNATURE_AUTH, TOKEN_INTEGRATION, PROXY_UPGRADE, TYPE_SAFETY)
-- `core/invariant_engine.py` — Invariant extraction (NatSpec + LLM + pattern) and Foundry invariant test generation
-- `core/solidity_ast.py` — Solidity AST parsing via py-solc-x with regex fallback for inheritance, visibility, storage layout, state read/write tracking
-- `core/taint_analyzer.py` — Data flow / taint analysis with 8 source types, 12 sink types, sanitizer detection, cross-contract tracking
-- `core/cross_contract_analyzer.py` — Inter-contract relationship analysis with trust boundary detection and union-find grouping
+- `core/invariant_engine.py` — Invariant extraction (NatSpec + LLM + pattern) and Foundry invariant test generation + Halmos property generation
+- `core/solidity_ast.py` — Solidity AST parsing via py-solc-x with regex fallback for inheritance, visibility, storage layout, state read/write tracking; control flow graph construction (`build_cfg()`, `get_dominators()`, `get_loop_headers()`)
+- `core/taint_analyzer.py` — Data flow / taint analysis with 8 source types, 12 sink types, sanitizer detection, cross-contract tracking, branch-aware CFG propagation
+- `core/cross_contract_analyzer.py` — Inter-contract relationship analysis with trust boundary detection, union-find grouping, and `RelatedContractResolver` for dependency context
 - `core/token_quirks.py` — Token quirks database (12 categories of non-standard ERC-20 behaviors)
+- `core/halmos_runner.py` — Halmos symbolic execution runner for formal verification
+- `core/halmos_property_generator.py` — Auto-generates Halmos verification properties from invariants
+- `core/accuracy_tracker.py` — ML feedback loop: per-detector accuracy tracking, confidence weight adjustment, severity calibration
 
 ### Detection Layer
 - `core/enhanced_vulnerability_detector.py` — Primary detector with 60+ patterns
@@ -409,17 +466,17 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 - Token quirks detection integrated into static detection pipeline via `core/token_quirks.py`
 
 ### Validation Layer
-- `core/validation_pipeline.py` — Multi-stage pipeline: built-in protection check, governance detection, taint-aware validation (Stage 1.85), deployment verification, local validation
+- `core/validation_pipeline.py` — Multi-stage pipeline: built-in protection check, governance detection, taint-aware validation (Stage 1.85), Halmos symbolic verification (Stage 1.95), deployment verification, local validation
 - `core/governance_detector.py`, `core/deployment_analyzer.py`, `core/llm_false_positive_filter.py`
 - `core/control_flow_guard_detector.py`, `core/inheritance_verifier.py`
+- `core/nodes/halmos_node.py` — `HalmosSymbolicNode` pipeline node for symbolic execution validation
 
 ### LLM & AI Layer
 - `core/enhanced_llm_analyzer.py` — Structured LLM analysis (GPT/Gemini/Claude) with JSON output and multi-provider rotation
-- `core/ai_ensemble.py` — Multi-agent coordination (retained for backward compatibility; retired from production pipeline in v3.8, replaced by multi-provider rotation)
 - `core/enhanced_prompts.py` — Production prompt templates with dynamic exploit pattern loading from knowledge base, few-shot examples, severity calibration, and chain-of-thought enforcement
 
 ### PoC Generation Layer
-- `core/foundry_poc_generator.py` (~8000 lines) — AST-based analysis, iterative compilation feedback (up to 5 attempts)
+- `core/foundry_poc_generator.py` (~8000 lines) — AST-based analysis, iterative compilation feedback (up to 5 attempts), auto-execution via `forge test --json` with `PoCTestResult` parsing and fork-mode support
 - `core/llm_foundry_generator.py` — LLM-based test generation with mock API documentation and recommended setUp patterns
 - `core/enhanced_foundry_integration.py` — Foundry validation and formatting
 - `core/poc_templates.py` — Mock contract templates (MockERC20, MockOracle, MockWETH, MockFlashLoanProvider)
@@ -428,25 +485,25 @@ Exits the TUI. If jobs are running, prompts for confirmation.
 ### Persistence Layer
 - `core/database_manager.py` — `DatabaseManager` (local audits) + `AetherDatabase` (GitHub audits)
 - `core/analysis_cache.py` — Smart caching for 2x faster repeated analysis
-- `core/accuracy_tracker.py` — Submission outcomes and bounty earnings
+- `core/accuracy_tracker.py` — ML feedback loop: submission outcomes, bounty earnings, per-detector accuracy stats, confidence weight generation
 
 ### Integrations
 - `core/github_auditor.py` — Clone repos, detect frameworks, discover contracts, coordinate analysis
 - `core/etherscan_fetcher.py`, `core/basescan_fetcher.py` — Fetch verified contracts from block explorers
-- `core/exploit_tester.py`, `core/fork_verifier.py` — Validate exploits against Anvil forks
+- `core/exploit_tester.py` — Validate exploits against Anvil forks
 
 ### Flow-Based Execution
 Audit flows defined in YAML configs (`configs/`). Enhanced audit pipeline:
-`FileReaderNode -> StaticAnalysisNode -> LLMAnalysisNode -> EnhancedExploitabilityNode -> [FixGeneratorNode -> ValidationNode] -> ReportNode`
+`FileReaderNode -> StaticAnalysisNode -> LLMAnalysisNode -> EnhancedExploitabilityNode -> [FixGeneratorNode -> ValidationNode -> HalmosSymbolicNode] -> ReportNode`
 
 ---
 
 ## Tests
 
-1839 tests across 67 test files, running in ~23 seconds:
+2059 tests across 76 test files, running in ~23 seconds:
 
 ```bash
-python -m pytest tests/                                    # All tests (~23s, 1839 tests)
+python -m pytest tests/                                    # All tests (~23s, 2059 tests)
 python -m pytest tests/test_enhanced_detectors.py -v       # Single file
 python -m pytest tests/test_enhanced_detectors.py::TestArithmeticAnalyzer -v  # Single class
 python -m pytest tests/ -k "governance" -v                 # Pattern match
@@ -464,6 +521,15 @@ python -m pytest tests/ --cov=core --cov-report=html       # With coverage
 ---
 
 ## Changelog
+
+### v4.7 — PoC Auto-Execution, Halmos Symbolic Verification, CFG Analysis & ML Feedback Loop
+- **PoC auto-execution** — generated Foundry PoCs automatically compile and execute via `forge test --json` with `PoCTestResult` parsing and fork-mode support; `POC_TESTING` phase for live TUI tracking
+- **Halmos symbolic execution** — `HalmosRunner`, `HalmosPropertyGenerator`, and `HalmosSymbolicNode` pipeline node (validation Stage 1.95) for formal verification of invariants; graceful degradation if Halmos not installed
+- **Control flow graph analysis** — `BasicBlock`, `CFGEdge`, `ControlFlowGraph` with `build_cfg()`, dominator trees, loop header detection, assembly block parsing; CFG context injected into deep analysis Pass 2; branch-aware taint propagation
+- **ML feedback loop** — `AccuracyTracker` records submission outcomes with `get_detector_accuracy()` and `get_detector_weights()` for per-detector stats; confidence weight adjustment in `EnhancedVulnerabilityDetector`; severity calibration in deep analysis Pass 5
+- **Related contract context** — `RelatedContractResolver` discovers parent, interface, library, and dependency contracts with per-pass budget system (200K/100K/50K chars); standard library summarization; single-file sibling discovery
+- **Tech debt cleanup** — 8,500 lines of dead code removed: deleted `ai_ensemble.py`, `audit_engine.py`, `fork_verifier.py`; removed all ai_ensemble references from CLI, audit runner, TUI screens, report generator
+- **2059 tests** passing across 76 test files
 
 ### v4.0 — Solidity AST Parsing, Taint Analysis & Data Flow Tracking
 - **Solidity AST parser** — full solc integration via py-solc-x for proper inheritance resolution, function visibility, storage layout, state read/write tracking; graceful regex fallback

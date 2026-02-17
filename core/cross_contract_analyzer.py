@@ -580,6 +580,516 @@ class InterContractAnalyzer:
         return list(merged.values())
 
 
+# ---------------------------------------------------------------------------
+# Related Contract Source Resolver (v4.5)
+# ---------------------------------------------------------------------------
+
+# Well-known standard library path prefixes
+STANDARD_LIBRARY_PREFIXES = (
+    '@openzeppelin/', 'openzeppelin-contracts/', 'openzeppelin/',
+    'solmate/', 'solady/', 'forge-std/',
+    '@rari-capital/', '@transmissions11/',
+    'lib/openzeppelin', 'lib/solmate', 'lib/solady', 'lib/forge-std',
+    'node_modules/@openzeppelin', 'node_modules/solmate', 'node_modules/solady',
+)
+
+
+@dataclass
+class RelatedContractSource:
+    """Source code of a contract related to the analysis target."""
+    name: str
+    file_path: str
+    content: str
+    relationship: str   # "parent", "interface", "library", "dependency", "sibling"
+    priority: int       # 1=direct parents/interfaces, 2=libraries/typed vars, 3=transitive/group
+    char_count: int = 0
+
+    def __post_init__(self):
+        if not self.char_count:
+            self.char_count = len(self.content)
+
+
+class RelatedContractResolver:
+    """Resolves and collects source code of contracts related to analysis targets.
+
+    Two modes:
+      - **Project mode** (multi-file audit): uses InterContractAnalyzer._extract_definitions()
+        to map names to files, then selects related sources based on detected relationships.
+      - **Single-file mode**: parses import statements and resolves against disk using
+        relative paths, Foundry remappings, node_modules, lib/, and same-directory scan.
+    """
+
+    def __init__(self):
+        self._seen: Set[str] = set()  # Prevent circular resolution
+
+    def resolve_related_sources(
+        self,
+        target_files: List[Dict[str, Any]],
+        all_files: List[Dict[str, Any]],
+        project_root: Optional[str] = None,
+    ) -> List[RelatedContractSource]:
+        """Resolve related contract sources.
+
+        Args:
+            target_files: Files being analyzed (subset of all_files or same)
+            all_files: All available contract files in the project
+            project_root: Root directory of the project (for import resolution)
+
+        Returns:
+            List of RelatedContractSource, sorted by priority (1 first).
+        """
+        self._seen.clear()
+        related: List[RelatedContractSource] = []
+
+        # Collect target contract names
+        target_names: Set[str] = set()
+        target_paths: Set[str] = set()
+        for tf in target_files:
+            content = tf.get('content', '')
+            path = tf.get('path', '')
+            target_paths.add(path)
+            for m in re.finditer(
+                r'\b(?:contract|interface|abstract\s+contract|library)\s+(\w+)', content
+            ):
+                target_names.add(m.group(1))
+
+        if len(all_files) >= 2:
+            related = self._resolve_project_mode(
+                target_names, target_paths, all_files
+            )
+        else:
+            # Single-file mode: parse imports and resolve from disk
+            if target_files:
+                related = self._resolve_single_file_mode(
+                    target_files[0], project_root
+                )
+
+        # Sort by priority, then name for determinism
+        related.sort(key=lambda r: (r.priority, r.name))
+        return related
+
+    # --- Project mode ---
+
+    def _resolve_project_mode(
+        self,
+        target_names: Set[str],
+        target_paths: Set[str],
+        all_files: List[Dict[str, Any]],
+    ) -> List[RelatedContractSource]:
+        """Resolve related sources from project-level file list."""
+        analyzer = InterContractAnalyzer()
+        definitions = analyzer._extract_definitions(all_files)
+
+        # Build name -> file content lookup
+        path_to_file: Dict[str, Dict[str, Any]] = {}
+        for cf in all_files:
+            path_to_file[cf.get('path', '')] = cf
+
+        # Detect relationships for target contracts
+        relationships = analyzer._detect_relationships(all_files, definitions)
+
+        # Build groups for transitive resolution
+        groups = analyzer._build_groups(definitions, relationships)
+
+        related: List[RelatedContractSource] = []
+        added_paths: Set[str] = set()
+
+        for rel in relationships:
+            # We care about relationships where the target is the caller
+            if rel.caller not in target_names:
+                continue
+
+            callee = rel.callee
+            if callee in target_names:
+                continue  # Skip self-references
+
+            callee_def = definitions.get(callee)
+            if not callee_def:
+                continue
+
+            callee_path = callee_def.get('file_path', '')
+            if callee_path in target_paths or callee_path in added_paths:
+                continue
+
+            cf = path_to_file.get(callee_path)
+            if not cf:
+                continue
+
+            content = cf.get('content', '')
+            if not content:
+                continue
+
+            # Determine relationship type and priority
+            if rel.call_type == 'inheritance':
+                relationship = 'parent'
+                priority = 1
+            elif callee_def.get('kind') == 'interface':
+                relationship = 'interface'
+                priority = 1
+            elif callee_def.get('kind') == 'library':
+                relationship = 'library'
+                priority = 2
+            else:
+                relationship = 'dependency'
+                priority = 2
+
+            # Check if standard library → summarize
+            if self.is_standard_library(callee_path):
+                content = self.extract_interface_summary(content)
+
+            related.append(RelatedContractSource(
+                name=callee,
+                file_path=callee_path,
+                content=content,
+                relationship=relationship,
+                priority=priority,
+            ))
+            added_paths.add(callee_path)
+
+        # Also detect `using X for Y` library references not caught by
+        # InterContractAnalyzer._detect_relationships()
+        using_pattern = re.compile(r'\busing\s+(\w+)\s+for\s+', re.MULTILINE)
+        for tf_path in target_paths:
+            cf = path_to_file.get(tf_path)
+            if not cf:
+                continue
+            for m in using_pattern.finditer(cf.get('content', '')):
+                lib_name = m.group(1)
+                if lib_name in target_names or lib_name in added_paths:
+                    continue
+                lib_def = definitions.get(lib_name)
+                if not lib_def:
+                    continue
+                lib_path = lib_def.get('file_path', '')
+                if lib_path in target_paths or lib_path in added_paths:
+                    continue
+                lib_cf = path_to_file.get(lib_path)
+                if not lib_cf:
+                    continue
+                content = lib_cf.get('content', '')
+                if not content:
+                    continue
+                if self.is_standard_library(lib_path):
+                    content = self.extract_interface_summary(content)
+                related.append(RelatedContractSource(
+                    name=lib_name,
+                    file_path=lib_path,
+                    content=content,
+                    relationship='library',
+                    priority=2,
+                ))
+                added_paths.add(lib_path)
+
+        # Add group members as priority 3 (transitive/sibling)
+        for group in groups:
+            for member in group:
+                if member in target_names:
+                    continue
+                member_def = definitions.get(member)
+                if not member_def:
+                    continue
+                member_path = member_def.get('file_path', '')
+                if member_path in target_paths or member_path in added_paths:
+                    continue
+                cf = path_to_file.get(member_path)
+                if not cf:
+                    continue
+                content = cf.get('content', '')
+                if not content:
+                    continue
+
+                if self.is_standard_library(member_path):
+                    content = self.extract_interface_summary(content)
+
+                related.append(RelatedContractSource(
+                    name=member,
+                    file_path=member_path,
+                    content=content,
+                    relationship='sibling',
+                    priority=3,
+                ))
+                added_paths.add(member_path)
+
+        return related
+
+    # --- Single-file mode ---
+
+    def _resolve_single_file_mode(
+        self,
+        target_file: Dict[str, Any],
+        project_root: Optional[str],
+    ) -> List[RelatedContractSource]:
+        """Resolve related sources by parsing import statements."""
+        content = target_file.get('content', '')
+        file_path = target_file.get('path', '')
+        file_dir = os.path.dirname(file_path)
+
+        if not project_root:
+            project_root = self._detect_project_root(file_path)
+
+        related: List[RelatedContractSource] = []
+        remappings = self._load_remappings(project_root) if project_root else {}
+
+        # Parse import statements
+        import_pattern = re.compile(
+            r'import\s+(?:{[^}]*}\s+from\s+)?["\']([^"\']+)["\']',
+            re.MULTILINE,
+        )
+
+        for m in import_pattern.finditer(content):
+            import_path = m.group(1)
+            if import_path in self._seen:
+                continue
+            self._seen.add(import_path)
+
+            resolved_path = self._resolve_import(
+                import_path, file_dir, project_root, remappings
+            )
+            if not resolved_path or not os.path.isfile(resolved_path):
+                continue
+
+            try:
+                with open(resolved_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    dep_content = f.read()
+            except Exception:
+                continue
+
+            if not dep_content.strip():
+                continue
+
+            dep_name = os.path.splitext(os.path.basename(resolved_path))[0]
+            is_stdlib = self.is_standard_library(import_path) or self.is_standard_library(resolved_path)
+
+            # Determine relationship from content
+            relationship, priority = self._classify_import(
+                dep_content, content, dep_name, is_stdlib
+            )
+
+            if is_stdlib:
+                dep_content = self.extract_interface_summary(dep_content)
+
+            related.append(RelatedContractSource(
+                name=dep_name,
+                file_path=resolved_path,
+                content=dep_content,
+                relationship=relationship,
+                priority=priority,
+            ))
+
+        return related
+
+    def _classify_import(
+        self, dep_content: str, target_content: str, dep_name: str, is_stdlib: bool
+    ) -> Tuple[str, int]:
+        """Classify a dependency's relationship and priority."""
+        # Check if the target inherits from this dependency
+        inherit_pattern = re.compile(
+            r'\b(?:contract|abstract\s+contract)\s+\w+\s+is\s+[^{]*\b'
+            + re.escape(dep_name) + r'\b'
+        )
+        if inherit_pattern.search(target_content):
+            return ('parent', 1)
+
+        # Check if it's an interface
+        if re.search(r'\binterface\s+' + re.escape(dep_name) + r'\b', dep_content):
+            return ('interface', 1)
+
+        # Check if it's a library
+        if re.search(r'\blibrary\s+' + re.escape(dep_name) + r'\b', dep_content):
+            return ('library', 2)
+
+        # Default: dependency
+        return ('dependency', 2 if not is_stdlib else 3)
+
+    def _resolve_import(
+        self,
+        import_path: str,
+        file_dir: str,
+        project_root: Optional[str],
+        remappings: Dict[str, str],
+    ) -> Optional[str]:
+        """Resolve an import path to an absolute file path."""
+        # 1. Relative path
+        if import_path.startswith('.'):
+            candidate = os.path.normpath(os.path.join(file_dir, import_path))
+            if os.path.isfile(candidate):
+                return candidate
+
+        if not project_root:
+            return None
+
+        # 2. Foundry remappings
+        for prefix, target in remappings.items():
+            if import_path.startswith(prefix):
+                remapped = import_path.replace(prefix, target, 1)
+                candidate = os.path.normpath(os.path.join(project_root, remapped))
+                if os.path.isfile(candidate):
+                    return candidate
+
+        # 3. node_modules
+        candidate = os.path.join(project_root, 'node_modules', import_path)
+        if os.path.isfile(candidate):
+            return candidate
+
+        # 4. lib/ directory (Foundry convention)
+        candidate = os.path.join(project_root, 'lib', import_path)
+        if os.path.isfile(candidate):
+            return candidate
+
+        # 5. Direct from project root
+        candidate = os.path.join(project_root, import_path)
+        if os.path.isfile(candidate):
+            return candidate
+
+        # 6. Same directory scan
+        basename = os.path.basename(import_path)
+        candidate = os.path.join(file_dir, basename)
+        if os.path.isfile(candidate):
+            return candidate
+
+        return None
+
+    def _load_remappings(self, project_root: str) -> Dict[str, str]:
+        """Load Foundry remappings from remappings.txt or foundry.toml."""
+        remappings: Dict[str, str] = {}
+
+        # Try remappings.txt
+        remap_file = os.path.join(project_root, 'remappings.txt')
+        if os.path.isfile(remap_file):
+            try:
+                with open(remap_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if '=' in line and not line.startswith('#'):
+                            prefix, target = line.split('=', 1)
+                            remappings[prefix.strip()] = target.strip()
+            except Exception:
+                pass
+
+        # Try foundry.toml
+        if not remappings:
+            toml_file = os.path.join(project_root, 'foundry.toml')
+            if os.path.isfile(toml_file):
+                try:
+                    with open(toml_file, 'r') as f:
+                        content = f.read()
+                    # Simple regex extraction for remappings array
+                    remap_match = re.search(
+                        r'remappings\s*=\s*\[([^\]]*)\]', content, re.DOTALL
+                    )
+                    if remap_match:
+                        for entry in re.findall(r'"([^"]*)"', remap_match.group(1)):
+                            if '=' in entry:
+                                prefix, target = entry.split('=', 1)
+                                remappings[prefix.strip()] = target.strip()
+                except Exception:
+                    pass
+
+        return remappings
+
+    @staticmethod
+    def _detect_project_root(file_path: str) -> Optional[str]:
+        """Walk up from file_path to find project root."""
+        markers = ('foundry.toml', 'hardhat.config.js', 'hardhat.config.ts',
+                   'package.json', 'remappings.txt')
+        current = os.path.dirname(os.path.abspath(file_path))
+        for _ in range(5):  # Max 5 levels up
+            for marker in markers:
+                if os.path.exists(os.path.join(current, marker)):
+                    return current
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+        return None
+
+    @staticmethod
+    def is_standard_library(path: str) -> bool:
+        """Check if a path belongs to a well-known standard library."""
+        normalized = path.replace('\\', '/')
+        return any(prefix in normalized for prefix in STANDARD_LIBRARY_PREFIXES)
+
+    @staticmethod
+    def extract_interface_summary(content: str) -> str:
+        """Extract only function/event/error signatures from contract source.
+
+        Used for standard libraries to save context budget while preserving
+        the information the LLM needs for interface compliance checks.
+        """
+        lines = []
+        # Extract pragma
+        pragma = re.search(r'pragma\s+solidity\s+[^;]+;', content)
+        if pragma:
+            lines.append(pragma.group(0))
+
+        # Extract contract/interface/library declarations with inheritance
+        decl_pattern = re.compile(
+            r'\b(contract|interface|abstract\s+contract|library)\s+(\w+)(?:\s+is\s+[^{]+)?',
+            re.MULTILINE,
+        )
+        for m in decl_pattern.finditer(content):
+            lines.append(m.group(0).strip() + ' {')
+
+        # Extract function signatures (without bodies)
+        func_pattern = re.compile(
+            r'function\s+\w+\s*\([^)]*\)\s*(?:external|public|internal|private)?'
+            r'(?:\s+(?:view|pure|payable|virtual|override|returns\s*\([^)]*\)))*\s*;?',
+            re.MULTILINE,
+        )
+        for m in func_pattern.finditer(content):
+            sig = m.group(0).strip()
+            if not sig.endswith(';'):
+                sig += ';'
+            lines.append(f'    {sig}')
+
+        # Extract event and error signatures
+        for pattern in (r'event\s+\w+\s*\([^)]*\)\s*;', r'error\s+\w+\s*\([^)]*\)\s*;'):
+            for m in re.finditer(pattern, content):
+                lines.append(f'    {m.group(0).strip()}')
+
+        lines.append('}')
+        lines.append('// [Standard library — interface summary only]')
+
+        return '\n'.join(lines)
+
+    @staticmethod
+    def select_within_budget(
+        related: List['RelatedContractSource'],
+        budget_chars: int,
+    ) -> List['RelatedContractSource']:
+        """Select related sources by priority order until budget is exhausted.
+
+        Lower priority numbers are selected first. If a contract doesn't fit,
+        try to include an interface-only summary instead.
+        """
+        if budget_chars <= 0:
+            return []
+
+        selected: List[RelatedContractSource] = []
+        used = 0
+
+        # Already sorted by priority
+        for src in related:
+            if used + src.char_count <= budget_chars:
+                selected.append(src)
+                used += src.char_count
+            elif src.priority <= 2:
+                # Try interface-only summary for important contracts
+                summary = RelatedContractResolver.extract_interface_summary(src.content)
+                summary_len = len(summary)
+                if used + summary_len <= budget_chars:
+                    selected.append(RelatedContractSource(
+                        name=src.name,
+                        file_path=src.file_path,
+                        content=summary,
+                        relationship=src.relationship,
+                        priority=src.priority,
+                    ))
+                    used += summary_len
+
+        return selected
+
+
 @dataclass
 class ExternalCallInfo:
     """Information about an external contract call."""
