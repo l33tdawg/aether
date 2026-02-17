@@ -271,6 +271,38 @@ contract {test_contract_name} is Test {{
                 ))
         return invariants
 
+    def generate_halmos_properties(
+        self,
+        invariants: List[Invariant],
+        contract_name: str,
+        contract_path: str = "",
+    ) -> Optional[str]:
+        """Generate Halmos symbolic test properties from invariants.
+
+        Unlike Foundry invariant tests (which fuzz), Halmos symbolically
+        explores *all* inputs for bounded model checking.
+
+        Args:
+            invariants: Extracted invariants.
+            contract_name: Name of the contract under test.
+            contract_path: Import path for the contract.
+
+        Returns:
+            Solidity source code string, or None if no testable invariants.
+        """
+        try:
+            from core.halmos_property_generator import HalmosPropertyGenerator
+            generator = HalmosPropertyGenerator()
+            suite = generator.generate_from_invariants(
+                invariants=invariants,
+                contract_name=contract_name,
+                contract_path=contract_path,
+            )
+            return suite.to_solidity() if suite else None
+        except ImportError:
+            logger.warning("HalmosPropertyGenerator not available")
+            return None
+
     def _invariant_to_func_name(self, inv: Invariant) -> str:
         """Convert an invariant to a Foundry invariant_ function name."""
         # Convert description to snake_case function name

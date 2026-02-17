@@ -19,9 +19,6 @@ from core.enhanced_vulnerability_detector import EnhancedVulnerabilityDetector, 
 from core.enhanced_llm_analyzer import EnhancedLLMAnalyzer
 from core.vulnerability_validator import VulnerabilityValidator, ValidationResult
 from core.file_handler import FileHandler
-# AI Ensemble retired in v4.0 — provider rotation in DeepAnalysisEngine
-# Learning system removed - was simulated, not real
-# Formal verification removed - was simulated, not real
 from core.llm_false_positive_filter import LLMFalsePositiveFilter
 from core.foundry_poc_generator import FoundryPoCGenerator
 from core.database_manager import DatabaseManager, AuditResult, VulnerabilityFinding, LearningPattern, AuditMetrics
@@ -42,8 +39,6 @@ class EnhancedAetherAuditEngine:
 
         # Database integration
         self.database = database if database is not None else DatabaseManager()
-        # Learning system removed - was simulated
-        # Formal verification removed - was simulated
         self.llm_false_positive_filter = LLMFalsePositiveFilter(self.llm_analyzer)
         self.foundry_poc_generator = FoundryPoCGenerator()
 
@@ -59,13 +54,11 @@ class EnhancedAetherAuditEngine:
             'validated_findings': 0,
             'false_positives': 0,
             'accuracy_rate': 0.0,
-            'formal_verification_proofs': 0,
-            'learning_feedback_entries': 0
         }
 
-    async def run_audit(self, contract_path: str, flow_config: Dict[str, Any], foundry_validation: bool = False, enhanced: bool = True, phase3: bool = False, llm_validation: bool = False, ai_ensemble: bool = False, selected_contracts: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def run_audit(self, contract_path: str, flow_config: Dict[str, Any], foundry_validation: bool = False, enhanced: bool = True, phase3: bool = False, llm_validation: bool = False, selected_contracts: Optional[List[str]] = None) -> Dict[str, Any]:
         """Run enhanced audit with validation.
-        
+
         Args:
             contract_path: Path to contract file or directory
             flow_config: Audit flow configuration
@@ -73,7 +66,6 @@ class EnhancedAetherAuditEngine:
             enhanced: Use enhanced analysis
             phase3: Enable Phase 3 features
             llm_validation: Enable LLM validation
-            ai_ensemble: Enable AI ensemble
             selected_contracts: Optional list of specific contract file paths to audit (filters directory contents)
         """
         print("🚀 Starting enhanced AetherAudit...", flush=True)
@@ -96,20 +88,8 @@ class EnhancedAetherAuditEngine:
             # Step 3: Enhanced LLM analysis
             llm_results = await self._run_enhanced_llm_analysis(contract_files, static_results)
             
-            # AI Ensemble retired in v4.0 — multi-provider diversity now handled
-            # by per-pass provider rotation in DeepAnalysisEngine
-            ai_ensemble_results = {
-                'consensus_findings': [],
-                'model_agreement': 0.0,
-                'confidence_score': 0.0,
-                'processing_time': 0.0,
-            }
-
-            # Step 5: Formal Verification for Critical Findings (DISABLED - too many false positives)
-            formal_verification_results = None  # Disabled due to excessive false positives
-
-            # Step 6: Validation layer
-            validated_results = await self._validate_findings(static_results, llm_results, contract_files, ai_ensemble_results, formal_verification_results)
+            # Step 5: Validation layer
+            validated_results = await self._validate_findings(static_results, llm_results, contract_files)
 
             # Count high/critical findings and suggest PoC generation
             high_crit = [v for v in validated_results.get('validated_vulnerabilities', [])
@@ -117,16 +97,14 @@ class EnhancedAetherAuditEngine:
             if high_crit:
                 print(f"💡 {len(high_crit)} high/critical findings — press 'p' to generate Foundry PoCs", flush=True)
 
-            # Step 7: Learning System Integration (removed - was simulated)
-
-            # Step 8: Foundry validation (if requested) - MOVED BEFORE report generation
+            # Step 6: Foundry validation (if requested)
             if foundry_validation:
                 await self._run_foundry_validation(contract_path, validated_results)
             
-            # Step 9: Generate comprehensive report (MOVED AFTER Foundry validation)
-            final_results = self._generate_final_report(validated_results, start_time, ai_ensemble_results, formal_verification_results)
+            # Step 7: Generate comprehensive report
+            final_results = self._generate_final_report(validated_results, start_time)
 
-            # Step 10: Save to database (MOVED AFTER report generation)
+            # Step 8: Save to database
             self._save_audit_to_database(contract_path, final_results, start_time, flow_config)
 
             return final_results
@@ -522,9 +500,6 @@ class EnhancedAetherAuditEngine:
 
         return llm_results
 
-# AI Ensemble method removed in v4.0 - replaced by provider rotation in DeepAnalysisEngine
-# Formal verification method removed - was simulated
-
     def _normalize_vulnerability_dict(self, vuln: Any) -> Dict[str, Any]:
         """Normalize vulnerability from any source to consistent dict structure."""
         # Handle VulnerabilityMatch objects (dataclass or object with attributes)
@@ -678,14 +653,12 @@ class EnhancedAetherAuditEngine:
 
         return vuln
 
-# Learning system integration method removed - was simulated
-
-    async def _validate_findings(self, static_results: Dict[str, Any], llm_results: Dict[str, Any], contract_files: List[Dict[str, Any]], ai_ensemble_results: Dict[str, Any] = None, formal_verification_results: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _validate_findings(self, static_results: Dict[str, Any], llm_results: Dict[str, Any], contract_files: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Collect and validate findings from all analysis sources."""
         print("🔍 Collecting and validating findings...")
-        
+
         all_vulnerabilities = []
-        
+
         # Add static analysis vulnerabilities
         for vuln in static_results.get('vulnerabilities', []):
             all_vulnerabilities.append({
@@ -693,7 +666,7 @@ class EnhancedAetherAuditEngine:
                 'vulnerability': vuln,
                 'source': 'enhanced_detector'
             })
-        
+
         # Add LLM analysis vulnerabilities
         llm_vulns = llm_results.get('analysis', {}).get('vulnerabilities', [])
         for vuln in llm_vulns:
@@ -702,41 +675,6 @@ class EnhancedAetherAuditEngine:
                 'vulnerability': vuln,
                 'source': 'enhanced_llm'
             })
-        
-        # Add AI ensemble consensus findings
-        if ai_ensemble_results:
-            for finding in ai_ensemble_results.get('consensus_findings', []):
-                all_vulnerabilities.append({
-                    'type': 'ai_ensemble',
-                    'vulnerability': finding,
-                    'source': 'ai_ensemble'
-                })
-        
-        # Add formal verification results (only for legitimate vulnerabilities)
-        if formal_verification_results:
-            for proof in formal_verification_results.get('formal_proofs', []):
-                if proof['proof_status'] == 'proven':
-                    # Filter out false positives from formal verification
-                    vuln_type = proof.get('vulnerability_id', '').split('_')[1] if '_' in proof.get('vulnerability_id', '') else 'unknown'
-                    
-                    # Skip benign patterns that shouldn't be vulnerabilities
-                    benign_patterns = [
-                        'division_by_zero',  # Often false positives in constants
-                        'integer_underflow',  # Often false positives in loops
-                        'bounds_checking_issue',  # Often false positives
-                        'parameter_validation_issue',  # Often false positives
-                        'malformed_input_handling',  # Often false positives
-                        'unvalidated_decoding',  # Often false positives
-                        'missing_input_validation',  # Often false positives
-                        'external_manipulation'  # Often false positives
-                    ]
-                    
-                    if vuln_type not in benign_patterns:
-                        all_vulnerabilities.append({
-                            'type': 'formal_verification',
-                            'vulnerability': proof,
-                            'source': 'formal_verification'
-                        })
         
         # Apply severity calibration and collect; preserve source for dict items
         validated_vulnerabilities = []
@@ -752,7 +690,7 @@ class EnhancedAetherAuditEngine:
             calibrated_vuln['source'] = vuln_data.get('source', 'unknown')
             validated_vulnerabilities.append(calibrated_vuln)
 
-        # Cross-source dedup: collapse near-duplicate findings from static/LLM/ensemble
+        # Cross-source dedup: collapse near-duplicate findings from static/LLM
         pre_dedup_count = len(validated_vulnerabilities)
         cross_dedup: Dict[tuple, Dict[str, Any]] = {}
         for v in validated_vulnerabilities:
@@ -769,16 +707,7 @@ class EnhancedAetherAuditEngine:
 
         # Optional post-filter for Foundry workload control
         try:
-            # DISABLED BY DEFAULT: Send all findings to Foundry for validation
-            # The consensus-only filter was too restrictive and discarded valid findings
-            only_consensus = os.getenv('AETHER_FOUNDRY_ONLY_CONSENSUS', '0') == '1'  # Changed default from '1' to '0'
             foundry_max_items = int(os.getenv('AETHER_FOUNDRY_MAX_ITEMS', '80'))
-            if only_consensus:
-                validated_vulnerabilities = [
-                    v for v in validated_vulnerabilities
-                    if (isinstance(v, dict) and v.get('source') == 'ai_ensemble')
-                ] or validated_vulnerabilities  # fallback if empty
-            # Cap items
             if len(validated_vulnerabilities) > foundry_max_items:
                 validated_vulnerabilities = validated_vulnerabilities[:foundry_max_items]
         except Exception:
@@ -905,7 +834,7 @@ class EnhancedAetherAuditEngine:
         if poc_count > 0:
             print(f"✅ Auto-generated {poc_count} PoC(s) for high/critical findings", flush=True)
 
-    def _generate_final_report(self, validated_results: Dict[str, Any], start_time: float, ai_ensemble_results: Dict[str, Any] = None, formal_verification_results: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _generate_final_report(self, validated_results: Dict[str, Any], start_time: float) -> Dict[str, Any]:
         """Generate final comprehensive report."""
         execution_time = time.time() - start_time
         
@@ -934,12 +863,6 @@ class EnhancedAetherAuditEngine:
             'execution_time': execution_time,
             'accuracy_rate': final_accuracy,
             'false_positives_filtered': false_positive_count,
-            # Phase 3 features
-            'ai_consensus_findings': ai_ensemble_results.get('consensus_findings', []) if ai_ensemble_results else [],
-            'model_agreement': ai_ensemble_results.get('model_agreement', 0.0) if ai_ensemble_results else 0.0,
-            'formal_verification_proofs': [],  # Removed - was simulated
-            'proven_vulnerabilities': 0,  # Removed - was simulated
-            'learning_feedback_entries': 0  # Removed - was simulated
         }
         
         # Generate results structure - only include confirmed vulnerabilities
@@ -961,14 +884,7 @@ class EnhancedAetherAuditEngine:
             'enhancement_stats': {
                 'false_positives_prevented': false_positive_count,
                 'accuracy_improvement': final_accuracy,
-                'validation_layers': 5,  # Static + LLM + AI Ensemble + Formal Verification + Validation
-                'phase3_features': {
-                    'ai_ensemble_enabled': ai_ensemble_results is not None,
-                    'formal_verification_enabled': False,  # Removed - was simulated
-                    'learning_system_enabled': False,  # Removed - was simulated
-                    'model_agreement': ai_ensemble_results.get('model_agreement', 0.0) if ai_ensemble_results else 0.0,
-                    'formal_proofs_generated': 0  # Removed - was simulated
-                }
+                'validation_layers': 3,  # Static + LLM + Validation
             }
         }
 
@@ -976,31 +892,24 @@ class EnhancedAetherAuditEngine:
         """Get summary of enhancements and improvements."""
         return {
             'enhanced_components': [
-                'EnhancedVulnerabilityDetector',  # Phase 1-2
-                'EnhancedLLMAnalyzer',            # Phase 1-2
-                'VulnerabilityValidator',          # Phase 1-2
-                'AIEnsemble',                      # Phase 3
-                'LearningSystem',                  # Phase 3
-                'FormalVerification'               # Phase 3
+                'EnhancedVulnerabilityDetector',
+                'EnhancedLLMAnalyzer',
+                'VulnerabilityValidator',
+                'DeepAnalysisEngine',
+                'SolidityASTParser',
+                'TaintAnalyzer',
             ],
             'improvements': [
                 'Reduced false positives through validation layers',
                 'Better context awareness in static analysis',
                 'Enhanced LLM prompts with validation requirements',
                 'Dynamic testing integration for verification',
-                'Multi-model AI consensus analysis',           # Phase 3
-                'Dynamic learning from user feedback',         # Phase 3
-                'Mathematical proof generation for critical findings',  # Phase 3
-                'Continuous improvement through pattern adaptation'      # Phase 3
+                'Multi-provider rotation for LLM diversity',
+                'Solidity AST parsing for enhanced analysis',
+                'Data flow / taint analysis',
+                'Cross-contract relationship analysis',
             ],
             'current_stats': self.stats,
-            'phase3_capabilities': {
-                'ai_ensemble_models': 4,
-                'learning_system_active': False,  # Removed - was simulated
-                'formal_verification_invariants': 0,  # Removed - was simulated
-                'consensus_threshold': 0.7,
-                'proof_templates': 4
-            }
         }
 
     async def run_enhanced_audit_with_llm_validation(
@@ -1051,35 +960,13 @@ class EnhancedAetherAuditEngine:
         
         # Step 4: Pre-LLM triage to reduce noise and cost (LLM-specific path)
         triaged_vulnerabilities = self._triage_vulnerabilities(vulnerability_dicts, for_llm=True)
-        # Optional: restrict to AI ensemble consensus for LLM validation
-        try:
-            only_consensus_llm = os.getenv('AETHER_LLM_ONLY_CONSENSUS', '0') == '1'
-            if only_consensus_llm:
-                triaged_vulnerabilities = [v for v in triaged_vulnerabilities if (v.get('source') == 'ai_ensemble')]
-        except Exception:
-            pass
-
         # Step 5: LLM-based false positive filtering
         logger.info("🤖 Running LLM false positive filtering...")
         validated_vulnerabilities = await self.llm_false_positive_filter.validate_vulnerabilities(
             triaged_vulnerabilities, contract_code, contract_name
         )
         
-        # Step 6: Generate Foundry tests using FoundryPoCGenerator
-        # NOTE: LLM-based test generation is now handled by FoundryPoCGenerator
-        # which has a different API. For now, this section is disabled.
-        # To use FoundryPoCGenerator, call generate_comprehensive_poc_suite() separately
-        foundry_test_suites = []
-        # if enable_foundry_tests and validated_vulnerabilities:
-        #     logger.info("🧪 Generating Foundry tests with FoundryPoCGenerator...")
-        #     try:
-        #         # TODO: Integrate FoundryPoCGenerator.generate_comprehensive_poc_suite()
-        #         # This requires a different API than the old LLMFoundryGenerator
-        #         pass
-        #     except Exception as e:
-        #         logger.error(f"Failed to generate Foundry tests: {e}")
-        
-        # Step 7: Update results with validated findings
+        # Step 6: Update results with validated findings
         updated_results = initial_results.copy()
         updated_results['results']['vulnerabilities'] = validated_vulnerabilities
         updated_results['llm_validation'] = {
@@ -1092,14 +979,7 @@ class EnhancedAetherAuditEngine:
             'details': self.llm_false_positive_filter.get_last_validation_details()
         }
         
-        # Foundry test results (disabled - API changed)
-        # if foundry_test_suites:
-        #     updated_results['foundry_tests'] = {
-        #         'test_suites': len(foundry_test_suites),
-        #         'validation_results': []
-        #     }
-        
-        # Step 8: Update summary
+        # Update summary
         updated_results['summary']['total_vulnerabilities'] = len(validated_vulnerabilities)
         updated_results['summary']['high_severity_count'] = len([
             v for v in validated_vulnerabilities 
@@ -1111,7 +991,6 @@ class EnhancedAetherAuditEngine:
         logger.info(f"   Pre-triage: {len(vulnerability_dicts)} → Triaged: {len(triaged_vulnerabilities)}")
         logger.info(f"   Validated findings: {len(validated_vulnerabilities)}")
         logger.info(f"   False positives filtered: {len(initial_vulnerabilities) - len(validated_vulnerabilities)}")
-        logger.info(f"   Foundry test suites: {len(foundry_test_suites)}")
         
         return updated_results
 
@@ -1171,11 +1050,6 @@ class EnhancedAetherAuditEngine:
         # Normalize and deduplicate
         seen = set()
         normalized: List[Dict[str, Any]] = []
-        only_consensus_llm = False
-        try:
-            only_consensus_llm = for_llm and (os.getenv('AETHER_LLM_ONLY_CONSENSUS', '0') == '1')
-        except Exception:
-            pass
         for v in vulns:
             vtype = (v.get('vulnerability_type') or v.get('title') or '').strip().lower()
             sev = v.get('severity') or 'low'
@@ -1189,11 +1063,7 @@ class EnhancedAetherAuditEngine:
             if key in seen:
                 continue
             seen.add(key)
-            # If LLM consensus-only mode: keep AI ensemble items regardless of thresholds
-            if only_consensus_llm and (v.get('source') == 'ai_ensemble'):
-                normalized.append(v)
-                continue
-            # Otherwise apply Severity/confidence filter
+            # Apply severity/confidence filter
             if self._severity_value(sev) < min_sev_val:
                 continue
             if conf < min_conf:
@@ -1471,7 +1341,6 @@ class EnhancedAetherAuditEngine:
                 metadata={
                     'contract_path': contract_path,
                     'flow_config': flow_config,
-                    'ai_ensemble_used': final_results.get('ai_ensemble', {}).get('enabled', False),
                     'llm_validation_used': final_results.get('llm_validation', {}).get('enabled', False),
                     'foundry_validation_used': final_results.get('foundry_validation', {}).get('enabled', False)
                 },

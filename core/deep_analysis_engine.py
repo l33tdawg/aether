@@ -827,6 +827,64 @@ class DeepAnalysisEngine:
         self.exploit_kb = ExploitKnowledgeBase()
         # Simple in-memory cache for pass 1 & 2 results
         self._cache: Dict[str, str] = {}
+        # ML Feedback Loop: load severity calibration from historical outcomes
+        self._severity_calibration: Dict[str, float] = {}
+        self._load_severity_calibration()
+
+    def _load_severity_calibration(self) -> None:
+        """Load per-severity acceptance rates for calibrating LLM findings."""
+        try:
+            from core.accuracy_tracker import AccuracyTracker
+            tracker = AccuracyTracker()
+            self._severity_calibration = tracker.get_severity_calibration()
+        except Exception:
+            self._severity_calibration = {}
+
+    def _build_severity_calibration_note(self) -> str:
+        """Build a calibration note for the LLM if certain severities have high rejection.
+
+        If >80% of findings at a severity level are historically rejected, inject
+        a warning into the prompt so the LLM is more careful at that level.
+        """
+        if not self._severity_calibration:
+            return ""
+        notes = []
+        for sev, rate in self._severity_calibration.items():
+            if rate < 0.2:  # >80% rejected
+                pct = (1.0 - rate) * 100
+                notes.append(
+                    f"- **{sev.upper()}**: Historically {pct:.0f}% of {sev} findings were rejected. "
+                    f"Apply extra scrutiny before marking a finding as {sev}. "
+                    f"Ensure a concrete, step-by-step exploit exists."
+                )
+        if not notes:
+            return ""
+        header = (
+            "\n\n## Historical Severity Calibration Warning\n"
+            "Based on past submission outcomes, certain severity levels have very high "
+            "rejection rates. Adjust your confidence and severity accordingly:\n"
+        )
+        return header + "\n".join(notes) + "\n"
+
+    def _calibrate_finding_severity(self, finding: Dict[str, Any]) -> None:
+        """Adjust a finding's confidence based on historical severity acceptance.
+
+        If a severity level has a historically low acceptance rate (<40%),
+        findings at that level get a confidence penalty.  High acceptance
+        (>70%) gives a small boost.
+        """
+        if not self._severity_calibration:
+            return
+        severity = finding.get('severity', '').lower()
+        rate = self._severity_calibration.get(severity)
+        if rate is None:
+            return
+        if rate < 0.4:
+            # Penalize: scale confidence down proportionally
+            finding['confidence'] = max(0.1, finding.get('confidence', 0.5) * (0.6 + rate))
+        elif rate > 0.7:
+            # Boost: small increase capped at 1.0
+            finding['confidence'] = min(1.0, finding.get('confidence', 0.5) * (1.0 + (rate - 0.7) * 0.5))
 
     async def analyze(
         self,
@@ -884,6 +942,31 @@ class DeepAnalysisEngine:
             except Exception as e:
                 logger.debug(f"Taint context formatting failed: {e}")
 
+        # Build CFG context from AST data (enhances Pass 2)
+        cfg_context = ""
+        if ast_data is not None:
+            try:
+                from core.solidity_ast import SolidityASTParser
+                cfg_parser = SolidityASTParser()
+                cfg_summaries = []
+                for cdef in getattr(ast_data, 'contracts', []):
+                    for func in getattr(cdef, 'functions', []):
+                        body = getattr(func, 'body_source', '')
+                        if body and len(body.strip()) > 10:
+                            try:
+                                cfg = cfg_parser.build_cfg(body)
+                                if cfg.blocks and len(cfg.blocks) > 1:
+                                    summary = cfg_parser.format_cfg_for_llm(cfg)
+                                    cfg_summaries.append(
+                                        f"### {cdef.name}.{func.name}()\n{summary}"
+                                    )
+                            except Exception:
+                                pass
+                if cfg_summaries:
+                    cfg_context = "\n\n".join(cfg_summaries[:10])
+            except Exception as e:
+                logger.debug(f"CFG context building failed: {e}")
+
         # Truncate contract to fit within model context (keep first 300K chars)
         max_contract_chars = 300000
         truncated_content = combined_content
@@ -921,11 +1004,13 @@ class DeepAnalysisEngine:
         pass2_prompt = _build_pass2_prompt(truncated_content, pass1_text)
         if taint_context:
             pass2_prompt += f"\n\n{taint_context}"
+        if cfg_context:
+            pass2_prompt += f"\n\n{cfg_context}"
         pass2_text = await self._run_pass(
             "Pass 2: Attack Surface Mapping",
             pass2_prompt,
             pass2_model,
-            cache_key=f"p2_{content_key}" if not taint_context else None,
+            cache_key=f"p2_{content_key}" if not (taint_context or cfg_context) else None,
         )
         if pass2_text:
             result.pass_results.append(PassResult("attack_surface", pass2_text, model_used=pass2_model))
@@ -1012,10 +1097,17 @@ class DeepAnalysisEngine:
         pass5_model = _get_model_for_pass(5)
         logger.info(f"Pass 5: Using {pass5_model} (provider rotation)")
         print(f"   \U0001f4e1 Pass 5: {pass5_model}", flush=True)
+        pass5_prompt = _build_pass5_prompt(
+            truncated_content, pass1_text, pass2_text,
+            p3_summary, p4_summary, exploit_text,
+        )
+        # ML Feedback Loop: inject severity calibration warning if needed
+        calibration_note = self._build_severity_calibration_note()
+        if calibration_note:
+            pass5_prompt += calibration_note
         pass5_findings = await self._run_finding_pass(
             "Pass 5: Adversarial Modeling",
-            _build_pass5_prompt(truncated_content, pass1_text, pass2_text,
-                                p3_summary, p4_summary, exploit_text),
+            pass5_prompt,
             pass5_model,
             result,
         )
@@ -1134,6 +1226,8 @@ class DeepAnalysisEngine:
                             'profit_estimate'):
                     if key in f:
                         finding[key] = f[key]
+                # ML Feedback Loop: calibrate severity confidence from history
+                self._calibrate_finding_severity(finding)
                 findings.append(finding)
 
         return findings

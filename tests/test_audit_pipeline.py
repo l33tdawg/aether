@@ -370,23 +370,6 @@ class TestGenerateFinalReport(unittest.TestCase):
         self.assertEqual(result["summary"]["total_vulnerabilities"], 0)
         self.assertEqual(result["summary"]["accuracy_rate"], 0)
 
-    def test_report_with_ai_ensemble_results(self):
-        validated = {
-            "validated_vulnerabilities": [_make_vuln_dict()],
-            "total_findings": 1,
-            "validated_count": 1,
-            "false_positive_count": 0,
-            "validation_results": [],
-        }
-        ai_results = {
-            "consensus_findings": [{"type": "reentrancy"}],
-            "model_agreement": 0.9,
-            "confidence_score": 0.85,
-        }
-        result = self.engine._generate_final_report(validated, time.time(), ai_ensemble_results=ai_results)
-        self.assertEqual(result["summary"]["model_agreement"], 0.9)
-        self.assertTrue(result["enhancement_stats"]["phase3_features"]["ai_ensemble_enabled"])
-
     def test_report_filters_false_positives(self):
         validated = {
             "validated_vulnerabilities": [
@@ -642,25 +625,6 @@ class TestValidateFindings(unittest.TestCase):
         self.assertGreaterEqual(result["total_findings"], 2)
 
     @patch("core.proxy_pattern_filter.ProxyPatternFilter")
-    def test_collects_ai_ensemble_findings(self, mock_ppf_cls):
-        mock_ppf = MagicMock()
-        mock_ppf.filter_findings.side_effect = lambda v, d, c: v
-        mock_ppf.get_filter_stats.return_value = _make_filter_stats()
-        mock_ppf_cls.return_value = mock_ppf
-
-        static_results = {"vulnerabilities": []}
-        llm_results = {"analysis": {"vulnerabilities": []}}
-        ai_results = {
-            "consensus_findings": [_make_vuln_dict(vulnerability_type="flash_loan")]
-        }
-        contract_files = [{"content": SAMPLE_CONTRACT, "path": "/tmp/x.sol", "name": "x.sol"}]
-
-        result = self._run(
-            self.engine._validate_findings(static_results, llm_results, contract_files, ai_results)
-        )
-        self.assertGreaterEqual(result["total_findings"], 1)
-
-    @patch("core.proxy_pattern_filter.ProxyPatternFilter")
     def test_empty_findings(self, mock_ppf_cls):
         mock_ppf = MagicMock()
         mock_ppf.filter_findings.side_effect = lambda v, d, c: v
@@ -738,7 +702,6 @@ class TestGetEnhancementSummary(unittest.TestCase):
         self.assertIn("enhanced_components", summary)
         self.assertIn("improvements", summary)
         self.assertIn("current_stats", summary)
-        self.assertIn("phase3_capabilities", summary)
         self.assertIsInstance(summary["enhanced_components"], list)
         self.assertGreater(len(summary["enhanced_components"]), 0)
 

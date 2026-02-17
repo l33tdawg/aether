@@ -30,7 +30,7 @@ class PhaseBar(Static):
 
         Args:
             phase_index: Zero-based index of the current phase (0 = QUEUED).
-            total: Total number of phases (default 12).
+            total: Total number of phases (default from TOTAL_PHASES).
         """
         blocks: list[str] = []
 

@@ -51,8 +51,11 @@ class VulnerabilityFinding:
     status: str  # 'confirmed', 'false_positive', 'investigating'
     validation_confidence: float
     validation_reasoning: str
-    created_at: float
-    updated_at: float
+    formal_proof_status: Optional[str] = None  # 'verified', 'refuted', 'inconclusive'
+    proof_tool: Optional[str] = None  # 'halmos'
+    proof_time_ms: Optional[int] = None
+    created_at: float = 0.0
+    updated_at: float = 0.0
 
 
 @dataclass
@@ -145,6 +148,9 @@ class DatabaseManager:
                     status TEXT NOT NULL,
                     validation_confidence REAL NOT NULL,
                     validation_reasoning TEXT,
+                    formal_proof_status TEXT,
+                    proof_tool TEXT,
+                    proof_time_ms INTEGER,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
                     FOREIGN KEY (audit_result_id) REFERENCES audit_results (id) ON DELETE CASCADE
@@ -168,24 +174,6 @@ class DatabaseManager:
                     success_rate REAL NOT NULL DEFAULT 0.0,
                     FOREIGN KEY (source_audit_id) REFERENCES audit_results (id) ON DELETE CASCADE
                 )
-            ''')
-
-            # Create slither_project_cache table for caching Slither results per project
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS slither_project_cache (
-                    project_root TEXT PRIMARY KEY,
-                    findings_json TEXT NOT NULL,
-                    analyzed_at REAL NOT NULL,
-                    contract_count INTEGER NOT NULL,
-                    framework TEXT,
-                    last_accessed REAL NOT NULL
-                )
-            ''')
-            
-            # Create index for faster queries
-            conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_slither_cache_accessed 
-                ON slither_project_cache(last_accessed)
             ''')
 
             # Create audit_metrics table
@@ -215,6 +203,19 @@ class DatabaseManager:
             conn.execute('CREATE INDEX IF NOT EXISTS idx_vulnerability_findings_type ON vulnerability_findings(vulnerability_type)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_learning_patterns_type ON learning_patterns(pattern_type)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_audit_metrics_audit_id ON audit_metrics(audit_result_id)')
+
+            # Schema migration: add formal proof columns (v5.0)
+            self._migrate_add_column(conn, 'vulnerability_findings', 'formal_proof_status', 'TEXT')
+            self._migrate_add_column(conn, 'vulnerability_findings', 'proof_tool', 'TEXT')
+            self._migrate_add_column(conn, 'vulnerability_findings', 'proof_time_ms', 'REAL')
+
+    @staticmethod
+    def _migrate_add_column(conn, table: str, column: str, col_type: str) -> None:
+        """Add a column to a table if it does not already exist."""
+        try:
+            conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {col_type}')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
     def save_audit_result(self, audit_result: AuditResult) -> bool:
         """Save audit result to database."""
@@ -314,7 +315,6 @@ class DatabaseManager:
                 conn.execute('DELETE FROM learning_patterns')
                 conn.execute('DELETE FROM vulnerability_findings')
                 conn.execute('DELETE FROM audit_results')
-                conn.execute('DELETE FROM slither_project_cache')
                 conn.execute('VACUUM')
             return True
         except Exception as e:
@@ -572,6 +572,9 @@ class AetherDatabase:
                     status TEXT NOT NULL,
                     validation_confidence REAL NOT NULL,
                     validation_reasoning TEXT,
+                    formal_proof_status TEXT,
+                    proof_tool TEXT,
+                    proof_time_ms INTEGER,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
                     FOREIGN KEY (audit_result_id) REFERENCES audit_results (id) ON DELETE CASCADE

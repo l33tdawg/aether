@@ -205,6 +205,17 @@ class FlowExecutor:
             if self.verbose:
                 print("Warning: Enhanced exploitability node not available yet")
 
+        # Import and register halmos symbolic node
+        try:
+            from core.nodes.halmos_node import HalmosSymbolicNode
+            self.node_registry.update({
+                'HalmosSymbolicNode': HalmosSymbolicNode,
+            })
+            print(f"✅ Registered halmos symbolic node")
+        except ImportError as e:
+            if self.verbose:
+                print(f"Warning: Halmos symbolic node not available: {e}")
+
         # Import and register fuzz nodes
         try:
             from core.nodes.fuzz_nodes import (

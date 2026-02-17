@@ -3,6 +3,7 @@ flow:
   - node: StaticAnalysisNode
   - node: LLMAnalysisNode
   - node: EnhancedExploitabilityNode
+  - node: HalmosSymbolicNode
   - decision:
       condition: high_severity_count > 0
       then_branch:
@@ -87,6 +88,11 @@ node_configs:
       - business_logic  # Move-inspired
       - state_management  # Move-inspired
       - centralization  # Move-inspired
+
+  HalmosSymbolicNode:
+    timeout: 120
+    loop_bound: 3
+    solver_timeout_ms: 30000
 
   FixGeneratorNode:
     fix_types: [security, gas_optimization]

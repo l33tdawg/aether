@@ -39,7 +39,7 @@ class AnalysisCache:
         
         Args:
             contract_code: Contract source code
-            analysis_type: Type of analysis (e.g., 'slither', 'llm', 'arithmetic')
+            analysis_type: Type of analysis (e.g., 'static_analysis', 'llm', 'arithmetic')
             **kwargs: Additional parameters to include in cache key
         
         Returns:

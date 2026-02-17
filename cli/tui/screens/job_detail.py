@@ -237,6 +237,22 @@ class JobDetailScreen(Screen):
         else:
             lines.append("[bold]Features:[/] -")
 
+        # PoC test execution status (for poc jobs or after test execution)
+        if job.audit_status and job.audit_status.poc_test_status:
+            lines.append("")
+            status_str = job.audit_status.poc_test_status
+            passed = job.audit_status.poc_tests_passed
+            total = job.audit_status.poc_tests_total
+            failed = job.audit_status.poc_tests_failed
+            if status_str == "tests_passed":
+                lines.append(f"[bold]PoC Tests:[/] [green]PASSED[/] ({passed}/{total})")
+            elif status_str == "tests_failed":
+                lines.append(f"[bold]PoC Tests:[/] [red]FAILED[/] ({passed}/{total}, {failed} failed)")
+            elif status_str == "compiled_only":
+                lines.append(f"[bold]PoC Tests:[/] [yellow]COMPILED ONLY[/]")
+            elif status_str == "execution_error":
+                lines.append(f"[bold]PoC Tests:[/] [red]ERROR[/]")
+
         # Error (only if present)
         if job.error:
             lines.append("")

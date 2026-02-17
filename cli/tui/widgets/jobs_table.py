@@ -134,6 +134,20 @@ class JobsTable(DataTable):
             error_text = job.error or "Unknown error"
             return f"[red]{error_text[:20]}[/]"
         if job.audit_status:
+            # Show PoC test status for completed poc jobs
+            if (job.status == JobStatus.COMPLETED
+                    and job.audit_status.poc_test_status):
+                status = job.audit_status.poc_test_status
+                if status == "tests_passed":
+                    return "[green]Tests Passed[/]"
+                elif status == "tests_failed":
+                    p = job.audit_status.poc_tests_passed
+                    t = job.audit_status.poc_tests_total
+                    return f"[red]Tests Failed ({p}/{t})[/]"
+                elif status == "compiled_only":
+                    return "[yellow]Compiled Only[/]"
+                elif status == "execution_error":
+                    return "[red]Exec Error[/]"
             return job.audit_status.phase.value
         return ""
 

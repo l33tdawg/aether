@@ -7,9 +7,25 @@ Monitors true/false positive rates and submission outcomes.
 """
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
+
+
+@dataclass
+class DetectorStats:
+    """Per-detector accuracy statistics computed from submission outcomes."""
+    detector_name: str
+    total_findings: int = 0
+    total: int = 0  # alias kept for backward compat
+    accepted: int = 0
+    rejected: int = 0
+    duplicate: int = 0
+    out_of_scope: int = 0
+    precision: float = 0.0  # accepted / (accepted + rejected), 0.0 if no data
+    accuracy: float = 0.0
+    weight: float = 1.0
 
 
 class AccuracyTracker:
@@ -65,6 +81,7 @@ class AccuracyTracker:
             'platform': platform,
             'contract_name': vulnerability.get('contract_name', 'unknown'),
             'project': vulnerability.get('project', 'unknown'),
+            'detector': vulnerability.get('detector', vulnerability.get('vulnerability_type', 'unknown')),
         }
         
         if bounty_amount is not None:
@@ -271,6 +288,160 @@ class AccuracyTracker:
             'rejected': sum(1 for s in recent_submissions if s['outcome'] == 'rejected'),
         }
     
+    def record_outcome(
+        self,
+        vulnerability: Dict,
+        outcome: str,
+        detector: str = "unknown",
+        bounty_amount: Optional[float] = None,
+        platform: str = "immunefi",
+    ):
+        """Record a submission outcome and attribute it to a detector.
+
+        This is a convenience wrapper around ``record_submission`` that also
+        stores the originating detector name so per-detector weights can be
+        computed later.
+
+        Args:
+            vulnerability: Vulnerability dict with at least ``vulnerability_type`` and ``severity``.
+            outcome: 'accepted', 'rejected', 'duplicate', 'out_of_scope', 'pending'.
+            detector: Name/category of the detector that produced the finding
+                      (e.g. 'reentrancy', 'precision_analyzer', 'deep_analysis_Pass 3').
+            bounty_amount: Optional bounty received.
+            platform: Bug bounty platform.
+        """
+        # Ensure the vulnerability dict carries the detector tag before recording
+        vuln_copy = dict(vulnerability)
+        vuln_copy['detector'] = detector
+        self.record_submission(vuln_copy, outcome, bounty_amount=bounty_amount, platform=platform)
+
+    def record_finding_outcome(self, finding_id: str, detector_name: str,
+                               outcome: str, bounty_amount: float = 0.0):
+        """Record outcome of a submitted finding.
+
+        Args:
+            finding_id: Unique identifier for the finding.
+            detector_name: Name/category of the detector that produced the finding.
+            outcome: 'accepted', 'rejected', 'duplicate', 'out_of_scope'.
+            bounty_amount: Bounty received (if accepted).
+        """
+        vuln = {
+            'finding_id': finding_id,
+            'vulnerability_type': detector_name,
+            'severity': 'unknown',
+            'detector': detector_name,
+        }
+        self.record_submission(
+            vuln, outcome,
+            bounty_amount=bounty_amount if bounty_amount else None,
+        )
+
+    # -- Per-detector accuracy & weight computation --------------------------
+
+    def get_detector_accuracy(self) -> Dict[str, DetectorStats]:
+        """Compute per-detector accuracy from recorded submissions.
+
+        Returns:
+            Mapping of detector name -> DetectorStats.
+        """
+        stats_map: Dict[str, DetectorStats] = {}
+
+        for sub in self.metrics.get('submissions', []):
+            det = sub.get('detector', sub.get('vulnerability_type', 'unknown'))
+            if det not in stats_map:
+                stats_map[det] = DetectorStats(detector_name=det)
+            ds = stats_map[det]
+            ds.total += 1
+            ds.total_findings += 1
+            if sub['outcome'] == 'accepted':
+                ds.accepted += 1
+            elif sub['outcome'] == 'rejected':
+                ds.rejected += 1
+            elif sub['outcome'] == 'duplicate':
+                ds.duplicate += 1
+            elif sub['outcome'] == 'out_of_scope':
+                ds.out_of_scope += 1
+
+        for ds in stats_map.values():
+            if ds.total > 0:
+                ds.accuracy = ds.accepted / ds.total
+            # precision = accepted / (accepted + rejected), ignoring duplicate/oos
+            denom = ds.accepted + ds.rejected
+            ds.precision = ds.accepted / denom if denom > 0 else 0.0
+            ds.weight = self._compute_weight(ds)
+
+        return stats_map
+
+    def get_detector_weights(self) -> Dict[str, float]:
+        """Return a mapping of detector name -> confidence weight multiplier.
+
+        Weights are derived from historical precision (accepted / (accepted + rejected)):
+          - Higher precision -> higher weight (range 0.5 to 1.5).
+          - New detectors or those with fewer than 20 outcomes stay at 1.0 (neutral).
+          - Minimum 20 outcomes before calibration activates.
+        """
+        stats = self.get_detector_accuracy()
+        return {name: ds.weight for name, ds in stats.items()}
+
+    def get_severity_accuracy(self) -> Dict[str, Dict[str, int]]:
+        """Return per-severity acceptance/rejection counts.
+
+        Returns:
+            e.g. {"critical": {"accepted": 5, "rejected": 15, "total": 20}, ...}
+        """
+        severity_counts: Dict[str, Dict[str, int]] = {}
+        for sub in self.metrics.get('submissions', []):
+            sev = sub.get('severity', 'unknown').lower()
+            if sev not in severity_counts:
+                severity_counts[sev] = {'accepted': 0, 'rejected': 0, 'duplicate': 0,
+                                        'out_of_scope': 0, 'total': 0}
+            severity_counts[sev]['total'] += 1
+            outcome = sub.get('outcome', '')
+            if outcome in severity_counts[sev]:
+                severity_counts[sev][outcome] += 1
+        return severity_counts
+
+    def get_severity_calibration(self) -> Dict[str, float]:
+        """Return per-severity acceptance rates for calibrating LLM severity.
+
+        Returns:
+            Mapping of severity level -> acceptance rate (0.0-1.0).
+            Only severities with at least 1 submission are included.
+        """
+        severity_counts: Dict[str, Dict[str, int]] = {}
+        for sub in self.metrics.get('submissions', []):
+            sev = sub.get('severity', 'unknown').lower()
+            if sev not in severity_counts:
+                severity_counts[sev] = {'total': 0, 'accepted': 0}
+            severity_counts[sev]['total'] += 1
+            if sub['outcome'] == 'accepted':
+                severity_counts[sev]['accepted'] += 1
+
+        return {
+            sev: counts['accepted'] / counts['total']
+            for sev, counts in severity_counts.items()
+            if counts['total'] > 0
+        }
+
+    @staticmethod
+    def _compute_weight(ds: 'DetectorStats') -> float:
+        """Compute confidence weight multiplier for a detector.
+
+        Requires at least 20 outcomes before calibration activates.
+        Uses precision (accepted / (accepted + rejected)) for weight calculation.
+        Range: 0.5 (low precision) to 1.5 (high precision).
+        """
+        if ds.total < 20:
+            return 1.0
+        prec = ds.precision
+        if prec >= 0.66:
+            # Linear scale from 1.0 at 0.66 to 1.5 at 1.0
+            return 1.0 + 0.5 * ((prec - 0.66) / 0.34)
+        if prec <= 0.33:
+            # Linear scale from 1.0 at 0.33 to 0.5 at 0.0
+            return 0.5 + 0.5 * (prec / 0.33)
+        return 1.0
+
     def save_metrics(self):
         """Save metrics to file."""
         try:

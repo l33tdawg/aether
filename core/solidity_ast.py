@@ -7,9 +7,10 @@ wrong compiler version, etc.), so callers always get useful results.
 """
 
 import re
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +101,47 @@ class SolidityAST:
     compiler_version: str = ""
     source_files: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Control Flow Graph data structures
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BasicBlock:
+    """A basic block in a control flow graph."""
+    id: int
+    statements: List[str] = field(default_factory=list)
+    successors: List[int] = field(default_factory=list)
+    predecessors: List[int] = field(default_factory=list)
+
+
+@dataclass
+class CFGEdge:
+    """An edge in a control flow graph."""
+    from_block: int
+    to_block: int
+    condition: Optional[str] = None  # None for unconditional, expression string for conditional
+
+
+@dataclass
+class ControlFlowGraph:
+    """Complete control flow graph for a function."""
+    blocks: Dict[int, BasicBlock] = field(default_factory=dict)
+    entry: int = 0
+    exits: List[int] = field(default_factory=list)
+    edges: List[CFGEdge] = field(default_factory=list)
+
+
+@dataclass
+class AssemblyBlock:
+    """Parsed inline assembly / Yul block."""
+    opcodes: List[str] = field(default_factory=list)
+    memory_reads: List[str] = field(default_factory=list)
+    memory_writes: List[str] = field(default_factory=list)
+    storage_reads: List[str] = field(default_factory=list)
+    storage_writes: List[str] = field(default_factory=list)
+    external_calls: List[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1046,6 +1088,742 @@ class SolidityASTParser:
         access_str = f" {' '.join(access_info)}" if access_info else ""
 
         return f"  - {func.name}({params_str}){mut_str}{returns_str}{mods_str}{access_str}"
+
+    # ------------------------------------------------------------------
+    # Control Flow Graph construction
+    # ------------------------------------------------------------------
+
+    def build_cfg(self, function_body: str) -> ControlFlowGraph:
+        """Build a control flow graph from a function body source string.
+
+        Splits the body into basic blocks at branch points (if/else, for,
+        while, do-while, try/catch, return/revert/require) and connects
+        them with edges.  Handles nested control flow.
+        """
+        cfg = ControlFlowGraph()
+        if not function_body or not function_body.strip():
+            b = BasicBlock(id=0)
+            cfg.blocks[0] = b
+            cfg.entry = 0
+            cfg.exits = [0]
+            return cfg
+
+        # Tokenise into top-level statements respecting braces, strings, comments
+        statements = self._split_statements(function_body)
+
+        # Recursive builder returns (entry_id, exit_ids)
+        self._block_counter = 0
+        entry_id, exit_ids = self._build_cfg_recursive(statements, cfg)
+
+        cfg.entry = entry_id
+
+        # Mark exits: blocks with no successors, or blocks ending in return/revert
+        for bid, block in cfg.blocks.items():
+            if not block.successors:
+                if bid not in cfg.exits:
+                    cfg.exits.append(bid)
+        # Also add explicit exit_ids that might have successors but are terminal
+        for eid in exit_ids:
+            if eid not in cfg.exits and eid in cfg.blocks:
+                # Only add if it's truly an exit (no successors or all successors are itself)
+                if not cfg.blocks[eid].successors:
+                    cfg.exits.append(eid)
+
+        return cfg
+
+    def _next_block_id(self) -> int:
+        """Return the next unique block ID."""
+        bid = self._block_counter
+        self._block_counter += 1
+        return bid
+
+    def _build_cfg_recursive(
+        self,
+        statements: List[str],
+        cfg: ControlFlowGraph,
+    ) -> Tuple[int, List[int]]:
+        """Recursively build CFG blocks from a statement list.
+
+        Returns (entry_block_id, list_of_exit_block_ids).
+        """
+        if not statements:
+            bid = self._next_block_id()
+            cfg.blocks[bid] = BasicBlock(id=bid)
+            return bid, [bid]
+
+        current_block_id = self._next_block_id()
+        current_block = BasicBlock(id=current_block_id)
+        cfg.blocks[current_block_id] = current_block
+        entry_id = current_block_id
+        exit_ids: List[int] = []
+
+        i = 0
+        while i < len(statements):
+            stmt = statements[i].strip()
+
+            if not stmt:
+                i += 1
+                continue
+
+            # --- if / else ---
+            if self._is_if_statement(stmt):
+                condition = self._extract_condition(stmt)
+                then_body = self._extract_body_from_statement(stmt)
+                else_body = ""
+                # Check for else clause
+                if i + 1 < len(statements) and self._is_else_clause(statements[i + 1].strip()):
+                    else_body = self._extract_body_from_statement(statements[i + 1])
+                    i += 1
+
+                # Build then branch
+                then_stmts = self._split_statements(then_body)
+                then_entry, then_exits = self._build_cfg_recursive(then_stmts, cfg)
+
+                # Build else branch (or create empty continuation)
+                if else_body:
+                    else_stmts = self._split_statements(else_body)
+                    else_entry, else_exits = self._build_cfg_recursive(else_stmts, cfg)
+                else:
+                    else_entry = self._next_block_id()
+                    cfg.blocks[else_entry] = BasicBlock(id=else_entry)
+                    else_exits = [else_entry]
+
+                # Connect current block to both branches
+                self._add_edge(cfg, current_block_id, then_entry, condition)
+                neg_condition = f"!({condition})" if condition else None
+                self._add_edge(cfg, current_block_id, else_entry, neg_condition)
+
+                # Create continuation block for remaining statements
+                if i + 1 < len(statements):
+                    cont_id = self._next_block_id()
+                    cfg.blocks[cont_id] = BasicBlock(id=cont_id)
+
+                    # Filter out exits that end in return/revert (they don't continue)
+                    for te in then_exits:
+                        if te in cfg.blocks and not self._block_is_terminal(cfg.blocks[te]):
+                            self._add_edge(cfg, te, cont_id)
+                    for ee in else_exits:
+                        if ee in cfg.blocks and not self._block_is_terminal(cfg.blocks[ee]):
+                            self._add_edge(cfg, ee, cont_id)
+
+                    current_block_id = cont_id
+                    current_block = cfg.blocks[cont_id]
+                else:
+                    # No more statements — the branches are our exits
+                    exit_ids.extend(then_exits)
+                    exit_ids.extend(else_exits)
+                    i += 1
+                    continue
+
+                i += 1
+                continue
+
+            # --- for / while loops ---
+            if self._is_for_loop(stmt) or self._is_while_loop(stmt):
+                condition = self._extract_condition(stmt)
+                loop_body = self._extract_body_from_statement(stmt)
+
+                # Loop header block (evaluates condition)
+                header_id = self._next_block_id()
+                header = BasicBlock(id=header_id, statements=[f"loop_condition: {condition}"])
+                cfg.blocks[header_id] = header
+                self._add_edge(cfg, current_block_id, header_id)
+
+                # Loop body
+                body_stmts = self._split_statements(loop_body)
+                body_entry, body_exits = self._build_cfg_recursive(body_stmts, cfg)
+                self._add_edge(cfg, header_id, body_entry, condition)
+
+                # Back edges from body exits to header
+                for be in body_exits:
+                    if be in cfg.blocks and not self._block_is_terminal(cfg.blocks[be]):
+                        self._add_edge(cfg, be, header_id)
+
+                # Exit from loop when condition is false
+                if i + 1 < len(statements):
+                    cont_id = self._next_block_id()
+                    cfg.blocks[cont_id] = BasicBlock(id=cont_id)
+                    neg_cond = f"!({condition})" if condition else None
+                    self._add_edge(cfg, header_id, cont_id, neg_cond)
+                    current_block_id = cont_id
+                    current_block = cfg.blocks[cont_id]
+                else:
+                    after_id = self._next_block_id()
+                    cfg.blocks[after_id] = BasicBlock(id=after_id)
+                    neg_cond = f"!({condition})" if condition else None
+                    self._add_edge(cfg, header_id, after_id, neg_cond)
+                    exit_ids.append(after_id)
+
+                i += 1
+                continue
+
+            # --- do-while ---
+            if self._is_do_while(stmt):
+                loop_body = self._extract_body_from_statement(stmt)
+                condition = self._extract_do_while_condition(stmt)
+
+                body_stmts = self._split_statements(loop_body)
+                body_entry, body_exits = self._build_cfg_recursive(body_stmts, cfg)
+                self._add_edge(cfg, current_block_id, body_entry)
+
+                # Condition block at the end
+                cond_id = self._next_block_id()
+                cond_block = BasicBlock(id=cond_id, statements=[f"do_while_condition: {condition}"])
+                cfg.blocks[cond_id] = cond_block
+
+                for be in body_exits:
+                    if be in cfg.blocks and not self._block_is_terminal(cfg.blocks[be]):
+                        self._add_edge(cfg, be, cond_id)
+
+                # Back edge to body
+                self._add_edge(cfg, cond_id, body_entry, condition)
+
+                # Exit
+                if i + 1 < len(statements):
+                    cont_id = self._next_block_id()
+                    cfg.blocks[cont_id] = BasicBlock(id=cont_id)
+                    neg_cond = f"!({condition})" if condition else None
+                    self._add_edge(cfg, cond_id, cont_id, neg_cond)
+                    current_block_id = cont_id
+                    current_block = cfg.blocks[cont_id]
+                else:
+                    after_id = self._next_block_id()
+                    cfg.blocks[after_id] = BasicBlock(id=after_id)
+                    neg_cond = f"!({condition})" if condition else None
+                    self._add_edge(cfg, cond_id, after_id, neg_cond)
+                    exit_ids.append(after_id)
+
+                i += 1
+                continue
+
+            # --- try/catch ---
+            if self._is_try_catch(stmt):
+                try_body = self._extract_body_from_statement(stmt)
+                catch_body = self._extract_catch_body(stmt)
+
+                try_stmts = self._split_statements(try_body)
+                try_entry, try_exits = self._build_cfg_recursive(try_stmts, cfg)
+                self._add_edge(cfg, current_block_id, try_entry, "try")
+
+                catch_stmts = self._split_statements(catch_body)
+                catch_entry, catch_exits = self._build_cfg_recursive(catch_stmts, cfg)
+                self._add_edge(cfg, current_block_id, catch_entry, "catch")
+
+                if i + 1 < len(statements):
+                    cont_id = self._next_block_id()
+                    cfg.blocks[cont_id] = BasicBlock(id=cont_id)
+                    for te in try_exits:
+                        if te in cfg.blocks and not self._block_is_terminal(cfg.blocks[te]):
+                            self._add_edge(cfg, te, cont_id)
+                    for ce in catch_exits:
+                        if ce in cfg.blocks and not self._block_is_terminal(cfg.blocks[ce]):
+                            self._add_edge(cfg, ce, cont_id)
+                    current_block_id = cont_id
+                    current_block = cfg.blocks[cont_id]
+                else:
+                    exit_ids.extend(try_exits)
+                    exit_ids.extend(catch_exits)
+
+                i += 1
+                continue
+
+            # --- return / revert / require (terminal or branching) ---
+            if self._is_terminal_statement(stmt):
+                current_block.statements.append(stmt)
+                exit_ids.append(current_block_id)
+                # If more statements follow, they are dead code but we still
+                # create a block for completeness
+                if i + 1 < len(statements):
+                    dead_id = self._next_block_id()
+                    cfg.blocks[dead_id] = BasicBlock(id=dead_id)
+                    current_block_id = dead_id
+                    current_block = cfg.blocks[dead_id]
+                i += 1
+                continue
+
+            # --- assembly block ---
+            if stmt.startswith("assembly"):
+                current_block.statements.append(stmt)
+                i += 1
+                continue
+
+            # --- regular statement ---
+            current_block.statements.append(stmt)
+            i += 1
+
+        # If we finished without hitting a terminal, current block is an exit
+        if current_block_id not in exit_ids:
+            exit_ids.append(current_block_id)
+
+        return entry_id, exit_ids
+
+    def _add_edge(
+        self, cfg: ControlFlowGraph, from_id: int, to_id: int,
+        condition: Optional[str] = None,
+    ) -> None:
+        """Add an edge between two blocks."""
+        cfg.edges.append(CFGEdge(from_block=from_id, to_block=to_id, condition=condition))
+        if to_id not in cfg.blocks.get(from_id, BasicBlock(id=from_id)).successors:
+            cfg.blocks[from_id].successors.append(to_id)
+        if from_id not in cfg.blocks.get(to_id, BasicBlock(id=to_id)).predecessors:
+            cfg.blocks[to_id].predecessors.append(from_id)
+
+    def _block_is_terminal(self, block: BasicBlock) -> bool:
+        """Check if a block ends with a terminal statement (return/revert)."""
+        if not block.statements:
+            return False
+        last = block.statements[-1].strip()
+        return self._is_terminal_statement(last)
+
+    # --- Statement classification helpers ---
+
+    def _is_if_statement(self, stmt: str) -> bool:
+        return bool(re.match(r'\s*if\s*\(', stmt))
+
+    def _is_else_clause(self, stmt: str) -> bool:
+        return bool(re.match(r'\s*else\b', stmt))
+
+    def _is_for_loop(self, stmt: str) -> bool:
+        return bool(re.match(r'\s*for\s*\(', stmt))
+
+    def _is_while_loop(self, stmt: str) -> bool:
+        return bool(re.match(r'\s*while\s*\(', stmt)) and not re.match(r'\s*do\b', stmt)
+
+    def _is_do_while(self, stmt: str) -> bool:
+        return bool(re.match(r'\s*do\s*\{', stmt))
+
+    def _is_try_catch(self, stmt: str) -> bool:
+        return bool(re.match(r'\s*try\b', stmt))
+
+    def _is_terminal_statement(self, stmt: str) -> bool:
+        s = stmt.strip().rstrip(';').strip()
+        if re.match(r'^return\b', s):
+            return True
+        if re.match(r'^revert\b', s):
+            return True
+        # require with no subsequent code IS terminal if it reverts
+        # but we treat it as a conditional — not terminal
+        return False
+
+    def _extract_condition(self, stmt: str) -> str:
+        """Extract the condition from if/for/while statements."""
+        m = re.search(r'\(', stmt)
+        if not m:
+            return ""
+        # Find matching closing paren
+        depth = 0
+        start = m.start()
+        for i in range(start, len(stmt)):
+            if stmt[i] == '(':
+                depth += 1
+            elif stmt[i] == ')':
+                depth -= 1
+                if depth == 0:
+                    return stmt[start + 1:i].strip()
+        return ""
+
+    def _extract_do_while_condition(self, stmt: str) -> str:
+        """Extract the condition from a do { ... } while (...) statement."""
+        m = re.search(r'\}\s*while\s*\(', stmt)
+        if not m:
+            return ""
+        depth = 0
+        start_search = m.end() - 1  # points to '('
+        for i in range(start_search, len(stmt)):
+            if stmt[i] == '(':
+                depth += 1
+            elif stmt[i] == ')':
+                depth -= 1
+                if depth == 0:
+                    return stmt[start_search + 1:i].strip()
+        return ""
+
+    def _extract_body_from_statement(self, stmt: str) -> str:
+        """Extract the brace-delimited body from a control flow statement."""
+        brace_pos = stmt.find('{')
+        if brace_pos < 0:
+            return ""
+        result = self._extract_brace_block(stmt, brace_pos)
+        if result:
+            # Strip the outer braces
+            return result[1:-1].strip()
+        return ""
+
+    def _extract_catch_body(self, stmt: str) -> str:
+        """Extract the catch body from a try/catch statement."""
+        m = re.search(r'\}\s*catch\b[^{]*\{', stmt)
+        if not m:
+            return ""
+        brace_pos = stmt.rfind('{', m.start())
+        if brace_pos < 0:
+            return ""
+        result = self._extract_brace_block(stmt, brace_pos)
+        if result:
+            return result[1:-1].strip()
+        return ""
+
+    def _split_statements(self, body: str) -> List[str]:
+        """Split a function body into top-level statements.
+
+        Respects brace nesting, strings, and comments.  Control flow
+        statements (if, for, while, do, try) are kept together with
+        their bodies (including the brace-delimited block).  Else
+        clauses are returned as separate entries.
+        """
+        statements: List[str] = []
+        if not body:
+            return statements
+
+        body = body.strip()
+        i = 0
+        length = len(body)
+
+        while i < length:
+            # Skip whitespace
+            while i < length and body[i] in ' \t\n\r':
+                i += 1
+            if i >= length:
+                break
+
+            # Skip single-line comments
+            if body[i:i+2] == '//':
+                nl = body.find('\n', i)
+                i = nl + 1 if nl >= 0 else length
+                continue
+
+            # Skip multi-line comments
+            if body[i:i+2] == '/*':
+                end = body.find('*/', i + 2)
+                i = end + 2 if end >= 0 else length
+                continue
+
+            # Check for control flow keywords
+            rest = body[i:]
+            ctrl_match = re.match(
+                r'(if|for|while|do|try)\s*[\({]', rest
+            )
+            # Also match else
+            else_match = re.match(r'else\s*(?:if\s*\(|\{)', rest)
+
+            if ctrl_match or else_match:
+                # Collect the full control flow statement including body
+                stmt_start = i
+                # Find the condition (if any)
+                if rest[0] != 'd':  # not 'do'
+                    paren_start = rest.find('(')
+                    if paren_start >= 0 and (rest.find('{') < 0 or paren_start < rest.find('{')):
+                        # Skip past matching parens
+                        depth = 0
+                        j = i + paren_start
+                        while j < length:
+                            if body[j] == '(':
+                                depth += 1
+                            elif body[j] == ')':
+                                depth -= 1
+                                if depth == 0:
+                                    i = j + 1
+                                    break
+                            j += 1
+                        else:
+                            i = length
+
+                # Now find the brace block
+                while i < length and body[i] in ' \t\n\r':
+                    i += 1
+                if i < length and body[i] == '{':
+                    block = self._extract_brace_block(body, i)
+                    if block:
+                        i += len(block)
+                    else:
+                        i = length
+                else:
+                    # Single-statement body (no braces) — read to semicolon
+                    semi = body.find(';', i)
+                    if semi >= 0:
+                        i = semi + 1
+                    else:
+                        i = length
+
+                # For do-while, consume the while(...); part too
+                if rest.startswith('do'):
+                    while i < length and body[i] in ' \t\n\r':
+                        i += 1
+                    if i < length and body[i:].startswith('while'):
+                        semi = body.find(';', i)
+                        if semi >= 0:
+                            i = semi + 1
+
+                # For try, consume catch blocks too
+                if rest.startswith('try'):
+                    while True:
+                        j = i
+                        while j < length and body[j] in ' \t\n\r':
+                            j += 1
+                        if j < length and body[j:].startswith('catch'):
+                            # Find catch body
+                            brace = body.find('{', j)
+                            if brace >= 0:
+                                block = self._extract_brace_block(body, brace)
+                                if block:
+                                    i = brace + len(block)
+                                    continue
+                        break
+
+                # For if, check for else clause — emit separately
+                stmt_text = body[stmt_start:i].strip()
+                statements.append(stmt_text)
+
+                # Check for else
+                j = i
+                while j < length and body[j] in ' \t\n\r':
+                    j += 1
+                if j < length and body[j:].startswith('else'):
+                    # Else is a separate statement entry
+                    pass  # Will be caught in next iteration
+                continue
+
+            # Regular statement: read until semicolon
+            stmt_start = i
+            # Handle braces (e.g., assembly { ... })
+            if body[i:].startswith('assembly'):
+                brace = body.find('{', i)
+                if brace >= 0:
+                    block = self._extract_brace_block(body, brace)
+                    if block:
+                        i = brace + len(block)
+                        statements.append(body[stmt_start:i].strip())
+                        continue
+
+            # Read to semicolon, respecting strings/parens/braces
+            depth_paren = 0
+            depth_brace = 0
+            in_str = False
+            str_ch = ''
+            while i < length:
+                ch = body[i]
+                if in_str:
+                    if ch == '\\' and i + 1 < length:
+                        i += 2
+                        continue
+                    if ch == str_ch:
+                        in_str = False
+                    i += 1
+                    continue
+                if ch in ('"', "'"):
+                    in_str = True
+                    str_ch = ch
+                    i += 1
+                    continue
+                if ch == '(':
+                    depth_paren += 1
+                elif ch == ')':
+                    depth_paren -= 1
+                elif ch == '{':
+                    depth_brace += 1
+                elif ch == '}':
+                    depth_brace -= 1
+                if ch == ';' and depth_paren == 0 and depth_brace == 0:
+                    i += 1
+                    break
+                i += 1
+
+            stmt_text = body[stmt_start:i].strip()
+            if stmt_text:
+                statements.append(stmt_text)
+
+        return statements
+
+    # ------------------------------------------------------------------
+    # CFG analysis algorithms
+    # ------------------------------------------------------------------
+
+    def get_dominators(self, cfg: ControlFlowGraph) -> Dict[int, Set[int]]:
+        """Compute dominator sets using the iterative algorithm.
+
+        Returns a dict mapping each block ID to the set of block IDs that
+        dominate it (including itself).
+        """
+        all_ids = set(cfg.blocks.keys())
+        if not all_ids:
+            return {}
+
+        dom: Dict[int, Set[int]] = {}
+        # Entry dominates only itself; all others start with all nodes
+        for bid in all_ids:
+            if bid == cfg.entry:
+                dom[bid] = {bid}
+            else:
+                dom[bid] = set(all_ids)
+
+        changed = True
+        while changed:
+            changed = False
+            for bid in all_ids:
+                if bid == cfg.entry:
+                    continue
+                preds = cfg.blocks[bid].predecessors
+                if not preds:
+                    new_dom = {bid}
+                else:
+                    new_dom = set.intersection(*(dom[p] for p in preds if p in dom))
+                    new_dom = new_dom | {bid}
+                if new_dom != dom[bid]:
+                    dom[bid] = new_dom
+                    changed = True
+
+        return dom
+
+    def get_loop_headers(self, cfg: ControlFlowGraph) -> List[int]:
+        """Find natural loop headers via back-edge detection.
+
+        A back edge is an edge from B to H where H dominates B.  H is
+        the loop header.
+        """
+        dom = self.get_dominators(cfg)
+        headers: List[int] = []
+        seen: Set[int] = set()
+
+        for edge in cfg.edges:
+            target = edge.to_block
+            source = edge.from_block
+            # Back edge: target dominates source
+            if target in dom.get(source, set()) and target not in seen:
+                headers.append(target)
+                seen.add(target)
+
+        return headers
+
+    def get_reachable_blocks(self, cfg: ControlFlowGraph, from_block: int) -> Set[int]:
+        """BFS reachability from a given block."""
+        visited: Set[int] = set()
+        queue: deque = deque([from_block])
+
+        while queue:
+            bid = queue.popleft()
+            if bid in visited:
+                continue
+            visited.add(bid)
+            block = cfg.blocks.get(bid)
+            if block:
+                for succ in block.successors:
+                    if succ not in visited:
+                        queue.append(succ)
+
+        return visited
+
+    def format_cfg_for_llm(self, cfg: ControlFlowGraph) -> str:
+        """Format a CFG as a text summary suitable for LLM prompt injection."""
+        lines: List[str] = []
+        lines.append("## Control Flow Graph")
+
+        # Loop headers
+        loop_headers = self.get_loop_headers(cfg)
+        if loop_headers:
+            lines.append(f"Loop headers: {loop_headers}")
+
+        lines.append(f"Entry: B{cfg.entry}")
+        lines.append(f"Exits: {['B' + str(e) for e in cfg.exits]}")
+        lines.append("")
+
+        for bid in sorted(cfg.blocks.keys()):
+            block = cfg.blocks[bid]
+            label = f"B{bid}"
+            if bid == cfg.entry:
+                label += " (entry)"
+            if bid in cfg.exits:
+                label += " (exit)"
+            if bid in loop_headers:
+                label += " (loop header)"
+
+            lines.append(f"{label}:")
+            for stmt in block.statements:
+                # Truncate long statements
+                display = stmt[:100] + "..." if len(stmt) > 100 else stmt
+                lines.append(f"  {display}")
+
+            if block.successors:
+                succ_labels = [f"B{s}" for s in block.successors]
+                # Find edge conditions
+                conds: List[str] = []
+                for edge in cfg.edges:
+                    if edge.from_block == bid:
+                        c = edge.condition or "unconditional"
+                        conds.append(f"B{edge.to_block}({c})")
+                lines.append(f"  -> {', '.join(conds)}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Assembly block parsing
+    # ------------------------------------------------------------------
+
+    def parse_assembly_block(self, code: str) -> AssemblyBlock:
+        """Parse a Yul/inline assembly block and extract operations.
+
+        Extracts memory reads/writes (mload/mstore), storage reads/writes
+        (sload/sstore), external calls (call/delegatecall/staticcall),
+        and create/create2 operations.
+        """
+        result = AssemblyBlock()
+
+        # Strip outer 'assembly { ... }' wrapper if present
+        m = re.match(r'\s*assembly\s*(?:"[^"]*"\s*)?\{', code)
+        if m:
+            inner = self._extract_brace_block(code, m.end() - 1)
+            if inner:
+                code = inner[1:-1]  # Strip braces
+
+        # Split into individual Yul statements/operations
+        tokens = re.findall(r'\b\w+\b', code)
+
+        # Collect all opcode-like tokens
+        yul_opcodes = {
+            'mload', 'mstore', 'mstore8', 'sload', 'sstore',
+            'call', 'delegatecall', 'staticcall', 'callcode',
+            'create', 'create2', 'return', 'revert', 'stop',
+            'selfdestruct', 'log0', 'log1', 'log2', 'log3', 'log4',
+            'calldataload', 'calldatacopy', 'calldatasize',
+            'codecopy', 'codesize', 'extcodecopy', 'extcodesize',
+            'returndatasize', 'returndatacopy', 'keccak256',
+            'add', 'sub', 'mul', 'div', 'mod', 'exp',
+            'and', 'or', 'xor', 'not', 'shl', 'shr', 'sar',
+            'lt', 'gt', 'eq', 'iszero', 'byte', 'signextend',
+            'balance', 'origin', 'caller', 'callvalue',
+            'gasprice', 'blockhash', 'coinbase', 'timestamp',
+            'number', 'difficulty', 'gaslimit', 'chainid',
+        }
+
+        for token in tokens:
+            lower = token.lower()
+            if lower in yul_opcodes:
+                result.opcodes.append(lower)
+
+        # Extract mload(...) patterns for memory reads
+        for m in re.finditer(r'\bmload\s*\(([^)]*)\)', code):
+            result.memory_reads.append(m.group(1).strip())
+
+        # Extract mstore(...) and mstore8(...) patterns for memory writes
+        for m in re.finditer(r'\bmstore8?\s*\(([^,)]+)', code):
+            result.memory_writes.append(m.group(1).strip())
+
+        # Extract sload(...) for storage reads
+        for m in re.finditer(r'\bsload\s*\(([^)]*)\)', code):
+            result.storage_reads.append(m.group(1).strip())
+
+        # Extract sstore(...) for storage writes
+        for m in re.finditer(r'\bsstore\s*\(([^,)]+)', code):
+            result.storage_writes.append(m.group(1).strip())
+
+        # Extract external calls: call, delegatecall, staticcall
+        for m in re.finditer(r'\b(call|delegatecall|staticcall|callcode)\s*\(([^)]*)\)', code):
+            result.external_calls.append(f"{m.group(1)}({m.group(2).strip()})")
+
+        # Extract create/create2
+        for m in re.finditer(r'\b(create2?)\s*\(([^)]*)\)', code):
+            result.external_calls.append(f"{m.group(1)}({m.group(2).strip()})")
+
+        return result
 
     # ------------------------------------------------------------------
     # Utility

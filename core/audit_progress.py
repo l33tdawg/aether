@@ -26,6 +26,7 @@ class AuditPhase(Enum):
     CROSS_CONTRACT = "Cross-Contract"
     VALIDATION = "Validation"
     FOUNDRY = "Foundry"
+    POC_TESTING = "PoC Testing"
     REPORTING = "Reporting"
     SAVING = "Saving"
     COMPLETED = "Completed"
@@ -53,6 +54,9 @@ PHASE_MARKERS: Dict[str, AuditPhase] = {
     "proxy pattern filter": AuditPhase.VALIDATION,
     "Foundry verification": AuditPhase.FOUNDRY,
     "Foundry validation": AuditPhase.FOUNDRY,
+    "Forge test:": AuditPhase.POC_TESTING,
+    "PoC test execution": AuditPhase.POC_TESTING,
+    "Running PoC tests": AuditPhase.POC_TESTING,
     "Generating per-contract": AuditPhase.REPORTING,
     "comprehensive report": AuditPhase.REPORTING,
     "audit_report": AuditPhase.REPORTING,
@@ -79,8 +83,14 @@ _FINDINGS_RE = re.compile(
 # Regex to count individual findings in display format: [N] SEVERITY: ...
 _FINDING_LINE_RE = re.compile(r"^\[(\d+)\]\s+(?:CRITICAL|HIGH|MEDIUM|LOW|INFO)", re.MULTILINE)
 
+# Regex to parse PoC test execution summary: "Forge test: N/M passed in Xs"
+_POC_TEST_RE = re.compile(r"Forge test:\s*(\d+)/(\d+)\s+passed")
 
-TOTAL_PHASES = 12  # QUEUED through COMPLETED/FAILED
+# Regex to parse individual PoC test result lines: "  [PASS] testName (gas: N)"
+_POC_RESULT_RE = re.compile(r"\[(PASS|FAIL)\]\s+(\S+)")
+
+
+TOTAL_PHASES = 13  # QUEUED through COMPLETED/FAILED
 
 _PHASE_INDEX = {
     AuditPhase.QUEUED: 0,
@@ -92,10 +102,11 @@ _PHASE_INDEX = {
     AuditPhase.CROSS_CONTRACT: 6,
     AuditPhase.VALIDATION: 7,
     AuditPhase.FOUNDRY: 8,
-    AuditPhase.REPORTING: 9,
-    AuditPhase.SAVING: 10,
-    AuditPhase.COMPLETED: 11,
-    AuditPhase.FAILED: 11,
+    AuditPhase.POC_TESTING: 9,
+    AuditPhase.REPORTING: 10,
+    AuditPhase.SAVING: 11,
+    AuditPhase.COMPLETED: 12,
+    AuditPhase.FAILED: 12,
 }
 
 
@@ -119,6 +130,11 @@ class ContractAuditStatus:
     llm_cost: float = 0.0
     llm_tokens_input: int = 0
     llm_tokens_output: int = 0
+    # PoC test execution tracking
+    poc_tests_total: int = 0
+    poc_tests_passed: int = 0
+    poc_tests_failed: int = 0
+    poc_test_status: str = ""  # "", "compiled_only", "tests_passed", "tests_failed", "execution_error"
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _log_buffer: List[str] = field(default_factory=list, repr=False)
     _log_read_index: int = field(default=0, repr=False)
@@ -170,6 +186,33 @@ class ContractAuditStatus:
             with self._lock:
                 if finding_num > self.findings_count:
                     self.findings_count = finding_num
+
+        # PoC test execution tracking
+        m3 = _POC_TEST_RE.search(line)
+        if m3:
+            passed = int(m3.group(1))
+            total = int(m3.group(2))
+            with self._lock:
+                self.poc_tests_passed = passed
+                self.poc_tests_total = total
+                self.poc_tests_failed = total - passed
+                if total == 0:
+                    self.poc_test_status = "compiled_only"
+                elif passed == total:
+                    self.poc_test_status = "tests_passed"
+                else:
+                    self.poc_test_status = "tests_failed"
+
+        # Individual PoC test result lines
+        m4 = _POC_RESULT_RE.search(line)
+        if m4:
+            result = m4.group(1)
+            with self._lock:
+                if result == "PASS":
+                    self.poc_tests_passed += 1
+                elif result == "FAIL":
+                    self.poc_tests_failed += 1
+                self.poc_tests_total = self.poc_tests_passed + self.poc_tests_failed
 
     @property
     def elapsed(self) -> Optional[float]:

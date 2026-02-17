@@ -224,7 +224,7 @@ class PoCScreen(Screen):
             f"[bold]Max items:[/bold]   {max_items}\n"
             f"[bold]Min severity:[/bold] {severity}\n"
             f"[bold]Consensus only:[/bold] {'Yes' if consensus_only else 'No'}\n\n"
-            f"[cyan]Generating PoCs...[/cyan]"
+            f"[cyan]Generating PoCs (tests will auto-run after compilation)...[/cyan]"
         )
 
         if project.get("db") == "github":

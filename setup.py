@@ -30,6 +30,12 @@ from utils.setup_helpers import (
     test_import
 )
 
+def _check_halmos_available() -> bool:
+    """Check if halmos binary is available (optional dependency)."""
+    import shutil
+    return shutil.which("halmos") is not None
+
+
 # Custom style for questionary (matches rich theme)
 custom_style = Style([
     ('qmark', 'fg:#00d7ff bold'),       # Cyan question mark
@@ -1345,6 +1351,7 @@ Let's get started!
         checks = [
             ("Python version", lambda: DependencyDetector().check_python_version()[0]),
             ("Foundry (forge)", lambda: DependencyDetector().detect_tool('forge')['installed']),
+            ("Halmos (optional)", lambda: _check_halmos_available()),
             ("Config directory writable", lambda: check_directory_writable(self.config_dir)[0]),
             ("Import: rich", lambda: test_import('rich')[0]),
             ("Import: web3", lambda: test_import('web3')[0]),

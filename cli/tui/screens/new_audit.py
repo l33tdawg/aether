@@ -109,9 +109,9 @@ class NewAuditScreen(Screen):
                 "Select audit features",
                 [
                     ("Enhanced analysis", "enhanced", True),
-                    ("AI Ensemble (multi-model consensus)", "ai_ensemble", True),
                     ("LLM Validation (false-positive reduction)", "llm_validation", True),
                     ("Foundry PoC generation", "foundry", False),
+                    ("Halmos symbolic verification", "halmos", False),
                     ("Enhanced Reports", "enhanced_reports", False),
                 ],
             )

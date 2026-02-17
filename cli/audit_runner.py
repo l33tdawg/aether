@@ -226,7 +226,6 @@ class AuditRunner:
                     contract_path=target,
                     output_dir=output_dir,
                     enhanced="enhanced" in features,
-                    ai_ensemble="ai_ensemble" in features,
                     llm_validation="llm_validation" in features,
                     foundry="foundry" in features,
                     enhanced_reports="enhanced_reports" in features,

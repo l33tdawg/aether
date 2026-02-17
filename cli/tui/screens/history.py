@@ -19,6 +19,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 
 from cli.tui.dialogs.confirm import ConfirmDialog
 from cli.tui.dialogs.select import SelectDialog
+from cli.tui.dialogs.text_input import TextInputDialog
 
 
 class HistoryScreen(Screen):
@@ -174,7 +175,7 @@ class HistoryScreen(Screen):
         action = await self.app.push_screen_wait(
             SelectDialog(
                 f"{project['name']} ({project['source']})",
-                ["View Details", "Generate PoCs", "Re-audit", "Back"],
+                ["View Details", "Record Outcome", "Generate PoCs", "Re-audit", "Back"],
             )
         )
         if action is None or action == "Back":
@@ -182,6 +183,8 @@ class HistoryScreen(Screen):
 
         if action == "View Details":
             await self._view_details(project)
+        elif action == "Record Outcome":
+            await self._record_outcome(project)
         elif action == "Generate PoCs":
             await self._generate_pocs(project)
         elif action == "Re-audit":
@@ -221,6 +224,105 @@ class HistoryScreen(Screen):
             )
             title = self.query_one("#history-title", Static)
             title.update(f"[bold cyan]Audit History[/bold cyan]\n\n{detail_text}")
+
+    async def _record_outcome(self, project: Dict[str, Any]) -> None:
+        """Record a bounty outcome for findings in this project."""
+        # Gather findings for the project
+        findings: List[Dict[str, Any]] = []
+        if project.get("db") == "github":
+            try:
+                db_path = Path.home() / ".aether" / "aether_github_audit.db"
+                if db_path.exists():
+                    conn = sqlite3.connect(str(db_path))
+                    conn.row_factory = sqlite3.Row
+                    rows = conn.execute(
+                        "SELECT findings FROM analysis_results WHERE contract_id IN "
+                        "(SELECT id FROM contracts WHERE project_id = ?) AND status = 'success'",
+                        (project["id"],),
+                    ).fetchall()
+                    for r in rows:
+                        raw = r["findings"] if isinstance(r, sqlite3.Row) else r[0]
+                        if raw:
+                            try:
+                                parsed = json.loads(raw)
+                                if isinstance(parsed, list):
+                                    findings.extend(parsed)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                    conn.close()
+            except Exception:
+                pass
+        else:
+            try:
+                from core.database_manager import AetherDatabase
+                db = AetherDatabase()
+                vf = db.get_vulnerability_findings(project["id"])
+                findings = vf
+            except Exception:
+                pass
+
+        if not findings:
+            await self.app.push_screen_wait(
+                ConfirmDialog("No findings found for this project.\n\nOK?")
+            )
+            return
+
+        # Build finding labels for selection
+        labels = []
+        for i, f in enumerate(findings):
+            vuln_type = f.get("vulnerability_type", f.get("type", "unknown"))
+            severity = f.get("severity", "?")
+            desc = f.get("title", f.get("description", ""))[:60]
+            labels.append(f"[{severity.upper()}] {vuln_type}: {desc}")
+
+        selected_label = await self.app.push_screen_wait(
+            SelectDialog("Select finding to record outcome", labels + ["Cancel"])
+        )
+        if selected_label is None or selected_label == "Cancel":
+            return
+
+        idx = labels.index(selected_label)
+        finding = findings[idx]
+
+        # Choose outcome
+        outcome = await self.app.push_screen_wait(
+            SelectDialog("Outcome", ["Accepted", "Rejected", "Duplicate", "Out of Scope", "Cancel"])
+        )
+        if outcome is None or outcome == "Cancel":
+            return
+        outcome_key = outcome.lower().replace(" ", "_")
+
+        # Optionally prompt for bounty amount
+        bounty_amount = 0.0
+        if outcome_key == "accepted":
+            bounty_str = await self.app.push_screen_wait(
+                TextInputDialog("Bounty amount (USD, 0 if none)", default="0")
+            )
+            if bounty_str:
+                try:
+                    bounty_amount = float(bounty_str)
+                except ValueError:
+                    bounty_amount = 0.0
+
+        # Store via AccuracyTracker
+        try:
+            from core.accuracy_tracker import AccuracyTracker
+            tracker = AccuracyTracker()
+            detector_name = finding.get("vulnerability_type", finding.get("type", "unknown"))
+            finding_id = finding.get("id", f"{project['id']}_{idx}")
+            tracker.record_finding_outcome(
+                finding_id=str(finding_id),
+                detector_name=detector_name,
+                outcome=outcome_key,
+                bounty_amount=bounty_amount,
+            )
+            await self.app.push_screen_wait(
+                ConfirmDialog(f"Outcome recorded: {outcome} for {detector_name}\n\nOK?")
+            )
+        except Exception as e:
+            await self.app.push_screen_wait(
+                ConfirmDialog(f"Failed to record outcome: {e}\n\nOK?")
+            )
 
     async def _generate_pocs(self, project: Dict[str, Any]) -> None:
         """Redirect to PoC generation for this project."""

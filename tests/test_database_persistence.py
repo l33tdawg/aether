@@ -294,7 +294,6 @@ class TestDatabaseManagerInit(unittest.TestCase):
             "audit_results",
             "vulnerability_findings",
             "learning_patterns",
-            "slither_project_cache",
             "audit_metrics",
         }
         self.assertTrue(expected.issubset(tables), f"Missing tables: {expected - tables}")
@@ -314,7 +313,6 @@ class TestDatabaseManagerInit(unittest.TestCase):
             "idx_vulnerability_findings_type",
             "idx_learning_patterns_type",
             "idx_audit_metrics_audit_id",
-            "idx_slither_cache_accessed",
         }
         self.assertTrue(
             expected_indexes.issubset(indexes),

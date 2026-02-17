@@ -101,6 +101,44 @@ class PoCTestResult:
 
 
 @dataclass
+class FoundryTestResult:
+    """Result of running forge test on a compiled PoC."""
+    test_name: str
+    passed: bool
+    gas_used: int = 0
+    logs: List[str] = None
+    revert_reason: str = ""
+    duration_ms: int = 0
+
+    def __post_init__(self):
+        if self.logs is None:
+            self.logs = []
+
+
+@dataclass
+class ForgeTestSummary:
+    """Aggregate results of running forge test on a PoC project directory."""
+    project_dir: str
+    total_tests: int = 0
+    passed: int = 0
+    failed: int = 0
+    test_results: List[FoundryTestResult] = None
+    raw_stdout: str = ""
+    raw_stderr: str = ""
+    return_code: int = -1
+    duration_secs: float = 0.0
+    error: str = ""
+
+    def __post_init__(self):
+        if self.test_results is None:
+            self.test_results = []
+
+    @property
+    def all_passed(self) -> bool:
+        return self.total_tests > 0 and self.failed == 0
+
+
+@dataclass
 class GenerationManifest:
     generation_id: str
     timestamp: str
@@ -2547,6 +2585,26 @@ contract {contract_name}Exploit {{
                 test_result.compile_errors = []
 
                 logger.info(f"Compilation successful after {attempt + 1} attempts")
+
+                # Auto-execute: run forge test on the compiled PoC
+                test_file_name = f"{test_result.contract_name}_test.sol"
+                fork = self.fork_url if self.enable_fork_run else None
+                forge_summary = self._execute_poc_tests(
+                    output_dir, test_file=test_file_name, fork_url=fork,
+                )
+                test_result.run_passed = forge_summary.all_passed
+                test_result.attempts_run = 1
+                test_result.run_time = forge_summary.duration_secs
+                if forge_summary.error:
+                    test_result.runtime_errors = [forge_summary.error]
+                elif forge_summary.failed > 0:
+                    test_result.runtime_errors = [
+                        f"{t.test_name}: {t.revert_reason}"
+                        for t in forge_summary.test_results if not t.passed
+                    ]
+                else:
+                    test_result.runtime_errors = []
+
                 break
 
             else:
@@ -3987,6 +4045,143 @@ interface {interface_name} {{
             errors.extend(matches)
 
         return errors[:10]  # Limit to top 10 errors
+
+    # ── PoC Auto-Execution ────────────────────────────────────────
+
+    def _execute_poc_tests(
+        self,
+        project_dir: str,
+        test_file: Optional[str] = None,
+        fork_url: Optional[str] = None,
+        test_timeout: int = 120,
+    ) -> 'ForgeTestSummary':
+        """Run forge test on a compiled PoC project and return structured results.
+
+        Args:
+            project_dir: Path to the Foundry project directory.
+            test_file: Optional specific test file to match (--match-path).
+            fork_url: Optional RPC URL for fork-mode execution.
+            test_timeout: Timeout in seconds for forge test (default 120).
+
+        Returns:
+            ForgeTestSummary with per-test results parsed from JSON output.
+        """
+        summary = ForgeTestSummary(project_dir=project_dir)
+        start = time.time()
+
+        # Phase marker for TUI progress tracking
+        print(f"Running PoC tests in {project_dir}")
+
+        cmd = ['forge', 'test', '--json', '-vvv']
+        if test_file:
+            cmd.extend(['--match-path', test_file])
+        if fork_url:
+            cmd.extend(['--fork-url', fork_url])
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=test_timeout,
+                env=self._forge_env(),
+            )
+            summary.raw_stdout = result.stdout
+            summary.raw_stderr = result.stderr
+            summary.return_code = result.returncode
+            summary.duration_secs = time.time() - start
+
+            # Parse JSON output from forge test
+            parsed = self._parse_forge_test_json(result.stdout)
+            summary.test_results = parsed
+            summary.total_tests = len(parsed)
+            summary.passed = sum(1 for t in parsed if t.passed)
+            summary.failed = summary.total_tests - summary.passed
+
+            if summary.total_tests == 0 and result.returncode != 0:
+                # No JSON parsed but forge failed — capture stderr as error
+                summary.error = (result.stderr or result.stdout)[:500]
+
+            logger.info(
+                f"Forge test: {summary.passed}/{summary.total_tests} passed "
+                f"in {summary.duration_secs:.1f}s"
+            )
+            # Print per-test results for log capture
+            for tr in summary.test_results:
+                status_str = "PASS" if tr.passed else "FAIL"
+                reason_str = f" ({tr.revert_reason})" if tr.revert_reason else ""
+                print(f"  [{status_str}] {tr.test_name}{reason_str} (gas: {tr.gas_used})")
+
+        except FileNotFoundError:
+            summary.error = "forge not found in PATH"
+            summary.duration_secs = time.time() - start
+            logger.error("forge not found in PATH for PoC execution")
+        except subprocess.TimeoutExpired:
+            summary.error = f"forge test timed out ({test_timeout}s)"
+            summary.duration_secs = time.time() - start
+            logger.error(f"forge test timed out after {test_timeout}s during PoC execution")
+        except Exception as e:
+            summary.error = str(e)[:500]
+            summary.duration_secs = time.time() - start
+            logger.error(f"forge test failed: {e}")
+
+        return summary
+
+    def _parse_forge_test_json(self, stdout: str) -> List['FoundryTestResult']:
+        """Parse forge test --json output into FoundryTestResult list.
+
+        forge test --json emits a JSON object where each key is a contract
+        file path and the value has a ``test_results`` array with objects
+        like ``{name, status, reason, decoded_logs, gas, duration}``.
+        """
+        results: List[FoundryTestResult] = []
+        if not stdout or not stdout.strip():
+            return results
+
+        try:
+            # forge may emit non-JSON lines before the JSON blob; find the
+            # outermost braces.
+            start_idx = stdout.find('{')
+            end_idx = stdout.rfind('}')
+            if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
+                return results
+
+            data = json.loads(stdout[start_idx:end_idx + 1])
+
+            for _file_path, file_data in data.items():
+                test_results_list = file_data.get('test_results', [])
+                for tr in test_results_list:
+                    name = tr.get('name', 'unknown')
+                    status = tr.get('status', '').lower()
+                    passed = status == 'success'
+                    gas = tr.get('gas', 0)
+                    reason = tr.get('reason', '') or ''
+                    decoded_logs = tr.get('decoded_logs', []) or []
+                    # Duration is reported in nanoseconds by some forge versions
+                    duration_raw = tr.get('duration', None)
+                    duration_ms = 0
+                    if duration_raw and isinstance(duration_raw, dict):
+                        # {secs: N, nanos: N}
+                        duration_ms = int(
+                            duration_raw.get('secs', 0) * 1000
+                            + duration_raw.get('nanos', 0) / 1_000_000
+                        )
+                    elif isinstance(duration_raw, (int, float)):
+                        duration_ms = int(duration_raw)
+
+                    results.append(FoundryTestResult(
+                        test_name=name,
+                        passed=passed,
+                        gas_used=gas,
+                        logs=decoded_logs[:50],
+                        revert_reason=reason[:200],
+                        duration_ms=duration_ms,
+                    ))
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warning(f"Failed to parse forge test JSON: {e}")
+
+        return results
 
     async def _attempt_runtime_repair(
         self,

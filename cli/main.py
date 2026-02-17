@@ -16,7 +16,6 @@ from typing import Dict, List, Optional, Any, Union
 
 import yaml
 
-from core.audit_engine import AetherAuditEngine
 from core.enhanced_audit_engine import EnhancedAetherAuditEngine
 from core.fuzz_engine import AetherFuzzEngine
 from core.flow_executor import FlowExecutor
@@ -440,7 +439,7 @@ class AetherCLI:
                         'line': line_val,
                         'swc_id': c.get('swc_id', ''),
                         'category': c.get('type', ''),
-                        'source': 'ai_ensemble',
+                        'source': 'deep_analysis',
                         'consensus': True
                     })
                 audit_data['vulnerabilities'] = merged
@@ -948,7 +947,6 @@ class AetherCLI:
         verbose: bool = False,
         enhanced: bool = False,
         phase3: bool = False,
-        ai_ensemble: bool = False,
         enhanced_reports: bool = False,
         per_contract_reports: bool = False,
         compliance_only: bool = False,
@@ -1038,16 +1036,16 @@ class AetherCLI:
                 print("   ✅ Multi-vector attack simulation")
                 print("   ✅ Cross-protocol impact analysis")
                 if phase3:
-                    print("   🤖 Multi-model AI ensemble")
-                    print("   🧠 Dynamic learning system")
-                    print("   🔬 Formal verification")
+                    print("   🤖 Multi-provider LLM rotation")
+                    print("   🌳 Solidity AST analysis")
+                    print("   🔬 Taint analysis")
                 if llm_validation:
                     print("   🤖 LLM-based false positive filtering")
                     print("   🧪 LLM-generated Foundry tests")
                 audit_engine = EnhancedAetherAuditEngine(verbose=verbose, openai_api_key=openai_api_key)
             else:
                 print("🔧 Using Standard Audit Engine")
-                audit_engine = AetherAuditEngine(verbose=verbose, openai_api_key=openai_api_key)
+                audit_engine = EnhancedAetherAuditEngine(verbose=verbose, openai_api_key=openai_api_key)
             
             # Check for Foundry validation
             if foundry:
@@ -1073,7 +1071,6 @@ class AetherCLI:
                     foundry_validation=foundry,
                     enhanced=enhanced,
                     phase3=phase3,
-                    ai_ensemble=ai_ensemble,
                     llm_validation=llm_validation,
                     selected_contracts=selected_contracts
                 )
@@ -1595,7 +1592,6 @@ class AetherCLI:
         verbose: bool = False,
         enhanced: bool = False,
         phase3: bool = False,
-        ai_ensemble: bool = False,
         enhanced_reports: bool = False,
         per_contract_reports: bool = False,
         compliance_only: bool = False,
@@ -1677,8 +1673,7 @@ class AetherCLI:
                     # We need an audit engine to get the enhanced report generator
                     # Initialize audit engine temporarily
                     openai_api_key = self._get_openai_api_key()
-                    from core.audit_engine import AetherAuditEngine
-                    audit_engine = AetherAuditEngine(verbose=verbose, openai_api_key=openai_api_key)
+                    audit_engine = EnhancedAetherAuditEngine(verbose=verbose, openai_api_key=openai_api_key)
                     enhanced_report_gen = audit_engine.enhanced_report_generator
                     
                     # Create per-contract directory and reports

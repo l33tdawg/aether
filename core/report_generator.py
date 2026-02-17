@@ -137,10 +137,9 @@ class ReportGenerator:
                         # Tool/source mapping
                         source = (vuln.get('source') or vuln.get('tool') or '').lower()
                         tool_map = {
-                            'ai_ensemble': 'AI Ensemble',
                             'enhanced_llm': 'LLM',
                             'enhanced_detector': 'Enhanced Detector',
-                            'formal_verification': 'Formal Verification'
+                            'deep_analysis': 'Deep Analysis',
                         }
                         tool = tool_map.get(source, vuln.get('tool') or 'AetherAudit')
                         description = vuln.get('description', 'No description available')
@@ -181,7 +180,29 @@ class ReportGenerator:
 The contract **{contract_name}** passed all security checks with no findings.
 
 """
-        
+
+        # Formal Verification section (Halmos symbolic execution)
+        formal_results = results.get('formal_verification_results', [])
+        if formal_results:
+            verified = sum(1 for r in formal_results if r.get('status') == 'verified')
+            refuted = sum(1 for r in formal_results if r.get('status') == 'refuted')
+            inconclusive = sum(1 for r in formal_results if r.get('status') == 'inconclusive')
+
+            content += "## Formal Verification (Halmos Symbolic Execution)\n\n"
+            content += f"- **Properties Verified (safe):** {verified}\n"
+            content += f"- **Properties Refuted (bug confirmed):** {refuted}\n"
+            content += f"- **Inconclusive:** {inconclusive}\n\n"
+
+            if refuted > 0:
+                content += "### Confirmed by Formal Proof\n\n"
+                for r in formal_results:
+                    if r.get('status') == 'refuted':
+                        content += f"- **{r.get('property', 'Unknown')}** "
+                        if r.get('counterexample'):
+                            content += f"(counterexample: `{r['counterexample']}`)"
+                        content += f" [Finding: {r.get('finding_id', 'N/A')}]\n"
+                content += "\n"
+
         # Add footer
         content += """---
 
@@ -317,6 +338,11 @@ The contract **{contract_name}** passed all security checks with no findings.
         validation_results = results.get('validation', {})
         if validation_results:
             content += self._generate_validation_section(validation_results)
+
+        # Add formal verification section
+        formal_results = results.get('formal_verification_results', [])
+        if formal_results:
+            content += self._generate_formal_verification_section(formal_results)
 
         return content
 
@@ -651,6 +677,26 @@ SWC: {swc}
 
 """
 
+        # Formal verification results (Halmos symbolic execution)
+        formal_results = audit_results.get('formal_verification_results', [])
+        if formal_results:
+            verified = sum(1 for r in formal_results if r.get('status') == 'verified')
+            refuted = sum(1 for r in formal_results if r.get('status') == 'refuted')
+            inconclusive = sum(1 for r in formal_results if r.get('status') == 'inconclusive')
+
+            content += "#### Formal Verification (Halmos)\n\n"
+            content += f"- **Properties Verified (safe):** {verified}\n"
+            content += f"- **Properties Refuted (bug confirmed):** {refuted}\n"
+            content += f"- **Inconclusive:** {inconclusive}\n\n"
+
+            for r in formal_results:
+                if r.get('status') == 'refuted' and r.get('counterexample'):
+                    content += (
+                        f"  - `{r.get('property', '?')}` counterexample: "
+                        f"`{r['counterexample']}` [Finding: {r.get('finding_id', 'N/A')}]\n"
+                    )
+            content += "\n"
+
         # Legacy exploit validation results (deprecated)
         exploit_validation_results = None
         if exploit_validation_results:
@@ -822,6 +868,42 @@ SWC: {swc}
 """
         else:
             content += "No fix validation results available.\n\n"
+
+        return content
+
+    def _generate_formal_verification_section(self, formal_results: List[Dict[str, Any]]) -> str:
+        """Generate formal verification section from Halmos symbolic execution results."""
+        content = "### Formal Verification (Halmos Symbolic Execution)\n\n"
+
+        if not formal_results:
+            content += "No formal verification results available.\n\n"
+            return content
+
+        verified = [r for r in formal_results if r.get('status') == 'verified']
+        refuted = [r for r in formal_results if r.get('status') == 'refuted']
+        inconclusive = [r for r in formal_results if r.get('status') == 'inconclusive']
+
+        content += f"- **Properties Verified:** {len(verified)}\n"
+        content += f"- **Properties Refuted (counterexample found):** {len(refuted)}\n"
+        content += f"- **Inconclusive:** {len(inconclusive)}\n\n"
+
+        if refuted:
+            content += "#### Confirmed Vulnerabilities (Formal Proof)\n\n"
+            for r in refuted:
+                content += f"**Finding:** {r.get('finding_id', 'N/A')}\n"
+                content += f"- Property: `{r.get('property', 'N/A')}`\n"
+                content += f"- Status: REFUTED (vulnerability confirmed)\n"
+                if r.get('counterexample'):
+                    content += f"- Counterexample: `{r['counterexample']}`\n"
+                if r.get('duration'):
+                    content += f"- Verification time: {r['duration']:.2f}s\n"
+                content += "\n"
+
+        if verified:
+            content += "#### Verified Safe Properties\n\n"
+            for r in verified:
+                content += f"- `{r.get('property', 'N/A')}` — SAFE (finding {r.get('finding_id', 'N/A')} is likely false positive)\n"
+            content += "\n"
 
         return content
 

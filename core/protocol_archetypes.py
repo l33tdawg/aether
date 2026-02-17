@@ -240,15 +240,6 @@ _ARCHETYPE_SIGNALS: Dict[ProtocolArchetype, List[SignalPattern]] = {
 _ARCHETYPE_CHECKLISTS: Dict[ProtocolArchetype, List[ChecklistItem]] = {
     ProtocolArchetype.VAULT_ERC4626: [
         ChecklistItem(
-            name="First Depositor / Share Inflation Attack",
-            severity="critical",
-            description="Empty vault allows attacker to inflate share price via donation, causing subsequent depositors to receive 0 shares.",
-            code_indicators=["ERC4626", "totalAssets()", "deposit(", "totalSupply == 0"],
-            missing_protections=["_decimalsOffset()", "virtual shares/assets", "minimum initial deposit"],
-            exploit_precedent="Multiple ERC-4626 vaults (2022-2023)",
-            detection_prompt="Check if this vault has protection against the first depositor attack: virtual shares/assets via _decimalsOffset(), dead shares, or minimum deposit enforcement.",
-        ),
-        ChecklistItem(
             name="Rounding Direction Consistency",
             severity="high",
             description="Deposits should round DOWN (fewer shares for depositor), withdrawals should round UP (more shares burned). Inconsistency allows value extraction.",
@@ -285,13 +276,13 @@ _ARCHETYPE_CHECKLISTS: Dict[ProtocolArchetype, List[ChecklistItem]] = {
             detection_prompt="What does totalAssets() include? Does it count pending rewards, donated tokens, or accrued fees that could be manipulated?",
         ),
         ChecklistItem(
-            name="Share inflation / first depositor attack",
+            name="First Depositor / Share Inflation Attack",
             severity="critical",
-            description="Does the vault use virtual offsets or minimum deposits to prevent share price manipulation?",
-            code_indicators=["totalSupply", "totalAssets", "deposit(", "convertToShares"],
+            description="Empty vault allows attacker to inflate share price via donation, causing subsequent depositors to receive 0 shares.",
+            code_indicators=["ERC4626", "totalAssets()", "deposit(", "totalSupply == 0", "convertToShares"],
             missing_protections=["_decimalsOffset()", "virtual shares/assets", "minimum initial deposit", "dead shares"],
             exploit_precedent="Multiple ERC-4626 vaults (2022-2023), $128M+ in cumulative losses",
-            detection_prompt="Share inflation / first depositor attack: Does the vault use virtual offsets or minimum deposits to prevent share price manipulation?",
+            detection_prompt="Check if this vault has protection against the first depositor attack: virtual shares/assets via _decimalsOffset(), dead shares, or minimum deposit enforcement.",
         ),
         ChecklistItem(
             name="Rebasing Token Support",

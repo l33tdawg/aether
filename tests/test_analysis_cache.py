@@ -57,7 +57,7 @@ class TestCacheOperations:
     
     def test_cache_miss(self, cache):
         """Test cache miss."""
-        result = cache.get("contract code", "slither")
+        result = cache.get("contract code", "static_analysis")
         
         assert result is None
         assert cache.cache_misses == 1
@@ -69,10 +69,10 @@ class TestCacheOperations:
         analysis_result = {'vulnerabilities': [], 'status': 'success'}
         
         # Set cache
-        cache.set(contract_code, "slither", analysis_result)
+        cache.set(contract_code, "static_analysis", analysis_result)
         
         # Get from cache
-        result = cache.get(contract_code, "slither")
+        result = cache.get(contract_code, "static_analysis")
         
         assert result is not None
         assert result == analysis_result
@@ -82,13 +82,13 @@ class TestCacheOperations:
         """Test caching different analysis types for same contract."""
         contract_code = "pragma solidity ^0.8.0; contract Test {}"
         
-        slither_result = {'tool': 'slither', 'findings': []}
+        static_result = {'tool': 'static_analysis', 'findings': []}
         llm_result = {'tool': 'llm', 'findings': []}
-        
-        cache.set(contract_code, "slither", slither_result)
+
+        cache.set(contract_code, "static_analysis", static_result)
         cache.set(contract_code, "llm", llm_result)
-        
-        assert cache.get(contract_code, "slither") == slither_result
+
+        assert cache.get(contract_code, "static_analysis") == static_result
         assert cache.get(contract_code, "llm") == llm_result
     
     def test_different_contracts(self, cache):
@@ -99,11 +99,11 @@ class TestCacheOperations:
         result1 = {'contract': 'Test1'}
         result2 = {'contract': 'Test2'}
         
-        cache.set(contract1, "slither", result1)
-        cache.set(contract2, "slither", result2)
+        cache.set(contract1, "static_analysis", result1)
+        cache.set(contract2, "static_analysis", result2)
         
-        assert cache.get(contract1, "slither") == result1
-        assert cache.get(contract2, "slither") == result2
+        assert cache.get(contract1, "static_analysis") == result1
+        assert cache.get(contract2, "static_analysis") == result2
 
 
 class TestCacheExpiration:
@@ -153,8 +153,8 @@ class TestCacheKeyGeneration:
         """Test basic cache key generation."""
         contract_code = "pragma solidity ^0.8.0; contract Test {}"
         
-        key1 = cache.get_cache_key(contract_code, "slither")
-        key2 = cache.get_cache_key(contract_code, "slither")
+        key1 = cache.get_cache_key(contract_code, "static_analysis")
+        key2 = cache.get_cache_key(contract_code, "static_analysis")
         
         # Same input should generate same key
         assert key1 == key2
@@ -164,8 +164,8 @@ class TestCacheKeyGeneration:
         contract1 = "pragma solidity ^0.8.0; contract Test1 {}"
         contract2 = "pragma solidity ^0.8.0; contract Test2 {}"
         
-        key1 = cache.get_cache_key(contract1, "slither")
-        key2 = cache.get_cache_key(contract2, "slither")
+        key1 = cache.get_cache_key(contract1, "static_analysis")
+        key2 = cache.get_cache_key(contract2, "static_analysis")
         
         assert key1 != key2
     
@@ -173,7 +173,7 @@ class TestCacheKeyGeneration:
         """Test that different analysis types generate different keys."""
         contract_code = "pragma solidity ^0.8.0; contract Test {}"
         
-        key1 = cache.get_cache_key(contract_code, "slither")
+        key1 = cache.get_cache_key(contract_code, "static_analysis")
         key2 = cache.get_cache_key(contract_code, "llm")
         
         assert key1 != key2
@@ -211,14 +211,14 @@ class TestCacheInvalidation:
         result = {'test': 'data'}
         
         # Set cache
-        cache.set(contract_code, "slither", result)
-        assert cache.get(contract_code, "slither") is not None
+        cache.set(contract_code, "static_analysis", result)
+        assert cache.get(contract_code, "static_analysis") is not None
         
         # Invalidate
-        cache.invalidate(contract_code, "slither")
+        cache.invalidate(contract_code, "static_analysis")
         
         # Should be gone
-        assert cache.get(contract_code, "slither") is None
+        assert cache.get(contract_code, "static_analysis") is None
     
     def test_clear_expired(self, cache):
         """Test clearing expired entries."""
@@ -508,8 +508,8 @@ class TestRealWorldUsage:
         yield cache
         shutil.rmtree(temp_dir)
     
-    def test_slither_analysis_caching(self, cache):
-        """Test caching Slither analysis results."""
+    def test_static_analysis_caching(self, cache):
+        """Test caching static analysis results."""
         contract_code = """
         pragma solidity ^0.8.0;
         
@@ -523,20 +523,20 @@ class TestRealWorldUsage:
         }
         """
         
-        slither_result = {
+        static_result = {
             'vulnerabilities': [
                 {'type': 'reentrancy', 'severity': 'high'}
             ],
             'execution_time': 5.2
         }
-        
+
         # Cache the result
-        cache.set(contract_code, "slither", slither_result)
-        
+        cache.set(contract_code, "static_analysis", static_result)
+
         # Retrieve later
-        cached_result = cache.get(contract_code, "slither")
-        
-        assert cached_result == slither_result
+        cached_result = cache.get(contract_code, "static_analysis")
+
+        assert cached_result == static_result
     
     def test_llm_analysis_caching(self, cache):
         """Test caching LLM analysis results."""

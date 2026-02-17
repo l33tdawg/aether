@@ -26,6 +26,8 @@ _MENU_OPTIONS = [
     ("keys", "Reconfigure API keys"),
     ("models", "Reconfigure model selections"),
     ("triage", "Triage settings"),
+    ("halmos", "Halmos symbolic verification settings"),
+    ("accuracy", "Accuracy dashboard"),
     ("clear", "Clear data"),
     ("back", "Back to dashboard"),
 ]
@@ -74,6 +76,10 @@ class SettingsScreen(Screen):
             await self._configure_models()
         elif choice == "triage":
             await self._edit_triage_settings()
+        elif choice == "halmos":
+            await self._edit_halmos_settings()
+        elif choice == "accuracy":
+            self._show_accuracy_dashboard()
         elif choice == "clear":
             await self._clear_data()
 
@@ -263,6 +269,12 @@ class SettingsScreen(Screen):
             lines.append(f"  [bold]Triage min severity:[/bold]    {getattr(config, 'triage_min_severity', 'medium')}")
             lines.append(f"  [bold]Triage confidence:[/bold]      {getattr(config, 'triage_confidence_threshold', 0.5)}")
             lines.append(f"  [bold]Triage max findings:[/bold]    {getattr(config, 'triage_max_findings', 50)}")
+            lines.append("")
+
+            # Halmos
+            lines.append(f"  [bold]Halmos enabled:[/bold]         {getattr(config, 'halmos_enabled', True)}")
+            lines.append(f"  [bold]Halmos timeout:[/bold]         {getattr(config, 'halmos_timeout', 120)}s")
+            lines.append(f"  [bold]Halmos loop bound:[/bold]      {getattr(config, 'halmos_loop_bound', 3)}")
 
             detail.update("\n".join(lines))
         except Exception as e:
@@ -332,6 +344,153 @@ class SettingsScreen(Screen):
             detail.update("[green]Triage settings saved.[/green]")
         except Exception as e:
             detail.update(f"[red]Error editing triage settings: {e}[/red]")
+
+    # ── Halmos symbolic verification settings ──────────────────
+
+    async def _edit_halmos_settings(self) -> None:
+        """Configure Halmos symbolic verification settings."""
+        detail = self.query_one("#settings-detail", Static)
+
+        try:
+            from core.config_manager import ConfigManager
+            config_mgr = ConfigManager()
+            config = config_mgr.config
+
+            # Check if halmos is installed
+            halmos_status = "unknown"
+            try:
+                from core.halmos_runner import HalmosRunner
+                runner = HalmosRunner()
+                halmos_status = "installed" if runner.is_available() else "not installed"
+                halmos_version = runner.version or "unknown"
+            except Exception:
+                halmos_status = "not installed"
+                halmos_version = "N/A"
+
+            current_enabled = getattr(config, 'halmos_enabled', True)
+            current_timeout = getattr(config, 'halmos_timeout', 120)
+            current_loop = getattr(config, 'halmos_loop_bound', 3)
+
+            detail.update(
+                "[bold]Halmos Symbolic Verification Settings[/bold]\n\n"
+                f"  Status:      {halmos_status}"
+                f"{f' (v{halmos_version})' if halmos_version != 'N/A' else ''}\n"
+                f"  Enabled:     {current_enabled}\n"
+                f"  Timeout:     {current_timeout}s per test\n"
+                f"  Loop bound:  {current_loop}"
+            )
+
+            # Enable/disable
+            from cli.tui.dialogs.confirm import ConfirmDialog
+            enable = await self.app.push_screen_wait(
+                ConfirmDialog(
+                    "Enable Halmos symbolic verification?",
+                    default=current_enabled,
+                )
+            )
+            if enable is not None:
+                config.halmos_enabled = enable
+
+            # Timeout
+            timeout_str = await self.app.push_screen_wait(
+                TextInputDialog(
+                    "Halmos timeout per test function (seconds)",
+                    default=str(current_timeout),
+                )
+            )
+            if timeout_str:
+                try:
+                    timeout_val = int(timeout_str)
+                    if 10 <= timeout_val <= 3600:
+                        config.halmos_timeout = timeout_val
+                except ValueError:
+                    pass
+
+            # Loop bound
+            loop_str = await self.app.push_screen_wait(
+                TextInputDialog(
+                    "Halmos loop bound (higher = deeper analysis but slower)",
+                    default=str(current_loop),
+                )
+            )
+            if loop_str:
+                try:
+                    loop_val = int(loop_str)
+                    if 1 <= loop_val <= 20:
+                        config.halmos_loop_bound = loop_val
+                except ValueError:
+                    pass
+
+            config_mgr.save_config()
+            detail.update("[green]Halmos settings saved.[/green]")
+        except Exception as e:
+            detail.update(f"[red]Error editing Halmos settings: {e}[/red]")
+
+    # ── Accuracy dashboard ───────────────────────────────────────
+
+    def _show_accuracy_dashboard(self) -> None:
+        """Display per-detector accuracy stats and weights in the detail pane."""
+        detail = self.query_one("#settings-detail", Static)
+        try:
+            from core.accuracy_tracker import AccuracyTracker
+
+            tracker = AccuracyTracker()
+            overall = tracker.get_accuracy_stats()
+            detector_stats = tracker.get_detector_accuracy()
+            bounty = tracker.get_bounty_stats()
+            severity_cal = tracker.get_severity_calibration()
+
+            lines = ["[bold cyan]Accuracy Dashboard[/bold cyan]\n"]
+
+            # Overall stats
+            lines.append("[bold]Overall Performance[/bold]")
+            lines.append(f"  Submissions: {overall.get('total_submissions', 0)}")
+            lines.append(f"  Accepted:    {overall.get('accepted', 0)}")
+            lines.append(f"  Rejected:    {overall.get('rejected', 0)}")
+            acc_pct = overall.get('accuracy_percentage', 'N/A')
+            lines.append(f"  Accuracy:    {acc_pct}")
+            lines.append("")
+
+            # Bounty stats
+            if bounty.get('bounty_count', 0) > 0:
+                lines.append("[bold]Bounty Earnings[/bold]")
+                lines.append(f"  Total earned:    ${bounty['total_earned']:,.2f}")
+                lines.append(f"  Average bounty:  ${bounty['average_bounty']:,.2f}")
+                lines.append("")
+
+            # Per-detector weights
+            if detector_stats:
+                lines.append("[bold]Detector Weights (ML Feedback)[/bold]")
+                # Sort by total submissions descending
+                sorted_dets = sorted(
+                    detector_stats.values(), key=lambda d: d.total, reverse=True
+                )
+                for ds in sorted_dets:
+                    w_color = "green" if ds.weight > 1.0 else ("red" if ds.weight < 1.0 else "white")
+                    lines.append(
+                        f"  {ds.detector_name:<30} "
+                        f"acc={ds.accuracy:.0%}  "
+                        f"n={ds.total}  "
+                        f"[{w_color}]w={ds.weight:.2f}[/{w_color}]"
+                    )
+                lines.append("")
+
+            # Severity calibration
+            if severity_cal:
+                lines.append("[bold]Severity Calibration[/bold]")
+                for sev in ('critical', 'high', 'medium', 'low'):
+                    if sev in severity_cal:
+                        rate = severity_cal[sev]
+                        s_color = "green" if rate > 0.5 else "red"
+                        lines.append(f"  {sev.upper():<10} acceptance rate: [{s_color}]{rate:.0%}[/{s_color}]")
+                lines.append("")
+
+            if not detector_stats and overall.get('total_submissions', 0) == 0:
+                lines.append("[dim]No submission data yet. Record outcomes to enable ML feedback.[/dim]")
+
+            detail.update("\n".join(lines))
+        except Exception as e:
+            detail.update(f"[red]Error loading accuracy data: {e}[/red]")
 
     # ── Clear data ──────────────────────────────────────────────
 

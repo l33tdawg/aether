@@ -283,9 +283,24 @@ class TaintAnalyzer:
                 continue
 
             # Propagate taint through function body
-            propagated = self._propagate_taint(
-                contract_content, func_body, initial_taint
-            )
+            # Try CFG-based propagation first for branch-aware analysis
+            propagated = None
+            if ast_data is not None:
+                try:
+                    from core.solidity_ast import SolidityASTParser
+                    cfg_parser = SolidityASTParser()
+                    cfg = cfg_parser.build_cfg(func_body, func_name)
+                    if cfg and cfg.blocks and len(cfg.blocks) > 1:
+                        propagated = self._propagate_with_cfg(
+                            cfg, initial_taint
+                        )
+                except Exception:
+                    propagated = None
+
+            if propagated is None:
+                propagated = self._propagate_taint(
+                    contract_content, func_body, initial_taint
+                )
 
             # Track state variable tainting (for cross-function flows)
             for tv in propagated:
@@ -575,6 +590,102 @@ class TaintAnalyzer:
                         changed = True
 
         return list(tainted.values())
+
+    def _propagate_with_cfg(
+        self,
+        cfg: Any,
+        sources: List[TaintedVariable],
+    ) -> List[TaintedVariable]:
+        """Branch-aware taint propagation using a ControlFlowGraph.
+
+        Processes blocks in topological order (with loop fixed-point).
+        Falls back to line-by-line propagation if CFG is empty or
+        unusable.
+
+        Args:
+            cfg: A ControlFlowGraph object from solidity_ast.py
+            sources: Initial taint sources for the function
+        """
+        from collections import deque as _deque
+
+        blocks = getattr(cfg, 'blocks', None)
+        entry = getattr(cfg, 'entry', None)
+        if not blocks or entry is None:
+            # Unusable CFG — caller should fall back
+            return list(sources)
+
+        # Per-block taint state: block_id -> {var_name: TaintedVariable}
+        block_taint: Dict[int, Dict[str, TaintedVariable]] = {}
+        for bid in blocks:
+            block_taint[bid] = {}
+
+        # Seed entry block with initial sources
+        for src in sources:
+            block_taint[entry][src.name] = src
+
+        # Topological-ish traversal using a worklist
+        worklist: _deque = _deque()
+        worklist.append(entry)
+        visit_count: Dict[int, int] = {bid: 0 for bid in blocks}
+        max_visits = 5  # Bound iterations for loops
+
+        while worklist:
+            bid = worklist.popleft()
+            if visit_count[bid] >= max_visits:
+                continue
+            visit_count[bid] += 1
+
+            block = blocks[bid]
+
+            # Merge taint from all predecessors into this block's input
+            merged: Dict[str, TaintedVariable] = {}
+            for pred_id in block.predecessors:
+                for name, tv in block_taint.get(pred_id, {}).items():
+                    if name not in merged:
+                        merged[name] = tv
+
+            # Also include any taint already computed for this block (from seeding)
+            for name, tv in block_taint[bid].items():
+                if name not in merged:
+                    merged[name] = tv
+
+            # Propagate through each statement in the block
+            current = dict(merged)
+            for stmt in block.statements:
+                stripped = stmt.strip()
+                if not stripped or stripped.startswith('//'):
+                    continue
+                # Reuse existing line-level propagation
+                new_tainted = self._propagate_line(stripped, current)
+                current.update(new_tainted)
+
+            # Check if block taint changed
+            old_taint = block_taint[bid]
+            if set(current.keys()) != set(old_taint.keys()):
+                block_taint[bid] = current
+                # Add successors to worklist
+                for succ_id in block.successors:
+                    worklist.append(succ_id)
+            else:
+                # Even if keys match, values might differ (longer paths)
+                changed = False
+                for name in current:
+                    if name not in old_taint:
+                        changed = True
+                        break
+                if changed:
+                    block_taint[bid] = current
+                    for succ_id in block.successors:
+                        worklist.append(succ_id)
+
+        # Collect all tainted variables across all blocks
+        all_tainted: Dict[str, TaintedVariable] = {}
+        for bid in blocks:
+            for name, tv in block_taint[bid].items():
+                if name not in all_tainted:
+                    all_tainted[name] = tv
+
+        return list(all_tainted.values())
 
     def _propagate_line(
         self, line: str, current_taint: Dict[str, TaintedVariable]

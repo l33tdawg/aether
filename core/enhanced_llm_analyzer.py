@@ -500,7 +500,7 @@ Before reporting any vulnerability, verify:
             raise e
     
     async def _call_gemini_api(self, model: str, prompt: str, max_tokens: int) -> Optional[str]:
-        """Call Google Gemini API (similar to ai_ensemble.py implementation)."""
+        """Call Google Gemini API."""
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.gemini_api_key}"
             

@@ -152,7 +152,7 @@ class FetchScreen(Screen):
         jm = JobManager.get_instance()
         runner = AuditRunner()
 
-        features = ["enhanced", "ai_ensemble", "llm_validation"]
+        features = ["enhanced", "llm_validation"]
         output_dir = "./output"
 
         job = jm.create_job(

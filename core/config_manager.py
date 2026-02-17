@@ -117,6 +117,12 @@ class AetherConfig:
     # Foundry settings
     foundry_only_consensus: bool = True
     foundry_max_items: int = 80
+
+    # Halmos symbolic execution settings
+    halmos_enabled: bool = True
+    halmos_timeout: int = 120  # seconds per test function
+    halmos_loop_bound: int = 3
+    halmos_solver_timeout_ms: int = 30000
     
     # Etherscan API settings
     etherscan_api_key: str = ""

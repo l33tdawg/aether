@@ -63,6 +63,11 @@ class ValidationPipeline:
 
         # NEW: Taint data for validation (Feb 2026)
         self._taint_reports = None
+
+        # NEW: Halmos runner for formal verification (Feb 2026)
+        self._halmos_runner = None
+        self._halmos_generator = None
+        self._halmos_project_dir = None
     
     @property
     def governance_detector(self):
@@ -365,7 +370,15 @@ class ValidationPipeline:
         if impact_check and impact_check.is_false_positive:
             results.append(impact_check)
             return results  # Early exit
-        
+
+        # Stage 1.95: Formal proof via Halmos symbolic execution (NEW - Feb 2026)
+        # If halmos is available and a formal proof PASSES (property holds for all
+        # inputs), the finding is refuted — mark as false positive.
+        formal_check = self._validate_with_formal_proof(vulnerability)
+        if formal_check and formal_check.is_false_positive:
+            results.append(formal_check)
+            return results  # Early exit
+
         # Stage 2: Design assumption check
         # Instead of removing findings, downgrade to Low/Informational —
         # some bounty programs pay for centralization/admin/design risks
@@ -1780,6 +1793,89 @@ class ValidationPipeline:
                         ),
                     )
 
+        return None
+
+    def _validate_with_formal_proof(self, finding: Dict) -> Optional[ValidationStage]:
+        """Use Halmos symbolic execution to formally verify a finding.
+
+        If Halmos is available and a generated symbolic property *passes*
+        (i.e. holds for all symbolic inputs), the finding's vulnerability
+        claim is formally refuted and marked as a false positive.
+
+        Returns None if Halmos is unavailable, if no property can be
+        generated, or if the result is inconclusive / confirms the bug.
+        """
+        # Lazy-load runner and generator
+        if self._halmos_runner is None:
+            try:
+                from core.halmos_runner import HalmosRunner
+                self._halmos_runner = HalmosRunner()
+            except ImportError:
+                self._halmos_runner = False  # sentinel: don't retry
+                return None
+
+        if self._halmos_runner is False or not self._halmos_runner.is_available():
+            return None
+
+        if self._halmos_generator is None:
+            try:
+                from core.halmos_property_generator import HalmosPropertyGenerator
+                self._halmos_generator = HalmosPropertyGenerator()
+            except ImportError:
+                return None
+
+        if not self._halmos_project_dir:
+            return None
+
+        # Only attempt formal proof for high-confidence, high-severity findings
+        severity = (finding.get('severity', '') or '').lower()
+        confidence = finding.get('confidence', 0)
+        if severity not in ('critical', 'high', 'medium'):
+            return None
+        if isinstance(confidence, (int, float)) and confidence < 0.5:
+            return None
+
+        # Generate a single property for this finding
+        suite = self._halmos_generator.generate_from_findings(
+            findings=[finding],
+            contract_name=finding.get('contract_name', 'Unknown'),
+        )
+        if not suite or not suite.properties:
+            return None
+
+        prop = suite.properties[0]
+
+        try:
+            result = self._halmos_runner.check_property(
+                project_dir=str(self._halmos_project_dir),
+                test_contract=suite.contract_name,
+                property_function=prop.function_name,
+            )
+        except Exception:
+            return None
+
+        from core.halmos_runner import HalmosResult
+
+        if result.result == HalmosResult.PASS:
+            # Property holds for ALL inputs -> vulnerability is formally refuted
+            return ValidationStage(
+                stage_name="formal_proof",
+                is_false_positive=True,
+                confidence=0.95,
+                reasoning=(
+                    f"Halmos symbolic execution formally verified that property "
+                    f"'{prop.function_name}' holds for all inputs. "
+                    f"The vulnerability claim is mathematically refuted."
+                ),
+            )
+
+        if result.result == HalmosResult.FAIL:
+            # Counterexample found — vulnerability confirmed, annotate and continue
+            finding['formal_proof_status'] = 'confirmed'
+            if result.counterexample:
+                finding['formal_counterexample'] = result.counterexample
+
+        # Inconclusive / timeout / error — let other stages decide
         return None
 
     def _check_parameter_origin(self, vuln: Dict) -> Optional[ValidationStage]:

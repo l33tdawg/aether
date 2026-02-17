@@ -1,4 +1,4 @@
-"""Tests for Phase 1 pipeline fixes in enhanced_audit_engine and ai_ensemble."""
+"""Tests for pipeline fixes in enhanced_audit_engine."""
 
 import asyncio
 import unittest
@@ -188,88 +188,6 @@ class TestValidationStatusGate(unittest.TestCase):
         self.assertEqual(len(validated), 2)  # pending + validated pass through
         self.assertTrue(validated[0].get('needs_llm_validation'))  # pending gets flag
         self.assertNotIn(vuln_fp, validated)  # false_positive filtered
-
-
-class TestSingleAgentConfidencePenalty(unittest.TestCase):
-    """Test Phase 1C: Specialist-aware confidence penalty."""
-
-    def test_import_ensemble(self):
-        """Verify the ensemble module loads with updated penalty logic."""
-        from core.ai_ensemble import EnhancedAIEnsemble
-        ensemble = EnhancedAIEnsemble()
-        # Verify _AGENT_SPECIALIZATIONS exists
-        self.assertIn('anthropic_reasoning', ensemble._AGENT_SPECIALIZATIONS)
-        self.assertIn('complex_logic', ensemble._AGENT_SPECIALIZATIONS['anthropic_reasoning'])
-
-    def test_specialist_finding_gets_reduced_penalty(self):
-        """Specialist finding should get only -0.02 penalty."""
-        from core.ai_ensemble import EnhancedAIEnsemble
-        ensemble = EnhancedAIEnsemble()
-
-        finding = {'type': 'economic_attacks', 'confidence': 0.8, 'severity': 'high', 'description': 'test'}
-        models = ['anthropic_reasoning']  # specialist for economic_attacks
-
-        result = ensemble._merge_similar_findings([finding], models)
-        # Specialist penalty: 0.8 - 0.02 = 0.78
-        self.assertAlmostEqual(result['confidence'], 0.78, places=2)
-
-    def test_non_specialist_finding_gets_full_penalty(self):
-        """Non-specialist single finding should get -0.08 penalty."""
-        from core.ai_ensemble import EnhancedAIEnsemble
-        ensemble = EnhancedAIEnsemble()
-
-        finding = {'type': 'reentrancy', 'confidence': 0.8, 'severity': 'high', 'description': 'test'}
-        models = ['gemini_verification']  # NOT specialist for reentrancy
-
-        result = ensemble._merge_similar_findings([finding], models)
-        # Full penalty: 0.8 - 0.08 = 0.72
-        self.assertAlmostEqual(result['confidence'], 0.72, places=2)
-
-    def test_multi_agent_gets_boost(self):
-        """Multiple agents agreeing should get confidence boost."""
-        from core.ai_ensemble import EnhancedAIEnsemble
-        ensemble = EnhancedAIEnsemble()
-
-        findings = [
-            {'type': 'reentrancy', 'confidence': 0.8, 'severity': 'high', 'description': 'test'},
-            {'type': 'reentrancy', 'confidence': 0.7, 'severity': 'high', 'description': 'test'},
-        ]
-        models = ['gpt5_security', 'anthropic_security']
-
-        result = ensemble._merge_similar_findings(findings, models)
-        # Average 0.75 + 0.1 boost = 0.85
-        self.assertAlmostEqual(result['confidence'], 0.85, places=2)
-
-
-class TestLineBucketFix(unittest.TestCase):
-    """Test Phase 1D: Line-bucket boundary bug fix."""
-
-    def test_finding_key_uses_only_type(self):
-        """Finding key should be based only on normalized type, not line bucket."""
-        from core.ai_ensemble import EnhancedAIEnsemble
-        ensemble = EnhancedAIEnsemble()
-
-        # Two findings on lines 9 and 11 (previously in different buckets)
-        f1 = {'type': 'reentrancy', 'line': 9}
-        f2 = {'type': 'reentrancy', 'line': 11}
-
-        key1 = ensemble._get_finding_key(f1)
-        key2 = ensemble._get_finding_key(f2)
-
-        # Now they should produce the same key (both are reentrancy)
-        self.assertEqual(key1, key2)
-
-    def test_fuzzy_match_still_works(self):
-        """Fuzzy matching should still differentiate by line proximity."""
-        from core.ai_ensemble import EnhancedAIEnsemble
-        ensemble = EnhancedAIEnsemble()
-
-        close = {'type': 'reentrancy', 'line': 10}
-        nearby = {'type': 'reentrancy', 'line': 14}
-        far = {'type': 'reentrancy', 'line': 100}
-
-        self.assertTrue(ensemble._findings_match_fuzzy(close, nearby))
-        self.assertFalse(ensemble._findings_match_fuzzy(close, far))
 
 
 if __name__ == '__main__':
