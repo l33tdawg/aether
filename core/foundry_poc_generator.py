@@ -17,17 +17,24 @@ try:
     from core.enhanced_llm_analyzer import EnhancedLLMAnalyzer
     from core.config_manager import ConfigManager
     from core.mocks_generator import MocksGenerator
+    from core.poc_setup_generator import PoCSetupGenerator
+    from core.poc_templates import get_templates_for_vulnerability, get_all_mock_sources
 except ImportError:
     try:
         # When running with scripts that add core/ to sys.path
         from enhanced_llm_analyzer import EnhancedLLMAnalyzer  # type: ignore
         from config_manager import ConfigManager  # type: ignore
         from mocks_generator import MocksGenerator  # type: ignore
+        from poc_setup_generator import PoCSetupGenerator  # type: ignore
+        from poc_templates import get_templates_for_vulnerability, get_all_mock_sources  # type: ignore
     except Exception:
         # Final fallback: lightweight stubs
         EnhancedLLMAnalyzer = type('EnhancedLLMAnalyzer', (), {})
         ConfigManager = type('ConfigManager', (), {})
         MocksGenerator = type('MocksGenerator', (), {'__init__': lambda *args: None})
+        PoCSetupGenerator = None
+        get_templates_for_vulnerability = None
+        get_all_mock_sources = None
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -153,7 +160,7 @@ class FoundryPoCGenerator:
             self.llm_analyzer = EnhancedLLMAnalyzer()
 
         # Configuration defaults
-        self.max_compile_attempts = self.config.get('max_compile_attempts', 3)
+        self.max_compile_attempts = self.config.get('max_compile_attempts', 5)
         self.max_runtime_attempts = self.config.get('max_runtime_attempts', 1)
         self.enable_fork_run = self.config.get('enable_fork_run', False)
         self.fork_url = self.config.get('fork_url', '')
@@ -1171,14 +1178,14 @@ class FoundryPoCGenerator:
             )
             
             # Fix 3: Add pragma abicoder v2 for Solidity 0.7.x (required for Test inheritance)
-            if 'pragma solidity 0.7' in code and 'pragma abicoder v2' not in code:
+            if 'pragma solidity 0.7' in code and 'pragma abicoder v2' not in code and 'ABIEncoderV2' not in code:
                 # Insert after the pragma solidity line
                 code = re.sub(
                     r'(pragma solidity 0\.7\.[0-9]+;)',
                     r'\1\npragma abicoder v2;',
                     code
                 )
-                print(f"[DEBUG] Added pragma abicoder v2 for Solidity 0.7.x")
+                logger.debug(f"Added pragma abicoder v2 for Solidity 0.7.x")
             
             return code
         except Exception as e:
@@ -1194,10 +1201,67 @@ class FoundryPoCGenerator:
         attempt: int = 0
     ) -> str:
         """Create a professional prompt for exploit generation"""
-        
+
         available_funcs = context.get('available_functions', [])[:8]
         func_list = '\n'.join([f"  {i+1}. {func}()" for i, func in enumerate(available_funcs)]) if available_funcs else "  (analyze contract)"
-        
+
+        # Generate smart setUp context using PoCSetupGenerator
+        setup_context_block = ""
+        if PoCSetupGenerator is not None and get_templates_for_vulnerability is not None:
+            try:
+                setup_gen = PoCSetupGenerator()
+                vuln_info = {
+                    "vulnerability_type": context.get('vulnerability_type', 'generic'),
+                    "severity": finding.severity,
+                }
+                contract_source = context.get('contract_source', '') or context.get('contract_code', '')
+                poc_template = get_templates_for_vulnerability(
+                    context.get('vulnerability_type', ''), contract_source
+                )
+                setup_result = setup_gen.generate_setup(
+                    contract_source, context['contract_name'], vuln_info, poc_template
+                )
+                mock_hint = ""
+                if setup_result.mock_contracts:
+                    # Truncate mocks to avoid token bloat
+                    mock_summary = setup_result.mock_contracts[:1500]
+                    mock_hint = f"\n\nAVAILABLE MOCK CONTRACTS (include these above the test contract):\n```solidity\n{mock_summary}\n```"
+
+                setup_context_block = f"""{mock_hint}
+
+RECOMMENDED setUp() BODY (adapt as needed):
+```solidity
+function setUp() public {{
+{setup_result.setup_body}
+}}
+```
+
+RECOMMENDED STATE VARIABLES:
+```solidity
+{setup_result.state_variables}
+```
+
+You have these mock contracts available:
+- MockERC20: constructor(name, symbol, decimals), mint(to, amount), transfer/transferFrom/approve
+- MockOracle: constructor(price, decimals), setPrice(price), latestRoundData()
+
+Your setUp() function MUST:
+1. Deploy all mock dependencies (tokens, oracles)
+2. Deploy the target contract with proper constructor args
+3. Mint tokens and set approvals for the attacker
+4. Set any required initial state (deposits, liquidity)
+5. Label addresses with vm.label() for trace readability
+
+The setUp() must be COMPLETE - no TODOs, no placeholders, no comments saying "initialize here".
+
+Your test function MUST end with concrete assertions proving the exploit worked:
+- assertGt(attackerBalanceAfter, attackerBalanceBefore, "Attacker should profit")
+- assertLt(vaultBalanceAfter, vaultBalanceBefore, "Vault should lose funds")
+Use specific numeric comparisons, not just assertTrue.
+"""
+            except Exception as e:
+                logger.debug(f"PoCSetupGenerator context generation failed: {e}")
+
         # Check for deployed address in abi_data
         abi_data = context.get('abi_data', {})
         deployed_address = abi_data.get('deployed_address', '')
@@ -1279,6 +1343,7 @@ AVAILABLE PUBLIC/EXTERNAL FUNCTIONS:
 {func_list}
 {deployment_note}
 {vuln_specific_guidance}
+{setup_context_block}
 
 TASK:
 Create a complete Foundry test demonstrating this vulnerability. Include:
@@ -1467,7 +1532,7 @@ GENERATE NOW:
             import json
             
             # Look for ```json or ``` followed by { (with or without whitespace)
-            json_block_match = re.search(r'```(?:json)?(\{)', response, re.DOTALL)
+            json_block_match = re.search(r'```(?:json)?\s*(\{)', response, re.DOTALL)
             if json_block_match:
                 start_idx = json_block_match.start(1)
                 brace_count = 0
@@ -1480,7 +1545,7 @@ GENERATE NOW:
                         if brace_count == 0:
                             end_idx = i + 1
                             break
-                
+
                 if end_idx > start_idx:
                     try:
                         json_str = response[start_idx:end_idx]
@@ -1490,10 +1555,10 @@ GENERATE NOW:
                         logger.info(f"Extracted from JSON block: test={len(test_code)} chars, exploit={len(exploit_code)} chars")
                     except Exception as e:
                         logger.debug(f"JSON parsing failed: {e}")
-            
+
             # Try solidity code blocks if JSON didn't work
             if not test_code and not exploit_code:
-                solidity_blocks = re.findall(r'```(?:solidity)?(.*?)```', response, re.DOTALL)
+                solidity_blocks = re.findall(r'```(?:solidity)?\s*(.*?)```', response, re.DOTALL)
                 if len(solidity_blocks) >= 2:
                     test_code = solidity_blocks[0]
                     exploit_code = solidity_blocks[1]
@@ -1564,8 +1629,13 @@ GENERATE NOW:
         # Enhanced contract context extraction
         contract_context = self._extract_enhanced_contract_context(contract_code, context)
         
-        # Build abicoder pragma if needed for 0.7.x
-        abicoder_requirement = f"- **MUST include pragma abicoder v2** (required for Solidity {solc_version})" if is_solc_07 else ""
+        # Build abicoder pragma and version-specific constraints for 0.7.x
+        abicoder_requirement = ""
+        if is_solc_07:
+            abicoder_requirement = f"""- **MUST include `pragma experimental ABIEncoderV2;`** right after pragma solidity (required for Solidity {solc_version})
+- **DO NOT use Solidity 0.8.x features**: no `type(uint256).max`, no custom errors, no unchecked blocks, no user-defined value types
+- **Use SafeMath** for arithmetic or explicitly handle overflow (Solidity 0.7.x has no built-in overflow checks)
+- **Use `uint(-1)`** instead of `type(uint256).max`"""
         
         # Generate attack chain analysis for better context
         attack_chain = self._analyze_attack_chain_for_prompt(context, external_functions, modifiers)
@@ -1626,6 +1696,7 @@ Generate a PRODUCTION-READY exploit that:
 - Not demonstrating actual exploit impact
 - Using wrong Solidity version
 - Poor code structure or formatting
+{abicoder_requirement}
 
 ✅ EXPLOIT QUALITY CHECKLIST:
 - [ ] Calls only real functions from contract analysis
@@ -1895,8 +1966,8 @@ Security Controls: {modifiers[:200] if modifiers != 'No modifiers detected' else
         try:
             import json
             
-            # Try 1: Look for JSON in markdown code blocks with proper brace matching (no space required after ```json)
-            json_block_match = re.search(r'```(?:json)?(\{)', response, re.DOTALL)
+            # Try 1: Look for JSON in markdown code blocks with proper brace matching
+            json_block_match = re.search(r'```(?:json)?\s*(\{)', response, re.DOTALL)
             if json_block_match:
                 # Find matching closing brace
                 start_idx = json_block_match.start(1)
@@ -2156,8 +2227,13 @@ Security Controls: {modifiers[:200] if modifiers != 'No modifiers detected' else
         if test_result.contract_source:
             solc_version = self._detect_solidity_version(test_result.contract_source)
 
-        # Generate minimal working version
-        fallback_test = self._generate_minimal_test(test_result.contract_name, solc_version)
+        # Generate minimal working version — pass contract source for smarter setUp
+        vuln_info = {"vulnerability_type": test_result.vulnerability_type} if test_result.vulnerability_type else None
+        fallback_test = self._generate_minimal_test(
+            test_result.contract_name, solc_version,
+            contract_source=test_result.contract_source or "",
+            vulnerability=vuln_info,
+        )
         fallback_exploit = self._generate_minimal_exploit(test_result.contract_name, solc_version)
 
         return {
@@ -2166,13 +2242,25 @@ Security Controls: {modifiers[:200] if modifiers != 'No modifiers detected' else
             'exploit_code': fallback_exploit
         }
 
-    def _generate_minimal_test(self, contract_name: str, solc_version: str = "0.8.19") -> str:
+    def _generate_minimal_test(self, contract_name: str, solc_version: str = "0.8.19",
+                               contract_source: str = "", vulnerability: Dict[str, Any] = None) -> str:
         # Generate minimal test that should compile.
-        # Add abicoder v2 for Solidity 0.7.x (required for Test inheritance)
+        # Try to use PoCSetupGenerator for a complete setUp when possible.
+        if PoCSetupGenerator is not None and contract_source and get_templates_for_vulnerability is not None:
+            try:
+                setup_gen = PoCSetupGenerator()
+                vuln = vulnerability or {"vulnerability_type": "generic"}
+                return setup_gen.generate_full_test_file(
+                    contract_source, contract_name, vuln, solc_version
+                )
+            except Exception as e:
+                logger.debug(f"PoCSetupGenerator fallback failed: {e}")
+
+        # Legacy fallback: basic skeleton
         abicoder_pragma = ""
         if solc_version.startswith('0.7'):
             abicoder_pragma = "pragma abicoder v2;\n"
-        
+
         return f'''// SPDX-License-Identifier: MIT
 pragma solidity {solc_version};
 {abicoder_pragma}
@@ -2330,11 +2418,17 @@ contract {contract_name}Exploit {{
                 actual_contract_name = self._extract_contract_name_from_source(context.get('contract_source', ''))
                 if actual_contract_name:
                     cn = actual_contract_name
-                
+
                 # Use the contract name from context for import (should be the filename)
                 contract_filename = context['contract_name']
                 solc_version = context.get('solc_version', '0.8.19')
-                test_code = self._generate_minimal_test(cn, solc_version)
+                contract_source = context.get('contract_source', '')
+                vuln_info = {"vulnerability_type": context.get('vulnerability_type', 'generic')}
+                test_code = self._generate_minimal_test(
+                    cn, solc_version,
+                    contract_source=contract_source,
+                    vulnerability=vuln_info,
+                )
                 exploit_code = self._generate_minimal_exploit(cn, solc_version)
                 
                 # Validate generated code syntax
@@ -3001,7 +3095,29 @@ Return ONLY the corrected Solidity code in a code block."""
     ) -> str:
         # Create repair prompt for LLM.
         errors_text = '\n'.join([f"- {error}" for error in compile_errors[:10]])
-        
+
+        # Generate mock contract context so the LLM can fix setup-related errors
+        mock_context = ""
+        if PoCSetupGenerator is not None and get_templates_for_vulnerability is not None:
+            try:
+                vuln_type = test_result.vulnerability_type or "generic"
+                poc_template = get_templates_for_vulnerability(
+                    vuln_type, test_result.contract_source or ""
+                )
+                if poc_template.mock_contracts:
+                    mock_context = f"""
+
+AVAILABLE MOCK CONTRACTS (you can include these in the test file if needed):
+```solidity
+{poc_template.mock_contracts[:1200]}
+```
+
+These mocks provide: MockERC20 (mint, transfer, approve), MockOracle (setPrice, latestRoundData).
+If the setUp() is empty or has TODOs, replace it with actual deployment code using these mocks.
+"""
+            except Exception:
+                pass
+
         return f"""You are fixing compilation errors in a Foundry test suite.
 
 CONTRACT: {test_result.contract_name}
@@ -3009,7 +3125,7 @@ VULNERABILITY: {test_result.vulnerability_type}
 
 COMPILATION ERRORS:
 {errors_text}
-
+{mock_context}
 CURRENT TEST CODE:
 ```solidity
 {current_test_code[:2000]}

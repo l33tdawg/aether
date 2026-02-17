@@ -280,7 +280,8 @@ class InterContractAnalyzer:
     ) -> List[ContractRelationship]:
         """Detect interface cast calls: IFoo(addr).bar()."""
         rels_map: Dict[str, ContractRelationship] = {}
-        pattern = re.compile(r'(I\w+)\s*\([^)]*\)\s*\.(\w+)\s*\(')
+        # Allow one level of nested parens in constructor arg: IFoo(address(x)).bar()
+        pattern = re.compile(r'(I\w+)\s*\((?:[^()]*|\([^()]*\))*\)\s*\.(\w+)\s*\(')
         for m in pattern.finditer(contract_body):
             iface = m.group(1)
             func = m.group(2)
@@ -311,8 +312,8 @@ class InterContractAnalyzer:
         """Detect direct contract calls: Foo(addr).bar() or stateVar.bar()."""
         rels_map: Dict[str, ContractRelationship] = {}
 
-        # Pattern 1: ContractName(addr).func()
-        p1 = re.compile(r'(\b[A-Z]\w+)\s*\([^)]*\)\s*\.(\w+)\s*\(')
+        # Pattern 1: ContractName(addr).func() -- allow nested parens
+        p1 = re.compile(r'(\b[A-Z]\w+)\s*\((?:[^()]*|\([^()]*\))*\)\s*\.(\w+)\s*\(')
         for m in p1.finditer(contract_body):
             target = m.group(1)
             func = m.group(2)
@@ -344,9 +345,9 @@ class InterContractAnalyzer:
                 rels_map[key].functions.append(func)
 
         # Pattern 2: stateVariable.func() where stateVariable is typed as a known contract
-        # Find state variable declarations
+        # Find state variable declarations (e.g. "B public b;" or "IERC20 token;")
         state_var_pattern = re.compile(
-            r'(\b[A-Z]\w+)\s+(?:public\s+|private\s+|internal\s+)?'
+            r'(\b[A-Z]\w*)\s+(?:public\s+|private\s+|internal\s+)?'
             r'(?:immutable\s+)?(?:override\s+)?(\w+)\s*[;=]'
         )
         var_type_map: Dict[str, str] = {}
@@ -516,18 +517,8 @@ class InterContractAnalyzer:
             is_external = rel.callee not in known
             is_delegatecall = rel.call_type == "delegatecall"
 
-            if is_external:
-                boundaries.append({
-                    'from_contract': rel.caller,
-                    'to_contract': rel.callee,
-                    'trust_type': 'external_dependency',
-                    'description': (
-                        f"{rel.caller} calls external {rel.callee} "
-                        f"(not in project) via {', '.join(rel.functions[:3])}. "
-                        f"Caller trusts callee's behavior."
-                    ),
-                })
-            elif is_delegatecall:
+            # Delegatecall is the highest-risk boundary -- check first
+            if is_delegatecall:
                 boundaries.append({
                     'from_contract': rel.caller,
                     'to_contract': rel.callee,
@@ -536,6 +527,17 @@ class InterContractAnalyzer:
                         f"{rel.caller} delegatecalls to {rel.callee}. "
                         f"Callee can modify caller's storage. "
                         f"Full trust required."
+                    ),
+                })
+            elif is_external:
+                boundaries.append({
+                    'from_contract': rel.caller,
+                    'to_contract': rel.callee,
+                    'trust_type': 'external_dependency',
+                    'description': (
+                        f"{rel.caller} calls external {rel.callee} "
+                        f"(not in project) via {', '.join(rel.functions[:3])}. "
+                        f"Caller trusts callee's behavior."
                     ),
                 })
             else:

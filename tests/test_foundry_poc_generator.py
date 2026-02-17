@@ -113,7 +113,7 @@ class TestFoundryPoCGeneratorInit(unittest.TestCase):
 
     def test_default_config_values(self):
         gen = _make_generator()
-        self.assertEqual(gen.max_compile_attempts, 3)
+        self.assertEqual(gen.max_compile_attempts, 5)
         self.assertEqual(gen.max_runtime_attempts, 1)
         self.assertFalse(gen.enable_fork_run)
         self.assertEqual(gen.fork_url, '')

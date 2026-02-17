@@ -14,6 +14,13 @@ from pathlib import Path
 
 from .enhanced_llm_analyzer import EnhancedLLMAnalyzer
 
+try:
+    from .poc_setup_generator import PoCSetupGenerator
+    from .poc_templates import get_templates_for_vulnerability as _get_templates
+except ImportError:
+    PoCSetupGenerator = None  # type: ignore[assignment,misc]
+    _get_templates = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -201,7 +208,7 @@ fuzz = {{ runs = 256 }}
                     model="gpt-4.1-mini-2025-04-14"  # Use faster model for test generation
                 )
 
-                result = self._parse_test_response(response, vulnerability, contract_name)
+                result = self._parse_test_response(response, vulnerability, contract_name, contract_code=contract_code)
                 if not result.success:
                     last_error = result.error_message or "parse_error"
                     issues = [f"json_parse_error: {last_error}"]
@@ -335,7 +342,61 @@ fuzz = {{ runs = 256 }}
     
     def _create_test_generation_prompt(self, context: Dict[str, Any]) -> str:
         """Create test generation prompt for LLM."""
-        
+
+        # Generate smart setUp context when available
+        setup_guidance = ""
+        if PoCSetupGenerator is not None and _get_templates is not None:
+            try:
+                setup_gen = PoCSetupGenerator()
+                vuln_info = {
+                    "vulnerability_type": context.get('vulnerability_type', 'generic'),
+                    "severity": context.get('severity', 'medium'),
+                }
+                contract_code = context.get('contract_code', '')
+                poc_template = _get_templates(
+                    context.get('vulnerability_type', ''), contract_code
+                )
+                setup_result = setup_gen.generate_setup(
+                    contract_code, context['contract_name'], vuln_info, poc_template
+                )
+                mock_block = ""
+                if setup_result.mock_contracts:
+                    mock_block = f"""
+AVAILABLE MOCK CONTRACTS (include these ABOVE the test contract in the test_code):
+```solidity
+{setup_result.mock_contracts[:1500]}
+```
+"""
+
+                setup_guidance = f"""{mock_block}
+RECOMMENDED setUp() BODY (adapt to your test):
+```solidity
+function setUp() public {{
+{setup_result.setup_body}
+}}
+```
+
+You have these mock contracts available:
+- MockERC20: constructor(name, symbol, decimals), mint(to, amount), transfer/transferFrom/approve
+- MockOracle: constructor(price, decimals), setPrice(price), latestRoundData()
+
+Your setUp() function MUST:
+1. Deploy all mock dependencies (tokens, oracles)
+2. Deploy the target contract with proper constructor args
+3. Mint tokens and set approvals for the attacker
+4. Set any required initial state (deposits, liquidity)
+5. Label addresses with vm.label() for trace readability
+
+The setUp() must be COMPLETE - no TODOs, no placeholders, no comments saying "initialize here".
+
+Your test function MUST end with concrete assertions proving the exploit worked:
+- assertGt(attackerBalanceAfter, attackerBalanceBefore, "Attacker should profit")
+- assertLt(vaultBalanceAfter, vaultBalanceBefore, "Vault should lose funds")
+Use specific numeric comparisons, not just assertTrue.
+"""
+            except Exception as e:
+                logger.debug(f"PoCSetupGenerator context for LLM prompt failed: {e}")
+
         return f"""
 You are an expert smart contract security researcher and Foundry test developer. Your task is to generate accurate Foundry tests for a specific vulnerability.
 
@@ -353,15 +414,15 @@ CODE CONTEXT:
 
 FULL CONTRACT CODE:
 {context['contract_code']}
-
+{setup_guidance}
 Please generate:
 
 1. A Foundry test file that:
    - Uses the actual contract functions
    - Tests the specific vulnerability at line {context['line_number']}
-   - Includes proper setup and teardown
+   - Has a COMPLETE setUp() that deploys all dependencies and the target contract
    - Uses realistic test data
-   - Has meaningful assertions
+   - Has meaningful assertions with specific numeric comparisons
    - Includes both positive and negative test cases
 
 2. An exploit contract that:
@@ -384,6 +445,7 @@ IMPORTANT REQUIREMENTS:
 - Use correct Solidity version ({context['solc_version']})
 - Make tests actually executable and meaningful
 - Focus on the specific vulnerability, not generic patterns
+- The setUp() MUST deploy real contracts with proper constructor arguments - NO empty setUp, NO TODOs, NO placeholders
 
 STRICT CONSTRAINTS:
 - DO NOT invent functions or symbols. Restrict calls strictly to the names listed under AVAILABLE FUNCTIONS.
@@ -399,13 +461,14 @@ Respond ONLY in JSON format (no extra text):
 """
     
     def _parse_test_response(
-        self, 
-        response: str, 
-        vulnerability: Dict[str, Any], 
-        contract_name: str
+        self,
+        response: str,
+        vulnerability: Dict[str, Any],
+        contract_name: str,
+        contract_code: str = "",
     ) -> TestGenerationResult:
         """Parse LLM test generation response."""
-        
+
         try:
             # Extract + parse with schema helper
             from .json_utils import parse_llm_json
@@ -419,11 +482,11 @@ Respond ONLY in JSON format (no extra text):
                     error_message=None
                 )
             # Fallback: generate basic test
-            return self._generate_fallback_test(vulnerability, contract_name)
-                
+            return self._generate_fallback_test(vulnerability, contract_name, contract_code=contract_code)
+
         except Exception as e:
             logger.error(f"Failed to parse test response: {e}")
-            return self._generate_fallback_test(vulnerability, contract_name)
+            return self._generate_fallback_test(vulnerability, contract_name, contract_code=contract_code)
     
     def _fix_json_string(self, json_str: str) -> str:
         """Fix common JSON formatting issues."""
@@ -500,15 +563,40 @@ Respond ONLY in JSON format (no extra text):
         return json_str
     
     def _generate_fallback_test(
-        self, 
-        vulnerability: Dict[str, Any], 
-        contract_name: str
+        self,
+        vulnerability: Dict[str, Any],
+        contract_name: str,
+        contract_code: str = "",
     ) -> TestGenerationResult:
-        """Generate fallback test when LLM fails."""
-        
+        """Generate fallback test when LLM fails.
+
+        When contract_code is available, uses PoCSetupGenerator to produce a
+        complete setUp() with proper mock deployments.
+        """
+
         vuln_type = vulnerability.get('vulnerability_type', 'unknown')
-        line_number = vulnerability.get('line_number', 0)
-        
+
+        # Try smart generation with PoCSetupGenerator first
+        if PoCSetupGenerator is not None and _get_templates is not None and contract_code:
+            try:
+                setup_gen = PoCSetupGenerator()
+                solc_version = self._extract_solc_version(contract_code)
+                test_code = setup_gen.generate_full_test_file(
+                    contract_code, contract_name, vulnerability, solc_version
+                )
+                # Still use the vuln-specific exploit (better than generic)
+                exploit_code = self._generate_exploit_by_vulnerability_type(vulnerability, contract_name)
+                return TestGenerationResult(
+                    success=True,
+                    test_code=test_code,
+                    exploit_code=exploit_code,
+                    fixed_code=None,
+                    error_message="Generated with PoCSetupGenerator due to LLM parsing failure"
+                )
+            except Exception as e:
+                logger.debug(f"PoCSetupGenerator fallback failed: {e}")
+
+        # Legacy fallback with basic setUp
         test_code = f"""// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
@@ -520,41 +608,17 @@ contract {contract_name}Test is Test {{
     {contract_name} public target;
 
     function setUp() public {{
-        // Fallback path: constructor arguments unknown; use default constructor if available.
-        // If this contract requires params, adapt via the primary LLM path.
         target = new {contract_name}();
     }}
 
     function testCompileAndDeploy() public {{
-        // Basic deployment test
         assertTrue(address(target) != address(0), "Contract should deploy");
     }}
 
-    // Test exploit functionality
     function testExploitExecution() public {{
-        // Deploy exploit contract
         {contract_name}Exploit exploit = new {contract_name}Exploit(address(target));
-
-        // Try to execute exploit
         exploit.exploit();
-
-        // Verify exploit was attempted (this will be contract-specific)
         assertTrue(exploit.isExploitAttempted(), "Exploit should be attempted");
-    }}
-
-    // Test that vulnerability exists
-    function testVulnerabilityExists() public {{
-        // This test should demonstrate that the vulnerability is present
-        // and exploitable. The specific test logic depends on the vulnerability type.
-
-        // TODO: Replace with actual vulnerability test based on vulnerability type
-        // For example:
-        // - Access control: Try to call privileged function without permission
-        // - Reentrancy: Set up reentrancy scenario
-        // - Overflow: Try to trigger overflow condition
-
-        // Placeholder test - should be replaced with actual vulnerability test
-        assertTrue(true, "Vulnerability test placeholder");
     }}
 }}"""
 
