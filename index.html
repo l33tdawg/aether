@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Aether - Advanced smart contract security analysis and PoC generation framework for Web3 auditors and bug bounty hunters. Features AI-powered vulnerability detection, Foundry integration, and automated exploit generation.">
+    <meta name="description" content="Aether v4.0 - Advanced smart contract security analysis framework with 6-pass deep analysis LLM pipeline, Solidity AST parsing, taint analysis, 160+ detectors, and automated PoC generation for Web3 auditors and bug bounty hunters.">
     <meta name="keywords" content="smart contract security, blockchain audit, Web3 security, Solidity vulnerabilities, bug bounty tools, DeFi security, smart contract analysis, PoC generation, Foundry testing, EVM security">
     <meta name="author" content="Dhillon Andrew Kannabhiran">
     <meta name="robots" content="index, follow">
     <meta property="og:title" content="Aether - Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories">
-    <meta property="og:description" content="Professional-grade smart contract security analysis and PoC generation framework. AI-powered vulnerability detection, automated exploit generation, and Foundry integration for Web3 auditors and bug bounty hunters.">
+    <meta property="og:description" content="Professional-grade smart contract security analysis framework with 6-pass deep analysis LLM pipeline, Solidity AST parsing, taint analysis, 160+ detectors, and automated PoC generation for Web3 auditors and bug bounty hunters.">
     <meta property="og:image" content="https://l33tdawg.github.io/aether/assets/og-image.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -18,7 +18,7 @@
     <meta property="og:site_name" content="Aether">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Aether - Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories">
-    <meta name="twitter:description" content="Professional-grade smart contract security analysis and PoC generation framework. AI-powered vulnerability detection, automated exploit generation, and Foundry integration for Web3 auditors and bug bounty hunters.">
+    <meta name="twitter:description" content="Professional-grade smart contract security analysis framework with 6-pass deep analysis LLM pipeline, Solidity AST parsing, taint analysis, 160+ detectors, and automated PoC generation for Web3 auditors and bug bounty hunters.">
     <meta name="twitter:image" content="https://l33tdawg.github.io/aether/assets/og-image.png">
     <meta name="twitter:image:alt" content="Aether - Smart Contract Security Analysis Framework">
     <meta name="twitter:creator" content="@l33tdawg">
@@ -1084,7 +1084,7 @@
         <section id="home" class="hero">
             <div class="container">
                 <h1>Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories</h1>
-                <p><strong>Stop the Setup Nightmare.</strong> Manual repository configuration, scope management, and environment setup for every target is exhausting. Aether eliminates the complexity with a persistent full-screen TUI—supply a URL, select your scope, and watch it analyze, detect vulnerabilities, and generate production-ready exploits in the background while you work on the next target.</p>
+                <p><strong>Stop the Setup Nightmare.</strong> Manual repository configuration, scope management, and environment setup for every target is exhausting. Aether v4.0 eliminates the complexity with a persistent full-screen TUI—supply a URL, select your scope, and watch it run a 6-pass deep analysis pipeline with AST parsing, taint analysis, and 160+ detectors to find vulnerabilities and generate production-ready exploits in the background while you work on the next target.</p>
                 <div class="hero-buttons">
                     <a href="#installation" class="btn-primary">Get Started</a>
                     <a href="#features" class="btn-secondary">Learn More</a>
@@ -1096,43 +1096,43 @@
             <div class="container">
                 <h2>Comprehensive Security Analysis Suite</h2>
                 <p class="features-subtitle">Engineered for Elite Web3 Security Professionals</p>
-                <p class="features-description">End-to-end security analysis platform that transforms manual, error-prone processes into streamlined, automated workflows. From repository ingestion to exploit validation, Aether handles the complexity so you can focus on what matters—finding and reporting critical vulnerabilities.</p>
+                <p class="features-description">End-to-end security analysis platform combining a 6-pass deep analysis LLM pipeline, Solidity AST parsing, taint analysis, 160+ static detectors, 75+ exploit knowledge base patterns, and automated PoC generation. From repository ingestion to exploit validation, Aether handles the complexity so you can focus on what matters—finding and reporting critical vulnerabilities.</p>
 
                 <div class="features-grid">
                     <div class="feature-card reveal">
                         <div class="feature-icon search"></div>
                         <h3>Multi-Layer Analysis</h3>
-                        <p>Combines 60+ pattern-based detectors with advanced vulnerability detection, multi-stage false positive filtering, and governance-aware validation for comprehensive smart contract security assessment.</p>
+                        <p>Combines 160+ pattern-based detectors with Solidity AST parsing, taint analysis, cross-contract relationship mapping, multi-stage false positive filtering, and governance-aware validation for comprehensive smart contract security assessment.</p>
                     </div>
 
                     <div class="feature-card reveal reveal-delay-1">
                         <div class="feature-icon ai"></div>
-                        <h3>AI-Powered Detection</h3>
-                        <p>Advanced LLM analysis with OpenAI, Gemini, and Anthropic Claude integration, AI ensemble coordination with six-agent consensus, intelligent false positive filtering, and automated vulnerability classification for production-ready security intelligence.</p>
+                        <h3>6-Pass Deep Analysis Pipeline</h3>
+                        <p>Structured multi-pass LLM pipeline with multi-provider rotation across OpenAI, Gemini, and Claude — protocol understanding, attack surface mapping, invariant violation detection, cross-contract analysis, adversarial modeling, and edge case discovery with few-shot examples and chain-of-thought reasoning.</p>
                     </div>
 
                     <div class="feature-card reveal reveal-delay-2">
                         <div class="feature-icon poc"></div>
                         <h3>AI-Enhanced PoC Generation</h3>
-                        <p>AST-based contract analysis with AI-powered exploit generation, iterative compilation fixes, intelligent attack chain analysis, and production-ready Foundry tests optimized for high-value bug bounty submissions.</p>
+                        <p>Solidity AST-based contract analysis with AI-powered exploit generation, mock contract library (ERC20, Oracle, WETH, FlashLoan), intelligent setUp() generation, iterative compilation fixes, and production-ready Foundry tests optimized for high-value bug bounty submissions.</p>
                     </div>
 
                     <div class="feature-card reveal reveal-delay-3">
                         <div class="feature-icon foundry"></div>
-                        <h3>Foundry Integration</h3>
-                        <p>Native Foundry support with automated test generation, fork verification, and comprehensive exploit validation against mainnet state.</p>
+                        <h3>Taint & Data Flow Analysis</h3>
+                        <p>Source-to-sink taint tracking across 8 source types and 12 sink types with fixed-point propagation, sanitizer detection, cross-contract taint flows, and token quirks database covering 12 categories of non-standard ERC-20 behaviors.</p>
                     </div>
 
                     <div class="feature-card reveal reveal-delay-4">
                         <div class="feature-icon github"></div>
                         <h3>GitHub Workflow Integration</h3>
-                        <p>Interactive repository analysis with intelligent contract discovery, scope management, and persistent audit trails for systematic security reviews.</p>
+                        <p>Interactive repository analysis with Auto-Discover smart contract scanner, ranked contract selection, scope management, and persistent audit trails for systematic security reviews.</p>
                     </div>
 
                     <div class="feature-card reveal reveal-delay-5">
                         <div class="feature-icon report"></div>
                         <h3>Professional Reporting</h3>
-                        <p>Comprehensive reporting in multiple formats with vulnerability classification, risk assessment, and actionable remediation guidance for security teams.</p>
+                        <p>Comprehensive reporting in multiple formats with severity calibration aligned to bug bounty payout tiers, vulnerability classification, risk assessment, and actionable remediation guidance for security teams.</p>
                     </div>
                 </div>
             </div>
@@ -1181,20 +1181,20 @@
 
                     <div class="workflow-step reveal reveal-delay-1">
                         <div class="workflow-step-number">2</div>
-                        <h3>Comprehensive Audit</h3>
-                        <p><strong>Automated Intelligence.</strong> Multi-layered analysis with AI-powered detection runs as background jobs with live output streaming—start multiple audits concurrently and track them all from the htop-style jobs table.</p>
+                        <h3>Deep Analysis</h3>
+                        <p><strong>6-Pass LLM Pipeline.</strong> AST parsing, taint analysis, 160+ detectors, and a structured multi-pass LLM pipeline run as background jobs with live output streaming—start multiple audits concurrently and track them all from the htop-style jobs table.</p>
                     </div>
 
                     <div class="workflow-step reveal reveal-delay-2">
                         <div class="workflow-step-number">3</div>
                         <h3>Intelligent Reporting</h3>
-                        <p><strong>Executive-Ready Output.</strong> AI-classified findings with risk assessments and remediation guidance—professional reports without the manual effort.</p>
+                        <p><strong>Bounty-Ready Output.</strong> Severity calibration aligned to bug bounty payout tiers, AI-classified findings with risk assessments and remediation guidance—professional reports without the manual effort.</p>
                     </div>
 
                     <div class="workflow-step reveal reveal-delay-3">
                         <div class="workflow-step-number">4</div>
                         <h3>PoC Generation</h3>
-                        <p><strong>Battle-Tested Exploits.</strong> Automated Foundry test generation with AI-powered exploit creation—production-ready proofs-of-concept without coding.</p>
+                        <p><strong>Battle-Tested Exploits.</strong> Automated Foundry test generation with mock contract library, intelligent setUp() generation, and AI-powered exploit creation—production-ready proofs-of-concept without coding.</p>
                     </div>
                 </div>
             </div>
@@ -1221,10 +1221,10 @@
                 <div class="footer-section">
                     <h4>Core Features</h4>
                     <ul>
-                        <li><a href="#features">Multi-Layer Analysis</a></li>
-                        <li><a href="#features">AI-Powered Detection</a></li>
+                        <li><a href="#features">6-Pass Deep Analysis</a></li>
+                        <li><a href="#features">AST & Taint Analysis</a></li>
                         <li><a href="#features">Automated PoC Generation</a></li>
-                        <li><a href="#features">Foundry Integration</a></li>
+                        <li><a href="#features">160+ Static Detectors</a></li>
                     </ul>
                 </div>
 
