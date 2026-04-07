@@ -1,0 +1,121 @@
+[
+  {
+    "content": "fee_on_transfer (high): Some tokens deduct a fee on every transfer so the amount received is less than the amount sent. Protocols that credit the sent amount instead of the actual received amount will have accounting mismatches. | Known tokens: USDT (with fee flag), STA, PAXG, SAFEMOON, DEFIAT | Exploit: Attacker deposits a fee-on-transfer token. The protocol credits the full amount but only receives (amount - fee). The attacker can then withdraw the full credited amount, draining other users' funds o | Fix: Use a balance-before/balance-after delta pattern: uint256 before = token.balanceOf(address(this)); token.transferFrom(...); uint256 received = token.balanceOf(address(this)) - before;",
+    "tags": [
+      "fee_on_transfer",
+      "high",
+      "DEX_AMM",
+      "LENDING_POOL",
+      "VAULT_ERC4626"
+    ]
+  },
+  {
+    "content": "rebasing_tokens (high): Rebasing tokens (stETH, AMPL, OHM) change user balances automatically without transfers. Protocols that cache balanceOf() and reuse it later will have stale values. | Known tokens: stETH, AMPL, OHM, AAVE aTokens, Compound cTokens | Exploit: Protocol stores stETH balanceOf() on deposit. A negative rebase reduces the actual balance, but the protocol's internal accounting still shows the old (higher) value. Users who withdraw first get the  | Fix: Use wrapped non-rebasing versions of rebasing tokens (e.g. wstETH instead of stETH) or implement share-based internal accounting that converts to/from rebasing token amounts only at deposit/withdraw b",
+    "tags": [
+      "rebasing_tokens",
+      "high",
+      "VAULT_ERC4626",
+      "STAKING",
+      "LENDING_POOL"
+    ]
+  },
+  {
+    "content": "erc777_callbacks (high): ERC-777 tokens invoke tokensReceived/tokensToSend hooks on the recipient/sender, enabling reentrancy attacks even through seemingly safe transfer() or send() calls. | Known tokens: imBTC, any ERC-777 compatible token | Exploit: An ERC-777 token's tokensReceived hook re-enters the contract during a transfer, allowing the attacker to withdraw or claim rewards multiple times before state is updated. This was exploited in the im | Fix: Apply a nonReentrant modifier (e.g. OpenZeppelin ReentrancyGuard) to all functions that perform token transfers, or strictly follow the checks-effects-interactions pattern with state updates before ex",
+    "tags": [
+      "erc777_callbacks",
+      "high",
+      "DEX_AMM",
+      "LENDING_POOL",
+      "VAULT_ERC4626"
+    ]
+  },
+  {
+    "content": "non_standard_return (medium): Some tokens (notably old USDT on mainnet, BNB) do not return a bool from transfer/transferFrom/approve. Direct calls that check the return value will revert. | Known tokens: USDT (mainnet), BNB, OMG, HT | Exploit: A protocol uses IERC20(token).transfer() and checks the bool return. When interacting with USDT (which returns void), the call reverts due to the ABI decoder expecting return data. This causes permane | Fix: Use OpenZeppelin's SafeERC20 library (safeTransfer, safeTransferFrom, safeApprove) which handles both standard and non-standard return values.",
+    "tags": [
+      "non_standard_return",
+      "medium",
+      "DEX_AMM",
+      "LENDING_POOL",
+      "VAULT_ERC4626"
+    ]
+  },
+  {
+    "content": "blocklist_tokens (medium): Tokens like USDC and USDT have admin-controlled blocklists that can freeze any address. If a protocol holds funds in a single address that gets blocklisted, or uses push-based transfer to a blocklisted recipient, critical operations will fail. | Known tokens: USDC, USDT, BUSD, TUSD | Exploit: Protocol distributes rewards by iterating over users and calling token.transfer(). If one user's address is blocklisted by the token admin, the entire distribution loop reverts, blocking all other use | Fix: Use a pull-based withdrawal pattern instead of pushing tokens to users. Allow users to claim their funds via a separate withdraw() call so that one blocklisted address cannot block the entire protocol",
+    "tags": [
+      "blocklist_tokens",
+      "medium",
+      "LENDING_POOL",
+      "STAKING",
+      "VAULT_ERC4626"
+    ]
+  },
+  {
+    "content": "approval_race (low): The ERC-20 approve() function has a known race condition: if a user changes an allowance from N to M, the spender can front-run the transaction to spend N, then spend M as well (total N+M). | Known tokens: Any standard ERC-20 (USDT enforces approve(0) first) | Exploit: User has approve(spender, 100). They want to change to approve(spender, 50). The spender front-runs the new approve and calls transferFrom for 100, then after the new approve goes through, calls trans | Fix: Use safeIncreaseAllowance/safeDecreaseAllowance from OpenZeppelin, or always set allowance to 0 before setting a new value. Some tokens like USDT require approve(0) before a non-zero approve.",
+    "tags": [
+      "approval_race",
+      "low",
+      "DEX_AMM",
+      "VAULT_ERC4626",
+      "YIELD_AGGREGATOR"
+    ]
+  },
+  {
+    "content": "pausable_tokens (medium): Tokens with pause functionality (USDC, USDT) can have all transfers halted by the admin. Protocols that depend on token transfers in critical paths (liquidation, withdrawal) will be bricked during a pause. | Known tokens: USDC, USDT, BUSD, WBTC | Exploit: USDC gets paused by Circle during a regulatory event. All liquidations in a lending protocol fail because they require USDC transfers. Positions become undercollateralized and the protocol accumulates | Fix: Implement graceful failure handling for token transfers in critical paths. Use try-catch around transfers or provide fallback mechanisms so that a paused token does not brick liquidation or emergency ",
+    "tags": [
+      "pausable_tokens",
+      "medium",
+      "LENDING_POOL",
+      "VAULT_ERC4626",
+      "BRIDGE"
+    ]
+  },
+  {
+    "content": "multiple_entry_points (low): Some proxy-pattern tokens (TUSD, older USDT) expose both the proxy address and the implementation address as callable entry points. Comparing token addresses without canonicalization can lead to the same token being treated as two different tokens. | Known tokens: TUSD, USDT (proxy), other upgradeable tokens | Exploit: A DEX allows adding liquidity for token pairs. An attacker creates a pool with TUSD-proxy and TUSD-implementation as the two tokens. Since the protocol treats them as different tokens, the attacker ca | Fix: Resolve token addresses to a canonical form before comparison. For proxy tokens, compare the underlying implementation address or maintain a mapping from proxy to canonical address.",
+    "tags": [
+      "multiple_entry_points",
+      "low",
+      "DEX_AMM",
+      "LENDING_POOL"
+    ]
+  },
+  {
+    "content": "upgradeable_tokens (low): Upgradeable tokens (USDC v2, many proxy tokens) can change their behavior after deployment. Hardcoded assumptions about decimals, transfer behavior, or fee structure may break after an upgrade. | Known tokens: USDC, USDT, TUSD, any proxy-pattern token | Exploit: Protocol hardcodes USDC decimals as 6. After a USDC upgrade changes decimals (hypothetical) or adds a transfer fee, the protocol's math breaks silently, leading to incorrect accounting. | Fix: Avoid hardcoding token behavior assumptions. Read decimals dynamically via token.decimals(). Use SafeERC20 to handle return value changes. Consider that token behavior may change post-deployment.",
+    "tags": [
+      "upgradeable_tokens",
+      "low",
+      "DEX_AMM",
+      "LENDING_POOL",
+      "VAULT_ERC4626"
+    ]
+  },
+  {
+    "content": "low_decimal_tokens (medium): Tokens with fewer than 18 decimals (USDC=6, WBTC=8) cause precision loss in math that assumes 18-decimal tokens. Hardcoded 1e18 multipliers or direct multiplication with 18-decimal tokens create huge rounding errors. | Known tokens: USDC (6), USDT (6), WBTC (8), GUSD (2) | Exploit: A vault uses amount * 1e18 / totalSupply for share calculation. With USDC (6 decimals), a deposit of 1 USDC (1e6) gets multiplied by 1e18, creating enormous intermediate values. Division by totalSuppl | Fix: Always read token.decimals() dynamically and scale amounts accordingly. Use 10**decimals instead of hardcoded 1e18. When mixing tokens with different decimals, normalize to a common precision first.",
+    "tags": [
+      "low_decimal_tokens",
+      "medium",
+      "VAULT_ERC4626",
+      "DEX_AMM",
+      "LENDING_POOL"
+    ]
+  },
+  {
+    "content": "transfer_hooks (medium): ERC-1363 (transferAndCall) and ERC-677 tokens invoke a callback on the recipient after transfer, similar to ERC-777 but through different interfaces. This enables reentrancy through token transfers. | Known tokens: LINK (ERC-677), ERC-1363 tokens | Exploit: A staking contract calls token.transfer(user, amount) to send rewards, then updates the reward balance. The token (ERC-677/1363) calls onTokenTransfer on the recipient, who re-enters claimRewards() be | Fix: Apply nonReentrant modifiers or follow checks-effects-interactions pattern. Be aware that some tokens call back into the recipient on transfer, even without explicit ERC-777 support.",
+    "tags": [
+      "transfer_hooks",
+      "medium",
+      "DEX_AMM",
+      "STAKING",
+      "LENDING_POOL"
+    ]
+  },
+  {
+    "content": "flash_mintable_tokens (high): Tokens with built-in flash minting (DAI, any ERC-3156 token) can have their totalSupply temporarily increased to enormous values within a single transaction. Governance or pricing based on totalSupply or token balance can be manipulated. | Known tokens: DAI, any ERC-3156 flash-mintable token | Exploit: Protocol uses totalSupply()-based pricing for a flash-mintable token. Attacker flash-mints billions of tokens, inflating totalSupply. The price calculation (e.g., reserves / totalSupply) drops to near | Fix: Do not use totalSupply() or current balanceOf() for pricing or governance. Use TWAP for pricing and snapshot-based voting power (ERC20Votes with getPastVotes) for governance to prevent flash-mint mani",
+    "tags": [
+      "flash_mintable_tokens",
+      "high",
+      "GOVERNANCE",
+      "ORACLE",
+      "DEX_AMM"
+    ]
+  }
+]

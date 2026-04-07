@@ -92,6 +92,9 @@ class AccuracyTracker:
         
         self.metrics['submissions'].append(submission)
         self.save_metrics()
+
+        # SAGE feedback: store outcome for institutional learning
+        self._sage_record_outcome(vulnerability, outcome)
     
     def record_filtered(self, vulnerability: Dict, reason: str, stage: str = 'unknown'):
         """
@@ -441,6 +444,19 @@ class AccuracyTracker:
             # Linear scale from 1.0 at 0.33 to 0.5 at 0.0
             return 0.5 + 0.5 * (prec / 0.33)
         return 1.0
+
+    def _sage_record_outcome(self, vulnerability: Dict, outcome: str) -> None:
+        """Forward outcome to SAGE feedback manager (best-effort)."""
+        try:
+            from core.sage_feedback import SageFeedbackManager
+            fm = SageFeedbackManager()
+            fm.record_finding_outcome(
+                finding=vulnerability,
+                outcome=outcome,
+                context={"archetype": vulnerability.get("archetype", "unknown")},
+            )
+        except Exception:
+            pass  # SAGE is optional — never break tracking
 
     def save_metrics(self):
         """Save metrics to file."""

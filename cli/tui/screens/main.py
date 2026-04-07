@@ -1,5 +1,5 @@
 """
-Main dashboard screen for the Aether v3.0 Textual TUI.
+Main dashboard screen for the Aether v5.0 Textual TUI.
 
 Displays the jobs table, session cost bar, and footer key-binding hints.
 This is the default screen pushed by AetherApp on startup.
@@ -44,7 +44,7 @@ class MainScreen(Screen):
 
     def on_mount(self) -> None:
         """Set up a 1-second periodic refresh for jobs table and cost bar."""
-        self.title = "AETHER v3.0 \u2014 Smart Contract Security Analysis"
+        self.title = "AETHER v5.0 \u2014 Smart Contract Security Analysis"
         self._refresh_timer = self.set_interval(1.0, self._refresh)
         # Do an immediate refresh so the screen isn't blank on first paint
         self._refresh()

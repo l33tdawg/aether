@@ -271,6 +271,33 @@ class AuditRunner:
             self._job_manager.fail_job(job.job_id, str(e)[:200], cost_delta)
 
         finally:
+            # SAGE: store audit learnings for institutional memory
+            try:
+                from core.sage_feedback import SageFeedbackManager
+                fm = SageFeedbackManager()
+                # Build findings summary from job status
+                severity_counts = {}
+                total_findings = 0
+                if job.audit_status:
+                    total_findings = job.audit_status.findings_count
+                fm.record_audit_completion(
+                    contract_name=os.path.basename(target),
+                    archetype=getattr(job, "archetype", "unknown"),
+                    findings_summary={"total": total_findings},
+                )
+                # Reflect on audit outcome
+                dos = []
+                donts = []
+                if self._job_manager.get_job(job.job_id) and \
+                   self._job_manager.get_job(job.job_id).status == "COMPLETED":
+                    dos.append(f"Audit of {os.path.basename(target)} completed successfully with {total_findings} findings")
+                else:
+                    donts.append(f"Audit of {os.path.basename(target)} failed — check error logs")
+                if dos or donts:
+                    fm._client.reflect(dos=dos, donts=donts, domain="audit-history")
+            except Exception:
+                pass  # SAGE is optional — never break audit cleanup
+
             if self._demuxer:
                 self._demuxer.unregister()
             if self._stderr_demuxer:

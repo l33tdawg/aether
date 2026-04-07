@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  sage:
+    image: ghcr.io/l33tdawg/sage:latest
+    container_name: aether-sage
+    ports:
+      - "8080:8080"
+    volumes:
+      - sage-data:/root/.sage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/v1/dashboard/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  sage-data:
+    driver: local

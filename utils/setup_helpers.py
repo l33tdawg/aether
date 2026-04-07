@@ -243,6 +243,32 @@ class APIKeyValidator:
             return False, f"Validation error: {str(e)[:100]}"
     
     @staticmethod
+    def validate_anthropic_key(api_key: str) -> Tuple[bool, str]:
+        """Validate Anthropic API key."""
+        if not api_key or not api_key.startswith('sk-ant-'):
+            return False, "Invalid format (should start with 'sk-ant-')"
+
+        try:
+            import anthropic
+
+            client = anthropic.Anthropic(api_key=api_key)
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=5,
+                messages=[{"role": "user", "content": "test"}],
+            )
+            return True, "Valid"
+
+        except Exception as e:
+            error_msg = str(e)
+            if "invalid" in error_msg.lower() or "authentication" in error_msg.lower():
+                return False, "Invalid API key"
+            elif "rate" in error_msg.lower() or "quota" in error_msg.lower():
+                return True, "Valid (but rate limited)"
+            else:
+                return False, f"Validation failed: {error_msg[:100]}"
+
+    @staticmethod
     def validate_etherscan_key(api_key: str, network: str = 'mainnet') -> Tuple[bool, str]:
         """Validate Etherscan API key."""
         if not api_key:

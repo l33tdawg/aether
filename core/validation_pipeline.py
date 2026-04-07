@@ -68,6 +68,9 @@ class ValidationPipeline:
         self._halmos_runner = None
         self._halmos_generator = None
         self._halmos_project_dir = None
+
+        # NEW: SAGE institutional memory for known FP patterns (Apr 2026)
+        self._sage_fp_patterns: Optional[List[str]] = None
     
     @property
     def governance_detector(self):
@@ -278,7 +281,13 @@ class ValidationPipeline:
             List of ValidationStage results (first false positive triggers early exit)
         """
         results = []
-        
+
+        # Stage -1: SAGE known false positive pattern check (Apr 2026)
+        sage_check = self._check_sage_known_fp(vulnerability)
+        if sage_check and sage_check.is_false_positive:
+            results.append(sage_check)
+            return results  # Early exit — already known FP
+
         # Stage 0: Code-description mismatch check (FAST - catch obvious errors)
         mismatch_check = self._check_code_description_mismatch(vulnerability)
         if mismatch_check and mismatch_check.is_false_positive:
@@ -1428,6 +1437,47 @@ class ValidationPipeline:
         
         return i
     
+    def _check_sage_known_fp(self, vuln: Dict) -> Optional[ValidationStage]:
+        """Check if this finding matches a known false positive pattern from SAGE.
+
+        Lazy-loads FP patterns once per pipeline instance. Matches by
+        vulnerability type + description keywords against recalled patterns.
+        """
+        try:
+            if self._sage_fp_patterns is None:
+                self._sage_fp_patterns = []
+                try:
+                    from core.sage_feedback import SageFeedbackManager
+                    fm = SageFeedbackManager()
+                    self._sage_fp_patterns = fm.get_historical_fp_patterns("general")
+                except Exception:
+                    pass
+
+            if not self._sage_fp_patterns:
+                return None
+
+            vuln_type = vuln.get("vulnerability_type", "").lower()
+            description = vuln.get("description", "").lower()
+
+            for pattern in self._sage_fp_patterns:
+                pattern_lower = pattern.lower()
+                # Match if the vuln type appears in a known FP pattern
+                if vuln_type and vuln_type in pattern_lower:
+                    # Additional keyword overlap check to avoid false matches
+                    desc_words = set(description.split())
+                    pattern_words = set(pattern_lower.split())
+                    overlap = desc_words & pattern_words
+                    if len(overlap) >= 3:
+                        return ValidationStage(
+                            stage_name="sage_known_false_positive",
+                            is_false_positive=True,
+                            confidence=0.85,
+                            reasoning=f"Matches known SAGE false positive pattern: {pattern[:200]}",
+                        )
+        except Exception:
+            pass  # SAGE is optional
+        return None
+
     def _check_code_description_mismatch(self, vuln: Dict) -> Optional[ValidationStage]:
         """
         Check if vulnerability description matches the actual code.

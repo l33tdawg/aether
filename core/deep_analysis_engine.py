@@ -938,6 +938,135 @@ class DeepAnalysisEngine:
         except Exception:
             self._severity_calibration = {}
 
+    # ------------------------------------------------------------------
+    # SAGE institutional memory helpers
+    # ------------------------------------------------------------------
+
+    def _build_sage_context(self, archetype: ArchetypeResult) -> str:
+        """Recall historical audit knowledge from SAGE for this archetype.
+
+        Returns a formatted context string (may be empty if SAGE is down).
+        """
+        try:
+            from core.sage_client import SageClient
+            client = SageClient.get_instance()
+            if not client.health_check():
+                return ""
+
+            arch_name = archetype.primary.value
+            sections: list[str] = []
+
+            # Recall archetype-specific audit findings
+            arch_memories = client.recall(
+                query=f"vulnerabilities and audit findings for {arch_name}",
+                domain=f"audit-{arch_name}",
+                top_k=5,
+            )
+            if arch_memories:
+                lines = [m.get("content", "") for m in arch_memories if m.get("content")]
+                if lines:
+                    sections.append("### Historical Audit Findings\n" + "\n".join(f"- {l}" for l in lines))
+
+            # Recall exploit patterns
+            exploit_memories = client.recall(
+                query=f"exploit patterns for {arch_name}",
+                domain="exploit-patterns",
+                top_k=5,
+            )
+            if exploit_memories:
+                lines = [m.get("content", "")[:200] for m in exploit_memories if m.get("content")]
+                if lines:
+                    sections.append("### Known Exploit Patterns\n" + "\n".join(f"- {l}" for l in lines))
+
+            if sections:
+                ctx = "\n\n## SAGE Institutional Knowledge\n" + "\n\n".join(sections) + "\n"
+                print(f"   🧠 SAGE: recalled {len(arch_memories) + len(exploit_memories)} memories", flush=True)
+                return ctx
+        except Exception as exc:
+            logger.debug("SAGE context build failed: %s", exc)
+        return ""
+
+    def _recall_sage_for_pass(self, archetype: ArchetypeResult, pass_num: int) -> str:
+        """Recall SAGE memories specific to a pipeline pass."""
+        try:
+            from core.sage_client import SageClient
+            client = SageClient.get_instance()
+            arch_name = archetype.primary.value
+
+            if pass_num == 3:
+                memories = client.recall(
+                    query=f"{arch_name} invariant violations and edge cases",
+                    domain="exploit-patterns",
+                    top_k=5,
+                )
+            elif pass_num == 5:
+                memories = client.recall(
+                    query=f"false positives for {arch_name}",
+                    domain="false-positives",
+                    top_k=5,
+                )
+            else:
+                return ""
+
+            if not memories:
+                return ""
+
+            lines = [m.get("content", "") for m in memories if m.get("content")]
+            if not lines:
+                return ""
+
+            if pass_num == 5:
+                header = "\n\n## Known False Positive Patterns (from SAGE)\nAvoid flagging these known FP patterns:\n"
+            else:
+                header = "\n\n## Historical Patterns (from SAGE)\n"
+            return header + "\n".join(f"- {l}" for l in lines) + "\n"
+        except Exception as exc:
+            logger.debug("SAGE pass %d recall failed: %s", pass_num, exc)
+            return ""
+
+    def _store_audit_learnings(
+        self,
+        findings: List[Dict[str, Any]],
+        archetype: ArchetypeResult,
+        contract_name: str,
+    ) -> None:
+        """Store audit findings summary in SAGE for future recall."""
+        try:
+            from core.sage_client import SageClient
+            client = SageClient.get_instance()
+            if not client.health_check():
+                return
+
+            arch_name = archetype.primary.value
+
+            # Summarize findings by severity
+            severity_counts: dict[str, int] = {}
+            vuln_types: set[str] = set()
+            for f in findings:
+                sev = f.get("severity", "unknown")
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
+                vuln_types.add(f.get("vulnerability_type", "unknown"))
+
+            if not findings:
+                return
+
+            sev_str = ", ".join(f"{k}: {v}" for k, v in severity_counts.items())
+            types_str = ", ".join(list(vuln_types)[:5])
+
+            client.remember(
+                content=(
+                    f"Audit of {contract_name} ({arch_name}): "
+                    f"{len(findings)} findings ({sev_str}). "
+                    f"Types: {types_str}."
+                ),
+                domain=f"audit-{arch_name}",
+                memory_type="observation",
+                confidence=0.80,
+                tags=["audit-result", arch_name, contract_name],
+            )
+        except Exception as exc:
+            logger.debug("SAGE store_audit_learnings failed: %s", exc)
+
     def _build_severity_calibration_note(self) -> str:
         """Build a calibration note for the LLM if certain severities have high rejection.
 
@@ -1014,6 +1143,9 @@ class DeepAnalysisEngine:
 
         result = DeepAnalysisResult(archetype=archetype)
         content_key = _content_hash(combined_content)
+
+        # SAGE institutional memory — recall historical audit knowledge
+        sage_context = self._build_sage_context(archetype)
 
         # Build file context header for LLM prompts
         file_context = _build_file_context_header(contract_files)
@@ -1170,10 +1302,17 @@ class DeepAnalysisEngine:
         related_ctx_p3 = _build_related_context_section(
             related_sources, related_budgets.get(3, 0), full_source=True
         )
+        pass3_prompt_text = _build_pass3_prompt(
+            truncated_content, pass1_text, pass2_text, checklist_text,
+            file_context=file_context, related_context=related_ctx_p3,
+        )
+        # Inject SAGE institutional context into Pass 3
+        sage_pass3 = self._recall_sage_for_pass(archetype, pass_num=3)
+        if sage_pass3:
+            pass3_prompt_text += sage_pass3
         pass3_findings = await self._run_finding_pass(
             "Pass 3: Invariant Violations",
-            _build_pass3_prompt(truncated_content, pass1_text, pass2_text, checklist_text,
-                                file_context=file_context, related_context=related_ctx_p3),
+            pass3_prompt_text,
             pass3_model,
             result,
         )
@@ -1261,6 +1400,10 @@ class DeepAnalysisEngine:
         calibration_note = self._build_severity_calibration_note()
         if calibration_note:
             pass5_prompt += calibration_note
+        # SAGE: inject known false positive patterns into Pass 5
+        sage_pass5 = self._recall_sage_for_pass(archetype, pass_num=5)
+        if sage_pass5:
+            pass5_prompt += sage_pass5
         pass5_findings = await self._run_finding_pass(
             "Pass 5: Adversarial Modeling",
             pass5_prompt,
@@ -1272,6 +1415,10 @@ class DeepAnalysisEngine:
         total_findings = len(result.all_findings)
         print(f"✅ Deep analysis complete: {total_findings} findings in {result.total_duration:.1f}s "
               f"({len(result.pass_results)} passes)", flush=True)
+
+        # SAGE: store audit learnings for future recall
+        contract_name = contract_files[0].get("name", "unknown") if contract_files else "unknown"
+        self._store_audit_learnings(result.all_findings, archetype, contract_name)
 
         return result
 

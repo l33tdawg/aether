@@ -1,7 +1,8 @@
 """
 Cost bar widget for the Aether v3.0 Textual TUI dashboard.
 
-Displays a single-line summary of session LLM costs broken down by provider.
+Displays a single-line summary of session LLM costs broken down by provider,
+plus SAGE institutional memory connection status.
 """
 
 from __future__ import annotations
@@ -25,6 +26,11 @@ _PROVIDER_NAMES = {
 
 class CostBar(Static):
     """Single-line cost summary bar showing session totals by provider."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._sage_status: str | None = None  # Cache to avoid hitting SAGE every second
+        self._sage_check_counter: int = 0
 
     def on_mount(self) -> None:
         self.refresh_cost()
@@ -59,5 +65,26 @@ class CostBar(Static):
                 calls = int(prov.get("calls", 0))
                 parts.append(f"[bold]{name}:[/bold] ${cost:.2f} ({calls})")
 
+        # SAGE status — check every 30 refreshes (~30s) to avoid overhead
+        self._sage_check_counter += 1
+        if self._sage_status is None or self._sage_check_counter >= 30:
+            self._sage_check_counter = 0
+            self._sage_status = self._get_sage_status()
+        parts.append(self._sage_status)
+
         display = "  |  ".join(parts)
         self.update(display)
+
+    @staticmethod
+    def _get_sage_status() -> str:
+        """Return a short SAGE status string for the cost bar."""
+        try:
+            from core.sage_client import SageClient
+            client = SageClient.get_instance()
+            if client.health_check():
+                status = client.get_status()
+                mem_count = status.get("total_memories", "?")
+                return f"[bold]SAGE:[/bold] [green]ON[/green] ({mem_count})"
+            return "[bold]SAGE:[/bold] [dim]OFF[/dim]"
+        except Exception:
+            return "[bold]SAGE:[/bold] [dim]OFF[/dim]"

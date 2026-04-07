@@ -1,0 +1,569 @@
+[
+  {
+    "content": "[dex_amm] First LP Manipulation / Minimum Liquidity (critical): First liquidity provider can manipulate initial price and extract value from subsequent LPs. | Exploit precedent: Uniswap V2 mitigation pattern | Detection: Does the pool burn MINIMUM_LIQUIDITY on first mint? Without this, first LP can manipulate share price.",
+    "domain": "protocol-dex_amm",
+    "tags": [
+      "dex_amm",
+      "critical",
+      "First LP Manipulation / Minimum Liquidity"
+    ]
+  },
+  {
+    "content": "[dex_amm] Sandwich Attack Vulnerability (high): No slippage protection allows MEV bots to sandwich trades for profit. | Exploit precedent: Extremely common MEV attack | Detection: Does swap() enforce a minimum output amount? Is there a transaction deadline? Without both, trades are vulnerable to sandwich attacks.",
+    "domain": "protocol-dex_amm",
+    "tags": [
+      "dex_amm",
+      "high",
+      "Sandwich Attack Vulnerability"
+    ]
+  },
+  {
+    "content": "[dex_amm] Price Oracle Manipulation via Reserves (critical): Using spot reserves as price oracle allows flash loan manipulation. | Exploit precedent: Multiple DEX oracle exploits | Detection: Are spot reserves used as a price oracle by other contracts? Spot prices can be manipulated via flash loans.",
+    "domain": "protocol-dex_amm",
+    "tags": [
+      "dex_amm",
+      "critical",
+      "Price Oracle Manipulation via Reserves"
+    ]
+  },
+  {
+    "content": "[dex_amm] Skim/Sync Manipulation (medium): Direct token donation followed by sync() can manipulate reserves. | Exploit precedent: Various DEX implementations | Detection: Can direct token transfers affect reserve calculations? Does sync() create arbitrage opportunities?",
+    "domain": "protocol-dex_amm",
+    "tags": [
+      "dex_amm",
+      "medium",
+      "Skim/Sync Manipulation"
+    ]
+  },
+  {
+    "content": "[dex_amm] Fee-on-Transfer Token Support (high): Fee-on-transfer tokens cause the DEX to receive less than the amount parameter, leading to accounting mismatches and drainable reserves. | Exploit precedent: Multiple DEXes drained via fee-on-transfer token accounting bugs | Detection: Does the DEX handle tokens where received amount < transferred amount? Does it use a balance delta pattern or trust the amount parameter directly?",
+    "domain": "protocol-dex_amm",
+    "tags": [
+      "dex_amm",
+      "high",
+      "Fee-on-Transfer Token Support"
+    ]
+  },
+  {
+    "content": "[dex_orderbook] Order Front-Running / Sandwich (high): Pending limit orders visible in mempool can be front-run or sandwiched by MEV bots. | Exploit precedent: Common MEV extraction on on-chain orderbooks | Detection: Are orders visible in the mempool before execution? Can MEV bots front-run or sandwich limit orders?",
+    "domain": "protocol-dex_orderbook",
+    "tags": [
+      "dex_orderbook",
+      "high",
+      "Order Front-Running / Sandwich"
+    ]
+  },
+  {
+    "content": "[dex_orderbook] Partial Fill Manipulation (high): Partial fills can be exploited to leave dust amounts or manipulate order state for attacker benefit. | Exploit precedent: Various on-chain orderbook exploits | Detection: Can an order be partially filled with a dust amount? Does partial filling leave the order in an exploitable state?",
+    "domain": "protocol-dex_orderbook",
+    "tags": [
+      "dex_orderbook",
+      "high",
+      "Partial Fill Manipulation"
+    ]
+  },
+  {
+    "content": "[dex_orderbook] Cancel Griefing (medium): Attacker prevents order cancellation by front-running cancel with a minimal fill, or cancellation costs excessive gas. | Exploit precedent: DEX orderbook griefing attacks | Detection: Can an attacker front-run a cancel with a minimal fill? Is cancellation gas-efficient even for complex orders?",
+    "domain": "protocol-dex_orderbook",
+    "tags": [
+      "dex_orderbook",
+      "medium",
+      "Cancel Griefing"
+    ]
+  },
+  {
+    "content": "[dex_orderbook] Self-Trading Wash Detection Bypass (medium): Attacker uses multiple addresses to execute wash trades, inflating volume or farming incentives. | Exploit precedent: Various DEX wash trading for incentive farming | Detection: Can a user trade with themselves using different addresses? Are volume-based incentives vulnerable to wash trading?",
+    "domain": "protocol-dex_orderbook",
+    "tags": [
+      "dex_orderbook",
+      "medium",
+      "Self-Trading Wash Detection Bypass"
+    ]
+  },
+  {
+    "content": "[lending_pool] Oracle Price Manipulation (critical): Spot price oracle allows flash loan manipulation of collateral value, enabling undercollateralized borrows or avoiding liquidation. | Exploit precedent: Cream Finance ($130M), Mango Markets ($114M) | Detection: How is collateral valued? Is the price source manipulable in a single transaction? Check for TWAP usage, staleness checks, and deviation bounds.",
+    "domain": "protocol-lending_pool",
+    "tags": [
+      "lending_pool",
+      "critical",
+      "Oracle Price Manipulation"
+    ]
+  },
+  {
+    "content": "[lending_pool] Liquidation Threshold Manipulation (critical): Attacker manipulates their health factor to avoid liquidation or to liquidate others unfairly. | Exploit precedent: Multiple lending protocol exploits | Detection: Can an attacker manipulate their health factor in the same transaction as borrowing? Is price updated atomically before liquidation checks?",
+    "domain": "protocol-lending_pool",
+    "tags": [
+      "lending_pool",
+      "critical",
+      "Liquidation Threshold Manipulation"
+    ]
+  },
+  {
+    "content": "[lending_pool] Bad Debt Cascade (high): Underwater position creates bad debt that socializes losses across lenders when collateral < debt. | Exploit precedent: Euler Finance ($197M) | Detection: What happens when a position becomes underwater (collateral < debt)? Is there a bad debt handling mechanism?",
+    "domain": "protocol-lending_pool",
+    "tags": [
+      "lending_pool",
+      "high",
+      "Bad Debt Cascade"
+    ]
+  },
+  {
+    "content": "[lending_pool] Interest Rate Manipulation (high): Flash loan can temporarily change utilization rate, manipulating interest rates for existing borrowers. | Exploit precedent: Various lending protocols | Detection: Can a flash loan temporarily spike utilization to manipulate interest rates? Is the rate calculated based on current utilization?",
+    "domain": "protocol-lending_pool",
+    "tags": [
+      "lending_pool",
+      "high",
+      "Interest Rate Manipulation"
+    ]
+  },
+  {
+    "content": "[lending_pool] Reentrancy in Borrow/Repay (high): Token transfer in borrow/repay allows reentrancy before state update. | Exploit precedent: Multiple lending protocols | Detection: Does borrow() transfer tokens before updating debt state? Does repay() update state before transferring tokens?",
+    "domain": "protocol-lending_pool",
+    "tags": [
+      "lending_pool",
+      "high",
+      "Reentrancy in Borrow/Repay"
+    ]
+  },
+  {
+    "content": "[lending_pool] Share/exchange rate manipulation (high): Can the first depositor or a large depositor manipulate the exchange rate between deposit tokens and pool shares? | Exploit precedent: Multiple lending pool share price manipulation exploits | Detection: Share/exchange rate manipulation: Can the first depositor or a large depositor manipulate the exchange rate between deposit tokens and pool shares?",
+    "domain": "protocol-lending_pool",
+    "tags": [
+      "lending_pool",
+      "high",
+      "Share/exchange rate manipulation"
+    ]
+  },
+  {
+    "content": "[lending_pool] Non-Standard Token Handling (high): Lending pools must handle fee-on-transfer, rebasing, blocklist, and non-standard-return tokens safely or risk accounting bugs and DoS. | Exploit precedent: Aave/Compound issues with non-standard tokens, fee-on-transfer accounting bugs | Detection: Does the pool use SafeERC20, handle rebasing tokens, and check for fee-on-transfer? Does it handle blocklist-induced transfer failures gracefully?",
+    "domain": "protocol-lending_pool",
+    "tags": [
+      "lending_pool",
+      "high",
+      "Non-Standard Token Handling"
+    ]
+  },
+  {
+    "content": "[vault_erc4626] Rounding Direction Consistency (high): Deposits should round DOWN (fewer shares for depositor), withdrawals should round UP (more shares burned). Inconsistency allows value extraction. | Exploit precedent: Multiple vault implementations | Detection: Verify rounding direction: deposits round DOWN (user gets fewer shares), withdrawals round UP (user burns more shares). Check every division/mulDiv for direction.",
+    "domain": "protocol-vault_erc4626",
+    "tags": [
+      "vault_erc4626",
+      "high",
+      "Rounding Direction Consistency"
+    ]
+  },
+  {
+    "content": "[vault_erc4626] Share Price Manipulation via Direct Donation (high): Direct token transfer to vault inflates totalAssets without minting shares, manipulating share price for all holders. | Exploit precedent: Multiple vaults using balanceOf for totalAssets | Detection: Does totalAssets() rely on balanceOf(address(this))? If so, direct token transfers can manipulate the share price.",
+    "domain": "protocol-vault_erc4626",
+    "tags": [
+      "vault_erc4626",
+      "high",
+      "Share Price Manipulation via Direct Donation"
+    ]
+  },
+  {
+    "content": "[vault_erc4626] Flash Deposit+Withdraw Value Extraction (medium): Flash loan deposit and immediate withdrawal can exploit rounding or fee calculation gaps. | Exploit precedent: DeFi vault exploits | Detection: Can a user deposit and withdraw in the same transaction? If so, check for rounding profit or fee bypass.",
+    "domain": "protocol-vault_erc4626",
+    "tags": [
+      "vault_erc4626",
+      "medium",
+      "Flash Deposit+Withdraw Value Extraction"
+    ]
+  },
+  {
+    "content": "[vault_erc4626] totalAssets Includes Unexpected Sources (medium): totalAssets() counting rewards, fees, or donations can be manipulated to affect share calculations. | Exploit precedent: Yield vault exploits | Detection: What does totalAssets() include? Does it count pending rewards, donated tokens, or accrued fees that could be manipulated?",
+    "domain": "protocol-vault_erc4626",
+    "tags": [
+      "vault_erc4626",
+      "medium",
+      "totalAssets Includes Unexpected Sources"
+    ]
+  },
+  {
+    "content": "[vault_erc4626] First Depositor / Share Inflation Attack (critical): Empty vault allows attacker to inflate share price via donation, causing subsequent depositors to receive 0 shares. | Exploit precedent: Multiple ERC-4626 vaults (2022-2023), $128M+ in cumulative losses | Detection: Check if this vault has protection against the first depositor attack: virtual shares/assets via _decimalsOffset(), dead shares, or minimum deposit enforcement.",
+    "domain": "protocol-vault_erc4626",
+    "tags": [
+      "vault_erc4626",
+      "critical",
+      "First Depositor / Share Inflation Attack"
+    ]
+  },
+  {
+    "content": "[vault_erc4626] Rebasing Token Support (high): If the vault accepts rebasing tokens (stETH, AMPL), balance changes without transfers corrupt share-to-asset accounting. | Exploit precedent: Multiple vault protocols with stETH/AMPL integration bugs | Detection: If the vault accepts rebasing tokens (stETH, AMPL), does it wrap them or handle balance changes? Does totalAssets() remain correct after a rebase?",
+    "domain": "protocol-vault_erc4626",
+    "tags": [
+      "vault_erc4626",
+      "high",
+      "Rebasing Token Support"
+    ]
+  },
+  {
+    "content": "[bridge] Cross-Chain Message Replay (critical): Messages from source chain can be replayed on destination or re-executed after processing. | Exploit precedent: Nomad Bridge ($190M) | Detection: Is each cross-chain message uniquely identified and marked as executed? Can a message be replayed or re-executed?",
+    "domain": "protocol-bridge",
+    "tags": [
+      "bridge",
+      "critical",
+      "Cross-Chain Message Replay"
+    ]
+  },
+  {
+    "content": "[bridge] Validator/Relayer Compromise (critical): Insufficient validator threshold allows compromised validators to forge messages. | Exploit precedent: Ronin Bridge ($625M) | Detection: What is the validator threshold for message approval? Can a minority of validators forge cross-chain messages?",
+    "domain": "protocol-bridge",
+    "tags": [
+      "bridge",
+      "critical",
+      "Validator/Relayer Compromise"
+    ]
+  },
+  {
+    "content": "[bridge] Token Mapping Mismatch (high): Incorrect token mapping between chains allows minting unbacked tokens. | Exploit precedent: Wormhole Bridge ($320M) | Detection: Is the token mapping between chains verified? Can an attacker claim to bridge a token that doesn't exist on the source chain?",
+    "domain": "protocol-bridge",
+    "tags": [
+      "bridge",
+      "high",
+      "Token Mapping Mismatch"
+    ]
+  },
+  {
+    "content": "[bridge] Withdrawal Proof Forgery (critical): Insufficient proof verification allows forged withdrawal proofs. | Exploit precedent: Various bridge exploits | Detection: How are withdrawal proofs verified? Can an attacker forge a proof to withdraw tokens that were never deposited?",
+    "domain": "protocol-bridge",
+    "tags": [
+      "bridge",
+      "critical",
+      "Withdrawal Proof Forgery"
+    ]
+  },
+  {
+    "content": "[staking] Reward Calculation Manipulation (high): Flash staking to claim disproportionate rewards by staking just before reward distribution. | Exploit precedent: Various staking protocols | Detection: Can a user stake just before reward distribution and immediately unstake to claim rewards? Is there a minimum staking duration?",
+    "domain": "protocol-staking",
+    "tags": [
+      "staking",
+      "high",
+      "Reward Calculation Manipulation"
+    ]
+  },
+  {
+    "content": "[staking] Reward Rate Overflow/Precision Loss (high): rewardPerToken calculation can overflow or lose precision with extreme values. | Exploit precedent: Synthetix staking reward bugs | Detection: Does rewardPerToken use sufficient precision? Can extreme reward rates or tiny totalStaked cause overflow or precision loss?",
+    "domain": "protocol-staking",
+    "tags": [
+      "staking",
+      "high",
+      "Reward Rate Overflow/Precision Loss"
+    ]
+  },
+  {
+    "content": "[staking] Unstaking Reentrancy (high): Token transfer during unstake allows reentrancy to claim rewards multiple times. | Exploit precedent: Various staking contracts | Detection: Does unstake() transfer tokens before updating staking state? Can reentrancy allow double reward claiming?",
+    "domain": "protocol-staking",
+    "tags": [
+      "staking",
+      "high",
+      "Unstaking Reentrancy"
+    ]
+  },
+  {
+    "content": "[staking] Withdrawal Delay Bypass (high): Cooldown or withdrawal delay can be bypassed through transfer of staked tokens or delegation tricks. | Exploit precedent: Lido cooldown bypass, various staking protocols | Detection: Can staked tokens be transferred to bypass withdrawal cooldown? Does transferring staked tokens reset the cooldown timer?",
+    "domain": "protocol-staking",
+    "tags": [
+      "staking",
+      "high",
+      "Withdrawal Delay Bypass"
+    ]
+  },
+  {
+    "content": "[staking] Delegation Chain Attacks (medium): Delegation of voting or staking power through chains of delegatees can be exploited for amplified influence or circular delegation. | Exploit precedent: Various governance and staking protocols | Detection: Is there a limit on delegation depth? Can circular delegation chains be created? Can delegated power be amplified through chaining?",
+    "domain": "protocol-staking",
+    "tags": [
+      "staking",
+      "medium",
+      "Delegation Chain Attacks"
+    ]
+  },
+  {
+    "content": "[staking] Last-Second Staking for Full Epoch Reward (high): Staking just before epoch end captures full epoch rewards with minimal time commitment. | Exploit precedent: Various staking reward distribution exploits | Detection: Can a user stake at the last second of an epoch and receive the full epoch reward? Are rewards time-weighted within the epoch?",
+    "domain": "protocol-staking",
+    "tags": [
+      "staking",
+      "high",
+      "Last-Second Staking for Full Epoch Reward"
+    ]
+  },
+  {
+    "content": "[governance] Flash Loan Governance Attack (critical): Flash loan tokens to gain voting power, pass proposal, execute in same block. | Exploit precedent: Beanstalk ($182M) | Detection: Is voting power snapshot-based (past block) or current? Can flash-loaned tokens be used to vote?",
+    "domain": "protocol-governance",
+    "tags": [
+      "governance",
+      "critical",
+      "Flash Loan Governance Attack"
+    ]
+  },
+  {
+    "content": "[governance] Proposal Execution Without Timelock (high): Proposals can be executed immediately without giving users time to react. | Exploit precedent: Various governance attacks | Detection: Is there a mandatory delay between proposal approval and execution? Can users exit before a harmful proposal executes?",
+    "domain": "protocol-governance",
+    "tags": [
+      "governance",
+      "high",
+      "Proposal Execution Without Timelock"
+    ]
+  },
+  {
+    "content": "[governance] Quorum Manipulation (high): Low quorum threshold allows attacker to pass proposals with minority of tokens. | Exploit precedent: Various DAOs | Detection: What is the quorum requirement? Can a small token holder pass proposals when participation is low?",
+    "domain": "protocol-governance",
+    "tags": [
+      "governance",
+      "high",
+      "Quorum Manipulation"
+    ]
+  },
+  {
+    "content": "[nft_marketplace] Signature Replay / Order Reuse (critical): Signed orders can be replayed or used multiple times. | Exploit precedent: OpenSea signature replay issues | Detection: Are signed orders tracked to prevent replay? Can a cancelled order's signature still be used?",
+    "domain": "protocol-nft_marketplace",
+    "tags": [
+      "nft_marketplace",
+      "critical",
+      "Signature Replay / Order Reuse"
+    ]
+  },
+  {
+    "content": "[nft_marketplace] Royalty Bypass (medium): Seller can bypass royalty payments through direct transfers or wrapper contracts. | Exploit precedent: NFT royalty bypass tools | Detection: Are royalties enforced on-chain or only honored by the marketplace? Can sellers bypass royalties via direct transfers?",
+    "domain": "protocol-nft_marketplace",
+    "tags": [
+      "nft_marketplace",
+      "medium",
+      "Royalty Bypass"
+    ]
+  },
+  {
+    "content": "[token] Fee-on-Transfer Accounting Mismatch (high): Token with transfer fee causes accounting mismatch when amount received differs from amount sent. | Exploit precedent: Multiple DeFi protocols affected by fee tokens | Detection: Does the protocol use the transfer amount directly for accounting, or does it check the actual balance delta?",
+    "domain": "protocol-token",
+    "tags": [
+      "token",
+      "high",
+      "Fee-on-Transfer Accounting Mismatch"
+    ]
+  },
+  {
+    "content": "[token] Approval Race Condition (medium): approve() can be front-run to double-spend the allowance. | Exploit precedent: Well-known ERC-20 race condition | Detection: Does the token implement increaseAllowance/decreaseAllowance or require resetting to 0 before changing?",
+    "domain": "protocol-token",
+    "tags": [
+      "token",
+      "medium",
+      "Approval Race Condition"
+    ]
+  },
+  {
+    "content": "[oracle] Stale Price Data (critical): Oracle returns outdated price data that doesn't reflect current market conditions. | Exploit precedent: Multiple protocols using unchecked Chainlink data | Detection: Is the oracle price checked for staleness? Is updatedAt validated against a maximum age threshold?",
+    "domain": "protocol-oracle",
+    "tags": [
+      "oracle",
+      "critical",
+      "Stale Price Data"
+    ]
+  },
+  {
+    "content": "[oracle] Price Deviation / Manipulation (critical): Single-source oracle can be manipulated or return extreme values. | Exploit precedent: Synthetix oracle manipulation, Compound DAI liquidations | Detection: Is there a sanity check on price values? Can an extreme price from one oracle source cause protocol damage?",
+    "domain": "protocol-oracle",
+    "tags": [
+      "oracle",
+      "critical",
+      "Price Deviation / Manipulation"
+    ]
+  },
+  {
+    "content": "[oracle] L2 Sequencer Downtime (high): On L2s, sequencer downtime can cause stale prices and unfair liquidations when it comes back online. | Exploit precedent: Arbitrum/Optimism sequencer downtime issues | Detection: On L2, is the sequencer uptime feed checked? Is there a grace period after sequencer restart before liquidations?",
+    "domain": "protocol-oracle",
+    "tags": [
+      "oracle",
+      "high",
+      "L2 Sequencer Downtime"
+    ]
+  },
+  {
+    "content": "[liquid_staking] Withdrawal Queue Manipulation (critical): Attacker manipulates the withdrawal queue ordering or timing to extract value from pending withdrawals. | Exploit precedent: Lido withdrawal queue edge cases, various liquid staking protocols | Detection: Can the withdrawal queue be reordered or manipulated? Can an attacker jump the queue or delay others' withdrawals?",
+    "domain": "protocol-liquid_staking",
+    "tags": [
+      "liquid_staking",
+      "critical",
+      "Withdrawal Queue Manipulation"
+    ]
+  },
+  {
+    "content": "[liquid_staking] Exchange Rate Manipulation via Donations (critical): Direct donation of ETH or tokens to the staking contract inflates the exchange rate, causing existing stakers to receive diluted value. | Exploit precedent: stETH/rETH exchange rate manipulation attempts | Detection: Does the exchange rate rely on contract balance? Can direct ETH/token donations manipulate the staked token exchange rate?",
+    "domain": "protocol-liquid_staking",
+    "tags": [
+      "liquid_staking",
+      "critical",
+      "Exchange Rate Manipulation via Donations"
+    ]
+  },
+  {
+    "content": "[liquid_staking] Validator Exit Timing (high): Malicious or compromised validator exits at strategic times to cause slashing or withdraw before penalties are applied. | Exploit precedent: Beacon chain validator exit timing exploits | Detection: Can validators exit strategically to avoid slashing penalties? Is there an enforced exit queue with slashing escrow?",
+    "domain": "protocol-liquid_staking",
+    "tags": [
+      "liquid_staking",
+      "high",
+      "Validator Exit Timing"
+    ]
+  },
+  {
+    "content": "[liquid_staking] Slashing Condition Exploitation (high): Attacker triggers slashing conditions on validators, causing loss of staked funds for all delegators. | Exploit precedent: Various Ethereum validator slashing incidents | Detection: How are slashing losses distributed? Is there an insurance fund? Can a single validator's slashing wipe out a disproportionate amount?",
+    "domain": "protocol-liquid_staking",
+    "tags": [
+      "liquid_staking",
+      "high",
+      "Slashing Condition Exploitation"
+    ]
+  },
+  {
+    "content": "[liquid_staking] Reward Distribution Fairness (Last-Second Staking) (high): Staking just before reward distribution captures full rewards with minimal time commitment. | Exploit precedent: Various liquid staking reward gaming | Detection: Can a user stake just before rewards are distributed and immediately unstake to capture rewards? Are rewards time-weighted?",
+    "domain": "protocol-liquid_staking",
+    "tags": [
+      "liquid_staking",
+      "high",
+      "Reward Distribution Fairness (Last-Second Staking)"
+    ]
+  },
+  {
+    "content": "[liquid_staking] Staking share inflation (critical): Does the staking derivative use virtual offsets or minimum stakes to prevent share price manipulation? | Exploit precedent: Liquid staking share inflation attacks | Detection: Staking share inflation: Does the staking derivative use virtual offsets or minimum stakes to prevent share price manipulation?",
+    "domain": "protocol-liquid_staking",
+    "tags": [
+      "liquid_staking",
+      "critical",
+      "Staking share inflation"
+    ]
+  },
+  {
+    "content": "[perpetual_dex] Funding Rate Manipulation (critical): Attacker manipulates the funding rate by creating large imbalanced positions, forcing opposing positions to pay inflated funding. | Exploit precedent: Mango Markets ($114M), various perpetual DEX exploits | Detection: Can an attacker create a large position to skew the funding rate? Are there caps on funding rate or open interest imbalance?",
+    "domain": "protocol-perpetual_dex",
+    "tags": [
+      "perpetual_dex",
+      "critical",
+      "Funding Rate Manipulation"
+    ]
+  },
+  {
+    "content": "[perpetual_dex] Liquidation Cascading (critical): Liquidation of large positions moves the mark price, triggering cascading liquidations that drain the insurance fund. | Exploit precedent: BitMEX cascading liquidations, various perpetual protocols | Detection: Can liquidation of one large position trigger cascading liquidations? Is there a circuit breaker or partial liquidation mechanism?",
+    "domain": "protocol-perpetual_dex",
+    "tags": [
+      "perpetual_dex",
+      "critical",
+      "Liquidation Cascading"
+    ]
+  },
+  {
+    "content": "[perpetual_dex] Price Impact on Large Positions (high): Opening or closing large positions has excessive price impact that can be exploited for self-benefit or to harm others. | Exploit precedent: Various perpetual DEX price impact exploits | Detection: Is there a price impact mechanism for large positions? Can an attacker exploit price impact to manipulate the mark price?",
+    "domain": "protocol-perpetual_dex",
+    "tags": [
+      "perpetual_dex",
+      "high",
+      "Price Impact on Large Positions"
+    ]
+  },
+  {
+    "content": "[perpetual_dex] Oracle Deviation During Volatility (high): During high volatility, oracle price deviates from actual market price, allowing exploitation of liquidation or position opening at stale prices. | Exploit precedent: Perpetual protocol oracle manipulation during volatility spikes | Detection: How does the protocol handle oracle price deviation during volatility? Is there a circuit breaker for extreme deviations?",
+    "domain": "protocol-perpetual_dex",
+    "tags": [
+      "perpetual_dex",
+      "high",
+      "Oracle Deviation During Volatility"
+    ]
+  },
+  {
+    "content": "[perpetual_dex] Position Closing Frontrun (high): MEV bots front-run large position closings to profit from the expected price impact. | Exploit precedent: Common MEV attack on perpetual DEXes | Detection: Can pending position close orders be front-run? Is there a keeper-based execution mechanism or private mempool?",
+    "domain": "protocol-perpetual_dex",
+    "tags": [
+      "perpetual_dex",
+      "high",
+      "Position Closing Frontrun"
+    ]
+  },
+  {
+    "content": "[cdp_stablecoin] Bad Debt Cascade (critical): Rapid collateral price drops cause multiple CDPs to become underwater simultaneously, creating systemic bad debt. | Exploit precedent: MakerDAO Black Thursday (2020), various CDP protocols | Detection: What happens when many CDPs become underwater at once? Is there a surplus buffer? Can bad debt cascade through the system?",
+    "domain": "protocol-cdp_stablecoin",
+    "tags": [
+      "cdp_stablecoin",
+      "critical",
+      "Bad Debt Cascade"
+    ]
+  },
+  {
+    "content": "[cdp_stablecoin] Collateral Ratio Manipulation During Liquidation (critical): Attacker manipulates collateral price during liquidation to buy collateral at a discount or prevent their own liquidation. | Exploit precedent: Various CDP liquidation manipulation exploits | Detection: Can collateral price be manipulated in the same transaction as liquidation? Is the liquidation price based on spot or TWAP?",
+    "domain": "protocol-cdp_stablecoin",
+    "tags": [
+      "cdp_stablecoin",
+      "critical",
+      "Collateral Ratio Manipulation During Liquidation"
+    ]
+  },
+  {
+    "content": "[cdp_stablecoin] Stability Pool Drain (high): Attacker drains the stability pool by triggering liquidations and front-running stability pool deposits. | Exploit precedent: Liquity stability pool edge cases | Detection: Can an attacker front-run liquidations to deposit into the stability pool and capture discounted collateral? Is there a withdrawal delay?",
+    "domain": "protocol-cdp_stablecoin",
+    "tags": [
+      "cdp_stablecoin",
+      "high",
+      "Stability Pool Drain"
+    ]
+  },
+  {
+    "content": "[cdp_stablecoin] Oracle Manipulation for Under-Collateralized Minting (critical): Manipulating the oracle price allows minting stablecoins with insufficient collateral. | Exploit precedent: Various CDP oracle manipulation attacks | Detection: Can the oracle price be manipulated to mint stablecoins with less collateral than required? Is the price feed manipulation-resistant?",
+    "domain": "protocol-cdp_stablecoin",
+    "tags": [
+      "cdp_stablecoin",
+      "critical",
+      "Oracle Manipulation for Under-Collateralized Minting"
+    ]
+  },
+  {
+    "content": "[yield_aggregator] Strategy Migration Drain (critical): During strategy migration, funds in transit can be intercepted or the new strategy can be a malicious contract. | Exploit precedent: Yearn Finance strategy migration risks, various vault exploits | Detection: Is there a timelock on strategy changes? Can the owner instantly switch to a malicious strategy and drain funds?",
+    "domain": "protocol-yield_aggregator",
+    "tags": [
+      "yield_aggregator",
+      "critical",
+      "Strategy Migration Drain"
+    ]
+  },
+  {
+    "content": "[yield_aggregator] Harvest Sandwiching (high): MEV bots sandwich the harvest() call to extract value from the yield being compounded back into the vault. | Exploit precedent: Common MEV attack on yield aggregators | Detection: Can harvest() be sandwiched? Does the harvest swap have slippage protection? Is harvest restricted to keepers?",
+    "domain": "protocol-yield_aggregator",
+    "tags": [
+      "yield_aggregator",
+      "high",
+      "Harvest Sandwiching"
+    ]
+  },
+  {
+    "content": "[yield_aggregator] Share Price Manipulation via Strategy Return (critical): Attacker manipulates the underlying strategy's reported returns to inflate share price before withdrawing. | Exploit precedent: Various yield vault share price manipulation exploits | Detection: Can a strategy report inflated returns to manipulate the vault share price? Are there caps on per-harvest gains?",
+    "domain": "protocol-yield_aggregator",
+    "tags": [
+      "yield_aggregator",
+      "critical",
+      "Share Price Manipulation via Strategy Return"
+    ]
+  },
+  {
+    "content": "[yield_aggregator] Emergency Withdraw Bypassing Accounting (high): emergencyWithdraw() bypasses normal accounting, potentially leaving the vault in an inconsistent state. | Exploit precedent: Various DeFi emergency withdrawal accounting bugs | Detection: Does emergencyWithdraw() properly update all accounting state? Can it leave the vault with inconsistent share/asset ratios?",
+    "domain": "protocol-yield_aggregator",
+    "tags": [
+      "yield_aggregator",
+      "high",
+      "Emergency Withdraw Bypassing Accounting"
+    ]
+  },
+  {
+    "content": "[yield_aggregator] Vault share manipulation (critical): Can yield vault shares be inflated through direct token transfers or first-depositor attacks? | Exploit precedent: Multiple yield vault share inflation exploits | Detection: Vault share manipulation: Can yield vault shares be inflated through direct token transfers or first-depositor attacks?",
+    "domain": "protocol-yield_aggregator",
+    "tags": [
+      "yield_aggregator",
+      "critical",
+      "Vault share manipulation"
+    ]
+  },
+  {
+    "content": "[yield_aggregator] Token Compatibility (high): Yield aggregators interact with many token types. Fee-on-transfer, rebasing, and pausable tokens can break harvest, deposit, and withdrawal accounting. | Exploit precedent: Various yield aggregator exploits from non-standard token handling | Detection: Does the aggregator handle fee-on-transfer, rebasing, and pausable tokens safely? Does harvest() handle tokens that may revert or return unexpected values?",
+    "domain": "protocol-yield_aggregator",
+    "tags": [
+      "yield_aggregator",
+      "high",
+      "Token Compatibility"
+    ]
+  }
+]

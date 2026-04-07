@@ -124,6 +124,10 @@ class AetherConfig:
     halmos_loop_bound: int = 3
     halmos_solver_timeout_ms: int = 30000
     
+    # SAGE institutional memory settings
+    sage_enabled: bool = True
+    sage_url: str = "http://localhost:8080"
+
     # Etherscan API settings
     etherscan_api_key: str = ""
     etherscan_base_url: str = "https://api.etherscan.io/v2/api"
