@@ -217,6 +217,7 @@ class AuditRunner:
         self._job_manager.start_job(job.job_id)
         os.makedirs(output_dir, exist_ok=True)
 
+        results = None  # Hoist for SAGE feedback in finally block
         try:
             from cli.main import AetherCLI
             cli = AetherCLI()
@@ -271,32 +272,8 @@ class AuditRunner:
             self._job_manager.fail_job(job.job_id, str(e)[:200], cost_delta)
 
         finally:
-            # SAGE: store audit learnings for institutional memory
-            try:
-                from core.sage_feedback import SageFeedbackManager
-                fm = SageFeedbackManager()
-                # Build findings summary from job status
-                severity_counts = {}
-                total_findings = 0
-                if job.audit_status:
-                    total_findings = job.audit_status.findings_count
-                fm.record_audit_completion(
-                    contract_name=os.path.basename(target),
-                    archetype=getattr(job, "archetype", "unknown"),
-                    findings_summary={"total": total_findings},
-                )
-                # Reflect on audit outcome
-                dos = []
-                donts = []
-                if self._job_manager.get_job(job.job_id) and \
-                   self._job_manager.get_job(job.job_id).status == "COMPLETED":
-                    dos.append(f"Audit of {os.path.basename(target)} completed successfully with {total_findings} findings")
-                else:
-                    donts.append(f"Audit of {os.path.basename(target)} failed — check error logs")
-                if dos or donts:
-                    fm._client.reflect(dos=dos, donts=donts, domain="audit-history")
-            except Exception:
-                pass  # SAGE is optional — never break audit cleanup
+            # SAGE: store audit learnings with real dos/donts from findings
+            self._sage_post_audit(job, target, results)
 
             if self._demuxer:
                 self._demuxer.unregister()
@@ -306,6 +283,106 @@ class AuditRunner:
                 self._log_handler.unregister()
 
     # ── PoC generation ────────────────────────────────────────────
+
+    @staticmethod
+    def _sage_post_audit(job, target: str, results) -> None:
+        """Store audit learnings in SAGE with actionable dos/donts.
+
+        Extracts vulnerability patterns, severity distribution, detector
+        performance, and validation pipeline stats from the audit results
+        to feed SAGE's institutional learning loop.
+        """
+        try:
+            from core.sage_feedback import SageFeedbackManager
+            fm = SageFeedbackManager()
+            contract_name = os.path.basename(target)
+
+            # Extract detailed findings from results
+            vuln_list = []
+            severity_counts: dict[str, int] = {}
+            vuln_types: set[str] = set()
+            filtered_count = 0
+            archetype = getattr(job, "archetype", "unknown")
+
+            if isinstance(results, dict) and "error" not in results:
+                raw_vulns = results.get("results", {})
+                if isinstance(raw_vulns, dict):
+                    raw_vulns = raw_vulns.get("vulnerabilities", [])
+                if isinstance(raw_vulns, list):
+                    vuln_list = raw_vulns
+
+                for v in vuln_list:
+                    sev = v.get("severity", "unknown").lower()
+                    severity_counts[sev] = severity_counts.get(sev, 0) + 1
+                    vuln_types.add(v.get("vulnerability_type", "unknown"))
+
+                # Get validation stats if available
+                summary = results.get("summary", {})
+                if isinstance(summary, dict):
+                    filtered_count = summary.get("false_positives_filtered", 0)
+                    if not archetype or archetype == "unknown":
+                        archetype = summary.get("archetype", "unknown")
+
+            total_findings = sum(severity_counts.values()) or (
+                job.audit_status.findings_count if job.audit_status else 0
+            )
+
+            # Record audit completion with real severity breakdown
+            fm.record_audit_completion(
+                contract_name=contract_name,
+                archetype=archetype,
+                findings_summary=severity_counts if severity_counts else {"total": total_findings},
+                validation_stats={"filtered": filtered_count, "total_raw": total_findings + filtered_count}
+                if filtered_count else None,
+            )
+
+            # Build actionable dos/donts from actual findings
+            dos: list[str] = []
+            donts: list[str] = []
+
+            if total_findings > 0:
+                # What vulnerability types were found
+                type_str = ", ".join(list(vuln_types)[:5])
+                dos.append(
+                    f"Found {total_findings} findings in {contract_name} ({archetype}): "
+                    f"types [{type_str}]. These patterns are worth checking in similar contracts."
+                )
+
+                # High-confidence findings are patterns to remember
+                for v in vuln_list[:5]:
+                    if v.get("confidence", 0) >= 0.7:
+                        dos.append(
+                            f"High-confidence {v.get('severity', '?')} finding: "
+                            f"{v.get('vulnerability_type', '?')} — {v.get('description', '')[:150]}"
+                        )
+
+            if filtered_count > 0:
+                donts.append(
+                    f"{filtered_count} false positives were filtered during validation "
+                    f"for {contract_name}. The validation pipeline is working."
+                )
+
+            # If audit failed, record that
+            completed_job = None
+            try:
+                from core.job_manager import JobManager
+                completed_job = JobManager.get_instance().get_job(job.job_id)
+            except Exception:
+                pass
+            if completed_job and completed_job.status == "FAILED":
+                donts.append(
+                    f"Audit of {contract_name} failed: {completed_job.error_message[:100] if completed_job.error_message else 'unknown error'}"
+                )
+
+            if dos or donts:
+                fm._client.reflect(dos=dos, donts=donts, domain=f"audit-{archetype}")
+
+            # Also sync detector accuracy periodically
+            if total_findings >= 5:
+                fm.sync_detector_accuracy()
+
+        except Exception:
+            pass  # SAGE is optional — never break audit cleanup
 
     def start_poc_generation(
         self,

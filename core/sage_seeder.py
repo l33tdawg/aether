@@ -204,6 +204,127 @@ class SageSeeder:
         return counts
 
     # ------------------------------------------------------------------
+    # Knowledge vault export/import — shareable SAGE brain
+    # ------------------------------------------------------------------
+
+    def export_knowledge_vault(self, output_path: Optional[Path] = None) -> Path:
+        """Export all SAGE memories to a portable JSON vault file.
+
+        This produces a file that others can import to get the full
+        institutional knowledge base without re-seeding from scratch.
+        The vault includes all committed memories across all domains.
+
+        Args:
+            output_path: Where to write the vault file. Defaults to
+                ``data/sage_seeds/aether-knowledge.vault.json``.
+
+        Returns:
+            Path to the exported vault file.
+        """
+        out = output_path or (_SEED_DIR / "aether-knowledge.vault.json")
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        sdk = self._client._ensure_sdk()
+        if sdk is None:
+            logger.warning("Cannot export: SAGE SDK not available")
+            return out
+
+        # Collect all memories across key domains
+        all_memories: list[dict] = []
+        domains_to_export = [
+            "exploit-patterns", "historical-exploits", "token-quirks",
+            "false-positives", "detector-accuracy", "audit-history",
+        ]
+        # Also export all protocol-* domains
+        try:
+            status = self._client.get_status()
+            by_domain = status.get("memories", {}).get("by_domain", {})
+            for d in by_domain:
+                if d.startswith("protocol-") or d.startswith("audit-"):
+                    domains_to_export.append(d)
+        except Exception:
+            pass
+
+        for domain in set(domains_to_export):
+            try:
+                result = sdk.list_memories(domain=domain, status="committed", limit=200)
+                for mem in getattr(result, "memories", []):
+                    all_memories.append({
+                        "content": getattr(mem, "content", ""),
+                        "domain": getattr(mem, "domain_tag", domain),
+                        "type": getattr(mem, "memory_type", "observation").value
+                        if hasattr(getattr(mem, "memory_type", ""), "value")
+                        else str(getattr(mem, "memory_type", "observation")),
+                        "confidence": getattr(mem, "confidence_score", 0.8),
+                    })
+            except Exception as exc:
+                logger.debug("Failed to export domain %s: %s", domain, exc)
+
+        vault = {
+            "version": _SEED_VERSION,
+            "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "total_memories": len(all_memories),
+            "memories": all_memories,
+        }
+        _write_fixture(out, vault)
+        logger.info("Exported %d memories to %s", len(all_memories), out)
+        return out
+
+    def import_knowledge_vault(self, vault_path: Path) -> Dict[str, int]:
+        """Import memories from a vault file into SAGE.
+
+        This is the complement of ``export_knowledge_vault()``. Users can
+        share vault files to give others their institutional knowledge
+        without needing to run audits themselves.
+
+        Args:
+            vault_path: Path to a ``.vault.json`` file.
+
+        Returns:
+            Dict with import counts per domain.
+        """
+        if not vault_path.exists():
+            logger.error("Vault file not found: %s", vault_path)
+            return {"error": "file not found"}
+
+        try:
+            vault = json.loads(vault_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.error("Failed to read vault: %s", exc)
+            return {"error": str(exc)}
+
+        memories = vault.get("memories", [])
+        counts: dict[str, int] = {}
+
+        for mem in memories:
+            content = mem.get("content", "")
+            domain = mem.get("domain", "general")
+            mem_type = mem.get("type", "observation")
+            confidence = mem.get("confidence", 0.8)
+
+            if not content:
+                continue
+
+            try:
+                self._client.remember(
+                    content=content,
+                    domain=domain,
+                    memory_type=mem_type,
+                    confidence=confidence,
+                )
+                counts[domain] = counts.get(domain, 0) + 1
+                if self._delay > 0:
+                    time.sleep(self._delay)
+            except Exception as exc:
+                logger.debug("Failed to import memory: %s", exc)
+                if "429" in str(exc) or "rate limit" in str(exc).lower():
+                    time.sleep(5)
+
+        total = sum(counts.values())
+        logger.info("Imported %d memories from vault %s", total, vault_path)
+        return counts
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
@@ -357,5 +478,66 @@ def _build_historical_exploits() -> List[Dict[str, Any]]:
         {
             "content": "Balancer V2 (2023, $2M): Read-only reentrancy in nested pool joins. Attacker exploited rate provider callback during mid-join state to get stale exchange rate. Root cause: view function reentrancy.",
             "tags": ["reentrancy", "dex", "high", "2023"],
+        },
+        # --- 2024-2026 exploits ---
+        {
+            "content": "Radiant Capital (2024, $51M): Compromised multisig via malware injection on dev machines. Attacker replaced transaction payloads in Safe wallet UI to steal from lending pool across Arbitrum and BNB Chain. Root cause: hardware wallet signing malware.",
+            "tags": ["access-control", "multisig", "critical", "2024", "lending"],
+        },
+        {
+            "content": "Orbit Chain Bridge (2024, $82M): Bridge validator key compromise. Attacker obtained enough signer keys to forge cross-chain withdrawal messages. Root cause: centralized key management, insufficient validator diversity.",
+            "tags": ["bridge", "access-control", "critical", "2024"],
+        },
+        {
+            "content": "Socket/Bungee Bridge (2024, $3.3M): Insufficient validation in route processing — attacker supplied malicious route data that called transferFrom on approved tokens. Root cause: unvalidated external call data in bridge aggregator.",
+            "tags": ["bridge", "validation", "critical", "2024"],
+        },
+        {
+            "content": "Prisma Finance (2024, $11.6M): Flash loan attack on MKR price oracle used in the vault's liquidation mechanism. Attacker manipulated oracle price to trigger unfavorable liquidations. Root cause: manipulable oracle in liquidation path.",
+            "tags": ["oracle", "flash-loan", "lending", "critical", "2024"],
+        },
+        {
+            "content": "UwU Lend (2024, $20M): Oracle manipulation via Curve pool. Attacker flash-loaned to skew CurveLP price used as collateral oracle, borrowed against inflated collateral value. Root cause: Curve LP token spot price as oracle.",
+            "tags": ["oracle", "flash-loan", "lending", "critical", "2024"],
+        },
+        {
+            "content": "Hedgey Finance (2024, $44M): Missing access control on claim function. Attacker called createLockedCampaign with arbitrary parameters then claimed tokens. Root cause: unprotected campaign creation.",
+            "tags": ["access-control", "critical", "2024"],
+        },
+        {
+            "content": "Seneca Protocol (2024, $6.4M): Arbitrary external call in permit function. Attacker used crafted calldata to call transferFrom via the protocol's own approval. Root cause: unvalidated external call target.",
+            "tags": ["access-control", "validation", "critical", "2024"],
+        },
+        {
+            "content": "Abracadabra/MIM (2024, $6.5M): Rounding error in liquidation calculation allowed borrowing slightly more than collateral value across many small positions. Root cause: precision loss in borrow/repay rounding direction.",
+            "tags": ["precision", "lending", "critical", "2024"],
+        },
+        {
+            "content": "Munchables (2024, $62M): Rogue developer inserted backdoor — upgradeable proxy's storage slot was pre-set to developer address during deployment. Root cause: trusted insider attack via proxy storage manipulation.",
+            "tags": ["proxy", "access-control", "insider", "critical", "2024"],
+        },
+        {
+            "content": "WOOFi (2024, $8.5M): Flash loan oracle manipulation via sPMM pricing model. Attacker manipulated Woo pool's synthetic proactive market making price feed. Root cause: on-chain price feed susceptible to flash loan.",
+            "tags": ["oracle", "flash-loan", "dex", "critical", "2024"],
+        },
+        {
+            "content": "Common 2025 audit pattern: ERC-4626 vault inflation via direct token transfer + minimal first deposit. Many new DeFi protocols still ship without virtual shares offset (EIP-4626 mitigation). Always check: is totalAssets() manipulable via direct transfer? Is there a minimum deposit requirement?",
+            "tags": ["vault", "inflation-share", "pattern", "2025"],
+        },
+        {
+            "content": "Common 2025 audit pattern: Cross-chain message replay. Bridges that don't include source chain ID in the message hash allow replaying messages from one chain on another. Always check: does the message hash include chainId, nonce, and source contract address?",
+            "tags": ["bridge", "replay", "pattern", "2025"],
+        },
+        {
+            "content": "Common 2025 audit pattern: Upgradeable contract initialization front-running. Protocols deploying proxy + implementation separately can have initialize() front-run between deployment transactions. Always check: is initialize() protected or called atomically with deployment?",
+            "tags": ["proxy", "initialization", "pattern", "2025"],
+        },
+        {
+            "content": "Common 2025-2026 audit pattern: Permit2 and signature-based approvals. Protocols using EIP-2612 permit or Uniswap Permit2 can be exploited if signature replay protection is weak. Always check: nonce management, deadline validation, domain separator includes chainId.",
+            "tags": ["signature", "approval", "pattern", "2025", "2026"],
+        },
+        {
+            "content": "Common 2025-2026 FP pattern: Centralization/admin risks flagged as critical in protocols with governance timelocks. If onlyOwner functions have a timelock delay (24-48h), users can exit before malicious changes take effect. Downgrade to informational unless timelock is missing.",
+            "tags": ["false-positive", "centralization", "governance", "pattern", "2025", "2026"],
         },
     ]
