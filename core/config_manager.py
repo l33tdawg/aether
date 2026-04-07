@@ -78,11 +78,11 @@ class AetherConfig:
 
     # Gemini Model selection (alternative to OpenAI)
     # Validation model - Gemini 2.5 Flash has thinking mode and 2M context
-    gemini_validation_model: str = "gemini-2.5-flash"
+    gemini_validation_model: str = "gemini-3.0-flash"
     # Analysis model - can use Pro for best quality or Flash for speed
-    gemini_analysis_model: str = "gemini-2.5-flash"
+    gemini_analysis_model: str = "gemini-3.0-flash"
     # Generation model - Flash is fast and cost-effective
-    gemini_generation_model: str = "gemini-2.5-flash"
+    gemini_generation_model: str = "gemini-3.0-flash"
 
     # Anthropic Model selection (Claude models - 200K context, extended thinking)
     # Validation model - Claude Sonnet for fast, accurate validation
@@ -96,8 +96,8 @@ class AetherConfig:
     # Each agent can use a different model for specialized analysis
     agent_gpt5_security_model: str = "gpt-5-chat-latest"      # Security vulnerability auditor
     agent_gpt5_defi_model: str = "gpt-5-chat-latest"          # DeFi protocol specialist
-    agent_gemini_security_model: str = "gemini-2.5-flash"     # Gemini security hunter (2M context)
-    agent_gemini_verification_model: str = "gemini-2.5-pro"   # Formal verification (use Pro for best quality)
+    agent_gemini_security_model: str = "gemini-3.0-flash"     # Gemini security hunter (2M context)
+    agent_gemini_verification_model: str = "gemini-3.0-pro"   # Formal verification (use Pro for best quality)
     agent_anthropic_security_model: str = "claude-opus-4-6"   # Anthropic security auditor (deep analysis)
     agent_anthropic_reasoning_model: str = "claude-opus-4-6"  # Anthropic reasoning specialist (extended thinking)
     
@@ -147,7 +147,7 @@ def get_model_for_task(task_type: str) -> str:
         task_type: One of 'validation', 'analysis', or 'generation'
     
     Returns:
-        The model name to use (e.g., 'gpt-5-chat-latest' or 'gemini-2.5-flash')
+        The model name to use (e.g., 'gpt-5-chat-latest' or 'gemini-3.0-flash')
     """
     try:
         config_manager = ConfigManager()
@@ -163,7 +163,7 @@ def get_model_for_task(task_type: str) -> str:
         # Fallback logic
         if not model:
             if provider == "gemini":
-                model = "gemini-2.5-flash"
+                model = "gemini-3.0-flash"
             elif provider == "anthropic":
                 model = "claude-sonnet-4-5-20250929"
             else:

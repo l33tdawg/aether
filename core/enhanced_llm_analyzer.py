@@ -60,7 +60,7 @@ class EnhancedLLMAnalyzer:
                 self.model = 'gpt-5-chat-latest'  # Fallback
         
         # Updated fallback models to include Gemini and Anthropic
-        self.fallback_models = ["claude-sonnet-4-5-20250929", "gemini-2.5-flash", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+        self.fallback_models = ["claude-sonnet-4-5-20250929", "gemini-3.0-flash", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
 
         # Context limits for different models
         # NOTE: These are COMBINED input + output limits
@@ -89,7 +89,7 @@ class EnhancedLLMAnalyzer:
             "gemini-3.0-flash": 2000000,  # 2M tokens combined
             "gemini-3.0-pro": 2000000,    # 2M tokens combined
             # Gemini 2.5 models (2M combined)
-            "gemini-2.5-flash": 2000000,  # 2M tokens combined
+            "gemini-3.0-flash": 2000000,  # 2M tokens combined
             "gemini-2.5-pro": 2000000,    # 2M tokens combined
             # Gemini 1.5 models
             "gemini-1.5-pro": 2000000,    # 2M tokens combined
