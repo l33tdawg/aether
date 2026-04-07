@@ -10,10 +10,15 @@ import hashlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Rate limit: SAGE allows 100 req/min. Space out seed writes.
+# Set to 0 in tests via SageSeeder(seed_delay=0)
+_SEED_DELAY = 0.7  # seconds between remember calls (~85 req/min)
 
 _SEED_DIR = Path(__file__).resolve().parent.parent / "data" / "sage_seeds"
 _SEED_VERSION = "1.0.0"
@@ -22,10 +27,11 @@ _SEED_VERSION = "1.0.0"
 class SageSeeder:
     """Loads pre-trained audit knowledge into SAGE."""
 
-    def __init__(self, sage_client: Optional[Any] = None):
+    def __init__(self, sage_client: Optional[Any] = None, seed_delay: float = _SEED_DELAY):
         from core.sage_client import SageClient
         self._client = sage_client or SageClient.get_instance()
         self._seed_dir = _SEED_DIR
+        self._delay = seed_delay
 
     # ------------------------------------------------------------------
     # Public API
@@ -85,8 +91,12 @@ class SageSeeder:
                     tags=entry.get("tags", []),
                 )
                 count += 1
+                if self._delay > 0:
+                    time.sleep(self._delay)  # Respect SAGE rate limit
             except Exception as exc:
                 logger.debug("Failed to seed archetype entry: %s", exc)
+                if "429" in str(exc) or "rate limit" in str(exc).lower():
+                    time.sleep(5)
         return count
 
     def seed_token_quirks(self) -> int:
@@ -245,8 +255,13 @@ class SageSeeder:
                     tags=tags,
                 )
                 count += 1
+                if self._delay > 0:
+                    time.sleep(self._delay)  # Respect SAGE rate limit
             except Exception as exc:
                 logger.debug("Failed to seed entry: %s", exc)
+                # Back off on rate limit errors
+                if "429" in str(exc) or "rate limit" in str(exc).lower():
+                    time.sleep(5)
         return count
 
 

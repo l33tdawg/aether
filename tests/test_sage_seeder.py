@@ -69,7 +69,7 @@ class TestSageSeederSeedAll(unittest.TestCase):
         self.mock_client.remember.return_value = {"status": "ok"}
 
     def test_seed_all_loads_all_fixtures(self):
-        seeder = SageSeeder(sage_client=self.mock_client)
+        seeder = SageSeeder(sage_client=self.mock_client, seed_delay=0)
         counts = seeder.seed_all(force=True)
 
         self.assertIn("exploits", counts)
@@ -88,7 +88,7 @@ class TestSageSeederSeedAll(unittest.TestCase):
         self.mock_client.recall.return_value = [
             {"content": f"Aether knowledge base seeded: version {_SEED_VERSION}"}
         ]
-        seeder = SageSeeder(sage_client=self.mock_client)
+        seeder = SageSeeder(sage_client=self.mock_client, seed_delay=0)
         result = seeder.seed_all(force=False)
         self.assertEqual(result["status"], "already_seeded")
         # Should NOT have called remember (except for the recall check)
@@ -99,13 +99,13 @@ class TestSageSeederSeedAll(unittest.TestCase):
         self.mock_client.recall.return_value = [
             {"content": f"version {_SEED_VERSION}"}
         ]
-        seeder = SageSeeder(sage_client=self.mock_client)
+        seeder = SageSeeder(sage_client=self.mock_client, seed_delay=0)
         counts = seeder.seed_all(force=True)
         self.assertGreater(self.mock_client.remember.call_count, 100)
 
     def test_seed_all_stores_version_marker(self):
         """After seeding, should store the version marker."""
-        seeder = SageSeeder(sage_client=self.mock_client)
+        seeder = SageSeeder(sage_client=self.mock_client, seed_delay=0)
         seeder.seed_all(force=True)
 
         # Find the version marker call
@@ -124,7 +124,7 @@ class TestSageSeederIndividualMethods(unittest.TestCase):
         self.mock_client.remember.return_value = {"status": "ok"}
 
     def test_seed_exploits(self):
-        seeder = SageSeeder(sage_client=self.mock_client)
+        seeder = SageSeeder(sage_client=self.mock_client, seed_delay=0)
         count = seeder.seed_exploits()
         self.assertGreater(count, 50)
         # Verify domain is exploit-patterns
@@ -134,7 +134,7 @@ class TestSageSeederIndividualMethods(unittest.TestCase):
             self.assertAlmostEqual(call[1]["confidence"], 0.95)
 
     def test_seed_archetypes(self):
-        seeder = SageSeeder(sage_client=self.mock_client)
+        seeder = SageSeeder(sage_client=self.mock_client, seed_delay=0)
         count = seeder.seed_archetypes()
         self.assertGreater(count, 30)
         # Verify domains are protocol-specific
@@ -144,12 +144,12 @@ class TestSageSeederIndividualMethods(unittest.TestCase):
         self.assertTrue(any(d.startswith("protocol-") for d in domains))
 
     def test_seed_token_quirks(self):
-        seeder = SageSeeder(sage_client=self.mock_client)
+        seeder = SageSeeder(sage_client=self.mock_client, seed_delay=0)
         count = seeder.seed_token_quirks()
         self.assertEqual(count, 12)
 
     def test_seed_historical_exploits(self):
-        seeder = SageSeeder(sage_client=self.mock_client)
+        seeder = SageSeeder(sage_client=self.mock_client, seed_delay=0)
         count = seeder.seed_historical_exploits()
         self.assertGreater(count, 10)
 
@@ -162,7 +162,7 @@ class TestSageSeederGracefulDegradation(unittest.TestCase):
         mock_client.recall.side_effect = Exception("connection refused")
         mock_client.remember.side_effect = Exception("connection refused")
 
-        seeder = SageSeeder(sage_client=mock_client)
+        seeder = SageSeeder(sage_client=mock_client, seed_delay=0)
         # Should not raise — seed_all catches failures in _is_current_version
         # and individual seed methods just count successful calls (0)
         counts = seeder.seed_all(force=True)
@@ -171,7 +171,7 @@ class TestSageSeederGracefulDegradation(unittest.TestCase):
     def test_missing_fixture_file(self):
         mock_client = MagicMock()
         mock_client.remember.return_value = {}
-        seeder = SageSeeder(sage_client=mock_client)
+        seeder = SageSeeder(sage_client=mock_client, seed_delay=0)
         # Try to load a nonexistent fixture
         count = seeder._seed_fixture("nonexistent.json", "test", "fact", 0.9)
         self.assertEqual(count, 0)

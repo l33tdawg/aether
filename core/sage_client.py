@@ -1,17 +1,23 @@
 """
-SAGE Client — REST client for SAGE institutional memory system.
+SAGE Client — Wrapper around the official sage-agent-sdk for Aether.
 
-Provides a thread-safe singleton client that communicates with a SAGE node
-over its REST API. All methods degrade gracefully — if SAGE is unavailable,
-methods return empty results and log a warning rather than raising.
+Uses the ``sage-agent-sdk`` Python package (``pip install sage-agent-sdk``)
+for authenticated communication with a SAGE node. Provides a simplified
+interface matching Aether's needs (remember, recall, reflect) while
+delegating all authentication and protocol handling to the SDK.
+
+All methods degrade gracefully — if SAGE is unavailable, methods return
+empty results and log a warning rather than raising.
 """
 
 import hashlib
+import json
 import logging
+import os
 import threading
+import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import requests
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +25,90 @@ _DEFAULT_SAGE_URL = "http://localhost:8080"
 _REQUEST_TIMEOUT = 10  # seconds
 
 
+def _find_agent_key() -> Optional[Path]:
+    """Locate the SAGE agent key file.
+
+    Searches in order:
+      1. SAGE_AGENT_KEY env var (explicit path)
+      2. ~/.sage/agents/*/agent.key (first match)
+    """
+    env_path = os.environ.get("SAGE_AGENT_KEY")
+    if env_path:
+        p = Path(env_path).expanduser()
+        if p.exists():
+            return p
+
+    sage_home = Path(os.environ.get("SAGE_HOME", "~/.sage")).expanduser()
+    agents_dir = sage_home / "agents"
+    if agents_dir.is_dir():
+        for agent_dir in sorted(agents_dir.iterdir()):
+            key_file = agent_dir / "agent.key"
+            if key_file.exists():
+                return key_file
+    return None
+
+
 class SageClient:
-    """Thread-safe singleton REST client for SAGE institutional memory."""
+    """Thread-safe singleton client for SAGE institutional memory.
+
+    Wraps ``sage_sdk.SageClient`` with graceful degradation and a simplified
+    remember/recall/reflect interface.
+    """
 
     _instance: Optional["SageClient"] = None
     _lock = threading.Lock()
 
     def __init__(self, sage_url: str = _DEFAULT_SAGE_URL):
         self._base_url = sage_url.rstrip("/")
-        self._session = requests.Session()
-        self._session.headers.update({"Content-Type": "application/json"})
+        self._sdk_client = None
+        self._sdk_checked = False
+        self._agent_name = "aether"
+
+    def _ensure_sdk(self):
+        """Lazy-initialize the SDK client with agent identity."""
+        if self._sdk_checked:
+            return self._sdk_client
+        self._sdk_checked = True
+        try:
+            from sage_sdk import SageClient as SDKClient, AgentIdentity
+
+            key_path = _find_agent_key()
+            if key_path:
+                identity = AgentIdentity.from_file(str(key_path))
+                logger.debug("SAGE identity loaded from %s", key_path)
+            else:
+                # Generate a new identity for this Aether instance
+                sage_home = Path(os.environ.get("SAGE_HOME", "~/.sage")).expanduser()
+                agent_dir = sage_home / "agents" / "aether-instance"
+                agent_dir.mkdir(parents=True, exist_ok=True)
+                key_file = agent_dir / "agent.key"
+                if key_file.exists():
+                    identity = AgentIdentity.from_file(str(key_file))
+                else:
+                    identity = AgentIdentity.generate()
+                    identity.to_file(str(key_file))
+                logger.debug("SAGE identity generated at %s", key_file)
+
+            self._sdk_client = SDKClient(
+                base_url=self._base_url,
+                identity=identity,
+                timeout=_REQUEST_TIMEOUT,
+            )
+            # Register agent if not already registered
+            try:
+                self._sdk_client.register_agent(
+                    name=self._agent_name,
+                    provider="aether",
+                    boot_bio="Aether smart contract security analysis framework",
+                )
+            except Exception:
+                pass  # Already registered or registration failed — fine either way
+
+        except ImportError:
+            logger.warning("sage-agent-sdk not installed — SAGE features disabled")
+        except Exception as exc:
+            logger.warning("Failed to initialize SAGE SDK: %s", exc)
+        return self._sdk_client
 
     # ------------------------------------------------------------------
     # Singleton
@@ -56,11 +136,12 @@ class SageClient:
     def health_check(self) -> bool:
         """Return True if the SAGE node is reachable and healthy."""
         try:
-            resp = self._session.get(
-                f"{self._base_url}/v1/dashboard/health",
-                timeout=_REQUEST_TIMEOUT,
-            )
-            return resp.status_code == 200
+            sdk = self._ensure_sdk()
+            if sdk is None:
+                return False
+            result = sdk.health()
+            # v5.x returns {"sage": "running"}, v4.x may differ
+            return bool(result and (result.get("sage") == "running" or "chain" in result))
         except Exception as exc:
             logger.debug("SAGE health check failed: %s", exc)
             return False
@@ -68,12 +149,10 @@ class SageClient:
     def get_status(self) -> Dict[str, Any]:
         """Return SAGE node status dict, or empty dict on failure."""
         try:
-            resp = self._session.get(
-                f"{self._base_url}/v1/dashboard/status",
-                timeout=_REQUEST_TIMEOUT,
-            )
-            resp.raise_for_status()
-            return resp.json()
+            sdk = self._ensure_sdk()
+            if sdk is None:
+                return {}
+            return sdk.health()
         except Exception as exc:
             logger.warning("SAGE status request failed: %s", exc)
             return {}
@@ -90,16 +169,31 @@ class SageClient:
         confidence: float = 0.8,
         tags: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Store a memory in SAGE. Returns the response dict or {} on failure."""
-        payload: Dict[str, Any] = {
-            "content": content,
-            "domain": domain,
-            "type": memory_type,
-            "confidence": confidence,
-        }
-        if tags:
-            payload["tags"] = tags
-        return self._post("/v1/memory/remember", payload)
+        """Store a memory in SAGE via propose(). Returns response dict or {} on failure."""
+        try:
+            sdk = self._ensure_sdk()
+            if sdk is None:
+                return {}
+
+            # Build content with tags inline (SAGE stores tags in content for keyword recall)
+            tagged_content = content
+            if tags:
+                tagged_content = f"{content} [tags: {', '.join(tags)}]"
+
+            result = sdk.propose(
+                content=tagged_content,
+                memory_type=memory_type,
+                domain_tag=domain,
+                confidence=confidence,
+            )
+            return {
+                "memory_id": getattr(result, "memory_id", ""),
+                "tx_hash": getattr(result, "tx_hash", ""),
+                "status": "proposed",
+            }
+        except Exception as exc:
+            logger.warning("SAGE remember failed: %s", exc)
+            return {}
 
     def recall(
         self,
@@ -108,14 +202,38 @@ class SageClient:
         top_k: int = 5,
     ) -> List[Dict[str, Any]]:
         """Retrieve relevant memories from SAGE. Returns list of memory dicts."""
-        payload = {"query": query, "domain": domain, "top_k": top_k}
-        result = self._post("/v1/memory/recall", payload)
-        # The API may return memories under different keys
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict):
-            return result.get("memories", result.get("results", []))
-        return []
+        try:
+            sdk = self._ensure_sdk()
+            if sdk is None:
+                return []
+
+            # Generate embedding for the query via SAGE's built-in embedder
+            try:
+                embedding = sdk.embed(query)
+            except Exception:
+                # Fallback: use hash-based pseudo-embedding (matches SAGE's hash mode)
+                embedding = self._hash_embedding(query)
+
+            result = sdk.query(
+                embedding=embedding,
+                domain_tag=domain,
+                top_k=top_k,
+                status_filter="committed",
+            )
+
+            memories = []
+            for mem in getattr(result, "memories", []):
+                memories.append({
+                    "content": getattr(mem, "content", ""),
+                    "confidence": getattr(mem, "confidence", 0.0),
+                    "domain": getattr(mem, "domain_tag", domain),
+                    "memory_id": getattr(mem, "memory_id", ""),
+                    "tags": getattr(mem, "tags", []),
+                })
+            return memories
+        except Exception as exc:
+            logger.warning("SAGE recall failed: %s", exc)
+            return []
 
     def reflect(
         self,
@@ -123,9 +241,25 @@ class SageClient:
         donts: List[str],
         domain: str = "general",
     ) -> Dict[str, Any]:
-        """Submit a reflection (dos/don'ts) to SAGE."""
-        payload = {"dos": dos, "donts": donts, "domain": domain}
-        return self._post("/v1/memory/reflect", payload)
+        """Submit a reflection to SAGE as a memory with dos/don'ts."""
+        try:
+            content = ""
+            if dos:
+                content += "DO: " + "; ".join(dos)
+            if donts:
+                content += " | DON'T: " + "; ".join(donts)
+            if content:
+                return self.remember(
+                    content=content.strip(),
+                    domain=domain,
+                    memory_type="observation",
+                    confidence=0.85,
+                    tags=["reflection"],
+                )
+            return {}
+        except Exception as exc:
+            logger.warning("SAGE reflect failed: %s", exc)
+            return {}
 
     # ------------------------------------------------------------------
     # Convenience helpers
@@ -136,26 +270,22 @@ class SageClient:
         """Return a short SHA-256 hex digest for deduplication."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _hash_embedding(text: str, dim: int = 768) -> List[float]:
+        """Generate a deterministic pseudo-embedding via hashing.
 
-    def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """POST JSON to SAGE and return the parsed response, or {} on error."""
-        try:
-            resp = self._session.post(
-                f"{self._base_url}{path}",
-                json=payload,
-                timeout=_REQUEST_TIMEOUT,
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.exceptions.ConnectionError:
-            logger.debug("SAGE not reachable at %s", self._base_url)
-            return {}
-        except requests.exceptions.Timeout:
-            logger.warning("SAGE request timed out: POST %s", path)
-            return {}
-        except Exception as exc:
-            logger.warning("SAGE request failed: %s", exc)
-            return {}
+        Matches SAGE's ``hash`` embedding mode used when Ollama is offline.
+        Uses iterative hashing to produce stable float values in [-1, 1].
+        """
+        values = []
+        seed = text.encode("utf-8")
+        for i in range(dim):
+            h = hashlib.sha256(seed + i.to_bytes(4, "little")).digest()
+            # Convert first 4 bytes to unsigned int, map to [-1, 1]
+            val = int.from_bytes(h[:4], "little")
+            values.append((val / 2147483647.5) - 1.0)
+        # Normalize to unit vector
+        norm = sum(v * v for v in values) ** 0.5
+        if norm > 0:
+            return [v / norm for v in values]
+        return [0.0] * dim

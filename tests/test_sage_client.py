@@ -1,9 +1,8 @@
-"""Tests for core.sage_client — SAGE REST client."""
+"""Tests for core.sage_client — SAGE SDK wrapper client."""
 
-import json
 import threading
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 from core.sage_client import SageClient
 
@@ -54,26 +53,30 @@ class TestSageClientHealthCheck(unittest.TestCase):
     def tearDown(self):
         SageClient.reset_instance()
 
-    @patch("core.sage_client.requests.Session.get")
-    def test_healthy(self, mock_get):
-        mock_get.return_value = MagicMock(status_code=200)
+    def test_healthy_with_sdk(self):
+        mock_sdk = MagicMock()
+        mock_sdk.health.return_value = {"sage": "running", "chain": {"block_height": "100"}}
+        self.client._sdk_client = mock_sdk
+        self.client._sdk_checked = True
         self.assertTrue(self.client.health_check())
 
-    @patch("core.sage_client.requests.Session.get")
-    def test_unhealthy_status(self, mock_get):
-        mock_get.return_value = MagicMock(status_code=503)
+    def test_healthy_v4_format(self):
+        mock_sdk = MagicMock()
+        mock_sdk.health.return_value = {"chain": {"block_height": "100"}}
+        self.client._sdk_client = mock_sdk
+        self.client._sdk_checked = True
+        self.assertTrue(self.client.health_check())
+
+    def test_unhealthy_no_sdk(self):
+        self.client._sdk_client = None
+        self.client._sdk_checked = True
         self.assertFalse(self.client.health_check())
 
-    @patch("core.sage_client.requests.Session.get")
-    def test_connection_error(self, mock_get):
-        import requests as req
-        mock_get.side_effect = req.exceptions.ConnectionError("refused")
-        self.assertFalse(self.client.health_check())
-
-    @patch("core.sage_client.requests.Session.get")
-    def test_timeout(self, mock_get):
-        import requests as req
-        mock_get.side_effect = req.exceptions.Timeout("timed out")
+    def test_connection_error(self):
+        mock_sdk = MagicMock()
+        mock_sdk.health.side_effect = Exception("connection refused")
+        self.client._sdk_client = mock_sdk
+        self.client._sdk_checked = True
         self.assertFalse(self.client.health_check())
 
 
@@ -83,47 +86,47 @@ class TestSageClientRemember(unittest.TestCase):
     def setUp(self):
         SageClient.reset_instance()
         self.client = SageClient("http://test:8080")
+        self.mock_sdk = MagicMock()
+        self.client._sdk_client = self.mock_sdk
+        self.client._sdk_checked = True
 
     def tearDown(self):
         SageClient.reset_instance()
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_remember_success(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"memory_id": "abc123", "status": "proposed"},
-        )
+    def test_remember_success(self):
+        mock_result = MagicMock()
+        mock_result.memory_id = "abc123"
+        mock_result.tx_hash = "TX123"
+        self.mock_sdk.propose.return_value = mock_result
+
         result = self.client.remember("test content", domain="test-domain")
         self.assertEqual(result["memory_id"], "abc123")
+        self.assertEqual(result["status"], "proposed")
 
-        # Verify payload
-        call_args = mock_post.call_args
-        payload = call_args[1]["json"]
-        self.assertEqual(payload["content"], "test content")
-        self.assertEqual(payload["domain"], "test-domain")
-        self.assertEqual(payload["type"], "observation")
-        self.assertEqual(payload["confidence"], 0.8)
+        # Verify propose was called with correct args
+        self.mock_sdk.propose.assert_called_once()
+        call_kwargs = self.mock_sdk.propose.call_args[1]
+        self.assertIn("test content", call_kwargs["content"])
+        self.assertEqual(call_kwargs["domain_tag"], "test-domain")
+        self.assertEqual(call_kwargs["memory_type"], "observation")
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_remember_with_tags(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200, json=lambda: {"memory_id": "x"}
-        )
+    def test_remember_with_tags(self):
+        mock_result = MagicMock()
+        mock_result.memory_id = "x"
+        mock_result.tx_hash = "y"
+        self.mock_sdk.propose.return_value = mock_result
+
         self.client.remember("x", tags=["a", "b"])
-        payload = mock_post.call_args[1]["json"]
-        self.assertEqual(payload["tags"], ["a", "b"])
+        content = self.mock_sdk.propose.call_args[1]["content"]
+        self.assertIn("[tags: a, b]", content)
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_remember_connection_error(self, mock_post):
-        import requests as req
-        mock_post.side_effect = req.exceptions.ConnectionError()
+    def test_remember_no_sdk(self):
+        self.client._sdk_client = None
         result = self.client.remember("x")
         self.assertEqual(result, {})
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_remember_timeout(self, mock_post):
-        import requests as req
-        mock_post.side_effect = req.exceptions.Timeout()
+    def test_remember_failure(self):
+        self.mock_sdk.propose.side_effect = Exception("network error")
         result = self.client.remember("x")
         self.assertEqual(result, {})
 
@@ -134,45 +137,53 @@ class TestSageClientRecall(unittest.TestCase):
     def setUp(self):
         SageClient.reset_instance()
         self.client = SageClient("http://test:8080")
+        self.mock_sdk = MagicMock()
+        self.client._sdk_client = self.mock_sdk
+        self.client._sdk_checked = True
 
     def tearDown(self):
         SageClient.reset_instance()
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_recall_returns_memories_list(self, mock_post):
-        memories = [{"content": "finding A", "confidence": 0.9}]
-        mock_post.return_value = MagicMock(
-            status_code=200, json=lambda: {"memories": memories}
-        )
+    def test_recall_returns_memories(self):
+        mock_mem = MagicMock()
+        mock_mem.content = "finding A"
+        mock_mem.confidence = 0.9
+        mock_mem.domain_tag = "test"
+        mock_mem.memory_id = "mem1"
+        mock_mem.tags = []
+
+        mock_result = MagicMock()
+        mock_result.memories = [mock_mem]
+        self.mock_sdk.query.return_value = mock_result
+        self.mock_sdk.embed.return_value = [0.1] * 768
+
         result = self.client.recall("test query", domain="test")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["content"], "finding A")
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_recall_handles_raw_list_response(self, mock_post):
-        """Some API versions return a raw list."""
-        memories = [{"content": "x"}]
-        mock_post.return_value = MagicMock(
-            status_code=200, json=lambda: memories
-        )
-        result = self.client.recall("q")
-        self.assertEqual(len(result), 1)
-
-    @patch("core.sage_client.requests.Session.post")
-    def test_recall_connection_error_returns_empty(self, mock_post):
-        import requests as req
-        mock_post.side_effect = req.exceptions.ConnectionError()
+    def test_recall_no_sdk(self):
+        self.client._sdk_client = None
         result = self.client.recall("q")
         self.assertEqual(result, [])
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_recall_with_top_k(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200, json=lambda: {"memories": []}
-        )
+    def test_recall_failure(self):
+        self.mock_sdk.embed.side_effect = Exception("timeout")
+        # Should fall back to hash embedding, then query
+        self.mock_sdk.query.side_effect = Exception("failed")
+        result = self.client.recall("q")
+        self.assertEqual(result, [])
+
+    def test_recall_uses_embed(self):
+        mock_result = MagicMock()
+        mock_result.memories = []
+        self.mock_sdk.query.return_value = mock_result
+        self.mock_sdk.embed.return_value = [0.5] * 768
+
         self.client.recall("q", top_k=10)
-        payload = mock_post.call_args[1]["json"]
-        self.assertEqual(payload["top_k"], 10)
+        self.mock_sdk.embed.assert_called_once_with("q")
+        self.mock_sdk.query.assert_called_once()
+        call_kwargs = self.mock_sdk.query.call_args[1]
+        self.assertEqual(call_kwargs["top_k"], 10)
 
 
 class TestSageClientReflect(unittest.TestCase):
@@ -181,27 +192,28 @@ class TestSageClientReflect(unittest.TestCase):
     def setUp(self):
         SageClient.reset_instance()
         self.client = SageClient("http://test:8080")
+        self.mock_sdk = MagicMock()
+        self.client._sdk_client = self.mock_sdk
+        self.client._sdk_checked = True
 
     def tearDown(self):
         SageClient.reset_instance()
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_reflect_success(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200, json=lambda: {"status": "ok"}
-        )
+    def test_reflect_stores_as_memory(self):
+        mock_result = MagicMock()
+        mock_result.memory_id = "ref1"
+        mock_result.tx_hash = "TX"
+        self.mock_sdk.propose.return_value = mock_result
+
         result = self.client.reflect(
             dos=["use X"], donts=["avoid Y"], domain="test"
         )
-        self.assertEqual(result["status"], "ok")
-        payload = mock_post.call_args[1]["json"]
-        self.assertEqual(payload["dos"], ["use X"])
-        self.assertEqual(payload["donts"], ["avoid Y"])
+        self.assertEqual(result["status"], "proposed")
+        content = self.mock_sdk.propose.call_args[1]["content"]
+        self.assertIn("DO: use X", content)
+        self.assertIn("DON'T: avoid Y", content)
 
-    @patch("core.sage_client.requests.Session.post")
-    def test_reflect_failure_returns_empty(self, mock_post):
-        import requests as req
-        mock_post.side_effect = req.exceptions.ConnectionError()
+    def test_reflect_empty(self):
         result = self.client.reflect(dos=[], donts=[])
         self.assertEqual(result, {})
 
@@ -212,24 +224,20 @@ class TestSageClientGetStatus(unittest.TestCase):
     def setUp(self):
         SageClient.reset_instance()
         self.client = SageClient("http://test:8080")
+        self.mock_sdk = MagicMock()
+        self.client._sdk_client = self.mock_sdk
+        self.client._sdk_checked = True
 
     def tearDown(self):
         SageClient.reset_instance()
 
-    @patch("core.sage_client.requests.Session.get")
-    def test_status_success(self, mock_get):
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"total_memories": 100},
-        )
-        mock_get.return_value.raise_for_status = MagicMock()
+    def test_status_success(self):
+        self.mock_sdk.health.return_value = {"total_memories": 100}
         result = self.client.get_status()
         self.assertEqual(result["total_memories"], 100)
 
-    @patch("core.sage_client.requests.Session.get")
-    def test_status_failure(self, mock_get):
-        import requests as req
-        mock_get.side_effect = req.exceptions.ConnectionError()
+    def test_status_failure(self):
+        self.mock_sdk.health.side_effect = Exception("down")
         result = self.client.get_status()
         self.assertEqual(result, {})
 
@@ -250,6 +258,24 @@ class TestSageClientContentHash(unittest.TestCase):
     def test_length(self):
         h = SageClient.content_hash("test")
         self.assertEqual(len(h), 16)
+
+
+class TestSageClientHashEmbedding(unittest.TestCase):
+    """_hash_embedding() tests."""
+
+    def test_deterministic(self):
+        a = SageClient._hash_embedding("hello")
+        b = SageClient._hash_embedding("hello")
+        self.assertEqual(a, b)
+
+    def test_correct_dimension(self):
+        emb = SageClient._hash_embedding("test", dim=768)
+        self.assertEqual(len(emb), 768)
+
+    def test_normalized(self):
+        emb = SageClient._hash_embedding("test")
+        norm = sum(f * f for f in emb) ** 0.5
+        self.assertAlmostEqual(norm, 1.0, places=5)
 
 
 if __name__ == "__main__":

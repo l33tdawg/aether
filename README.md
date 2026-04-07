@@ -22,7 +22,12 @@ Aether is a Python-based framework for analyzing Solidity smart contracts, gener
 
 ### SAGE Quick Start
 
+SAGE is a persistent institutional memory system powered by BFT consensus. See the [SAGE project](https://github.com/l33tdawg/sage) for full documentation.
+
 ```bash
+# Install SAGE Python SDK
+pip install sage-agent-sdk
+
 # Start SAGE (Docker required)
 docker compose up -d
 
