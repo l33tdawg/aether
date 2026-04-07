@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_SAGE_URL = "http://localhost:8080"
 _REQUEST_TIMEOUT = 10  # seconds
+_MIN_CALL_INTERVAL = 0.15  # seconds between SAGE API calls (avoids nonce collision)
 
 
 def _find_agent_key() -> Optional[Path]:
@@ -63,6 +64,8 @@ class SageClient:
         self._sdk_client = None
         self._sdk_checked = False
         self._agent_name = "aether"
+        self._last_call_time: float = 0.0
+        self._call_lock = threading.Lock()
 
     def _ensure_sdk(self):
         """Lazy-initialize the SDK client with agent identity."""
@@ -129,6 +132,19 @@ class SageClient:
         with cls._lock:
             cls._instance = None
 
+    def _pace(self) -> None:
+        """Ensure minimum interval between SAGE API calls.
+
+        Prevents Ed25519 signature nonce collisions when two calls happen
+        in the same second with identical parameters.
+        """
+        with self._call_lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call_time
+            if elapsed < _MIN_CALL_INTERVAL:
+                time.sleep(_MIN_CALL_INTERVAL - elapsed)
+            self._last_call_time = time.monotonic()
+
     # ------------------------------------------------------------------
     # Health & Status
     # ------------------------------------------------------------------
@@ -174,6 +190,7 @@ class SageClient:
     ) -> Dict[str, Any]:
         """Store a memory in SAGE via propose(). Returns response dict or {} on failure."""
         try:
+            self._pace()
             sdk = self._ensure_sdk()
             if sdk is None:
                 return {}
@@ -211,6 +228,7 @@ class SageClient:
         embedding modes (hash, ollama, cloud).
         """
         try:
+            self._pace()
             sdk = self._ensure_sdk()
             if sdk is None:
                 return []
@@ -261,6 +279,7 @@ class SageClient:
     ) -> Dict[str, Any]:
         """Submit a reflection to SAGE as a memory with dos/don'ts."""
         try:
+            self._pace()
             content = ""
             if dos:
                 content += "DO: " + "; ".join(dos)

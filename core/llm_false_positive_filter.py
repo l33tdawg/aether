@@ -275,17 +275,27 @@ class LLMFalsePositiveFilter:
         
         try:
             logger.debug(f"Validating with context: code={len(context.get('contract_code',''))} chars, imports={len(context.get('imports', []) or [])}")
-            
-            response = await self.llm_analyzer._call_llm(
-                validation_prompt,
-                model=validation_model  # Use configured validation model (OpenAI or Gemini)
+
+            response = await asyncio.wait_for(
+                self.llm_analyzer._call_llm(
+                    validation_prompt,
+                    model=validation_model  # Use configured validation model (OpenAI or Gemini)
+                ),
+                timeout=60,  # 60s max per validation call
             )
-            
+
             result = self._parse_validation_response(response)
             logger.debug(f"Validation result: is_fp={result.is_false_positive}, confidence={result.confidence}")
             self.validation_cache[cache_key] = result
             return result
             
+        except asyncio.TimeoutError:
+            logger.warning("LLM validation timed out (60s) for %s", vulnerability.get("vulnerability_type", "unknown"))
+            return ValidationResult(
+                is_false_positive=False,
+                confidence=0.5,
+                reasoning="LLM validation timed out — keeping finding as precaution"
+            )
         except Exception as e:
             logger.error(f"LLM validation failed: {e}")
             # Return neutral result if validation fails
