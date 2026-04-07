@@ -297,7 +297,7 @@ class TestEtherscanFetcherNetworks(unittest.TestCase):
         result = self.fetcher.set_network("polygon")
         self.assertTrue(result)
         self.assertEqual(self.fetcher.current_network, "polygon")
-        self.assertIn("polygonscan", self.fetcher.base_url)
+        self.assertIn("etherscan", self.fetcher.base_url)
 
     def test_set_network_invalid(self):
         result = self.fetcher.set_network("nonexistent_chain")
@@ -496,7 +496,7 @@ class TestEtherscanFetcherFetchContract(unittest.TestCase):
         self.fetcher.fetch_contract_source(VALID_ADDRESS, network="polygon")
 
         called_url = mock_get.call_args[0][0]
-        self.assertIn("polygonscan.com", called_url)
+        self.assertIn("etherscan.io", called_url)
         self.assertIn("chainid=137", called_url)
 
     @patch('core.etherscan_fetcher.requests.get')

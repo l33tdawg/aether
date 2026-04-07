@@ -230,40 +230,35 @@ class AetherCLI:
             return result
 
     def _handle_basescan_address(self, address: str) -> Optional[str]:
-        """Handle Basescan address by fetching contract source code."""
-        if not self.basescan_fetcher.is_basescan_address(address):
+        """Handle Basescan/multi-network address via unified Etherscan V2 API.
+
+        Tries Base, then all other supported networks via the EtherscanFetcher
+        (which uses the unified api.etherscan.io/v2/api endpoint).
+        """
+        if not self.etherscan_fetcher.is_etherscan_address(address):
             return None
 
-        print(f"🔍 Detected Basescan address: {address}")
-        
-        # Check if API key is configured
         if not self.config_manager.config.etherscan_api_key:
-            print("❌ Basescan API key not configured.")
-            print("   Configure it with: python main.py config --set-etherscan-key YOUR_KEY")
+            print("❌ API key not configured.")
             return None
 
-        # Fetch contract info first
-        contract_info = self.basescan_fetcher.get_contract_info(address)
-        if not contract_info.get('success'):
-            print(f"❌ Error fetching contract info: {contract_info.get('error')}")
-            return None
+        # Try Base first (most likely for Basescan addresses), then other L2s
+        networks_to_try = ["base", "arbitrum", "optimism", "polygon", "bsc", "avalanche"]
+        for network in networks_to_try:
+            print(f"🔍 Trying {network}...")
+            self.etherscan_fetcher.set_network(network)
+            contract_info = self.etherscan_fetcher.get_contract_info(address)
+            if contract_info.get('success') and contract_info.get('is_verified'):
+                print(f"✅ Contract verified on {network}: {contract_info['contract_name']}")
+                success, result, contract_data = self.etherscan_fetcher.fetch_and_save_contract(address)
+                if success:
+                    print(f"✅ Contract source saved to: {result}")
+                    return result
+                else:
+                    print(f"❌ Error fetching source: {result}")
 
-        if not contract_info.get('is_verified'):
-            print("❌ Contract is not verified on Basescan.")
-            print("   Only verified contracts can be audited.")
-            return None
-
-        print(f"✅ Contract verified: {contract_info['contract_name']}")
-        
-        # Fetch and save contract source code
-        success, result, contract_data = self.basescan_fetcher.fetch_and_save_contract(address)
-        
-        if not success:
-            print(f"❌ Error fetching contract source: {result}")
-            return None
-
-        print(f"✅ Contract source saved to: {result}")
-        return result
+        print("❌ Contract not found on any supported network.")
+        return None
 
     def _extract_contract_name_from_results(self, results: Dict[str, Any]) -> str:
         """Extract contract name from results for better organization."""
