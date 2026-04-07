@@ -939,8 +939,12 @@ class DeepAnalysisEngine:
             self._severity_calibration = {}
 
     # ------------------------------------------------------------------
-    # SAGE institutional memory helpers
+    # SAGE institutional memory — primary knowledge source
     # ------------------------------------------------------------------
+
+    # Character budgets for SAGE context per pass
+    _SAGE_BUDGET = 50_000  # max chars of SAGE context per pass
+    _SAGE_TOP_K = 10       # number of memories to recall per query
 
     def _build_sage_context(self, archetype: ArchetypeResult) -> str:
         """Recall historical audit knowledge from SAGE for this archetype.
@@ -960,7 +964,7 @@ class DeepAnalysisEngine:
             arch_memories = client.recall(
                 query=f"vulnerabilities and audit findings for {arch_name}",
                 domain=f"audit-{arch_name}",
-                top_k=5,
+                top_k=self._SAGE_TOP_K,
             )
             if arch_memories:
                 lines = [m.get("content", "") for m in arch_memories if m.get("content")]
@@ -971,58 +975,196 @@ class DeepAnalysisEngine:
             exploit_memories = client.recall(
                 query=f"exploit patterns for {arch_name}",
                 domain="exploit-patterns",
-                top_k=5,
+                top_k=self._SAGE_TOP_K,
             )
             if exploit_memories:
-                lines = [m.get("content", "")[:200] for m in exploit_memories if m.get("content")]
+                lines = [m.get("content", "") for m in exploit_memories if m.get("content")]
                 if lines:
                     sections.append("### Known Exploit Patterns\n" + "\n".join(f"- {l}" for l in lines))
 
             if sections:
                 ctx = "\n\n## SAGE Institutional Knowledge\n" + "\n\n".join(sections) + "\n"
-                print(f"   🧠 SAGE: recalled {len(arch_memories) + len(exploit_memories)} memories", flush=True)
+                # Enforce budget
+                if len(ctx) > self._SAGE_BUDGET:
+                    ctx = ctx[:self._SAGE_BUDGET] + "\n[...truncated to budget]\n"
+                total_recalled = len(arch_memories) + len(exploit_memories)
+                print(f"   🧠 SAGE: recalled {total_recalled} memories ({len(ctx)} chars)", flush=True)
                 return ctx
         except Exception as exc:
             logger.debug("SAGE context build failed: %s", exc)
         return ""
 
-    def _recall_sage_for_pass(self, archetype: ArchetypeResult, pass_num: int) -> str:
-        """Recall SAGE memories specific to a pipeline pass."""
+    def _recall_sage_checklist(self, archetype: ArchetypeResult) -> str:
+        """Recall archetype-specific vulnerability checklists from SAGE.
+
+        This is the PRIMARY source for Pass 3 checklist context, replacing
+        the static ``format_checklist_for_prompt()`` when SAGE is available.
+        Falls back to static checklists if SAGE returns nothing.
+        """
         try:
             from core.sage_client import SageClient
             client = SageClient.get_instance()
+            if not client.health_check():
+                return ""
+
             arch_name = archetype.primary.value
+            all_memories: list[dict] = []
 
-            if pass_num == 3:
-                memories = client.recall(
-                    query=f"{arch_name} invariant violations and edge cases",
-                    domain="exploit-patterns",
+            # Query the archetype-specific domain
+            mems = client.recall(
+                query=f"vulnerability checklist {arch_name} invariant",
+                domain=f"protocol-{arch_name}",
+                top_k=self._SAGE_TOP_K,
+            )
+            all_memories.extend(mems)
+
+            # Also recall general exploit patterns for this archetype
+            exploit_mems = client.recall(
+                query=f"{arch_name} exploit pattern vulnerability mechanism",
+                domain="exploit-patterns",
+                top_k=self._SAGE_TOP_K,
+            )
+            all_memories.extend(exploit_mems)
+
+            # Query secondary archetypes
+            for sec_arch in archetype.secondary[:2]:
+                sec_mems = client.recall(
+                    query=f"vulnerability checklist {sec_arch.value}",
+                    domain=f"protocol-{sec_arch.value}",
                     top_k=5,
                 )
-            elif pass_num == 5:
-                memories = client.recall(
-                    query=f"false positives for {arch_name}",
-                    domain="false-positives",
-                    top_k=5,
-                )
-            else:
+                all_memories.extend(sec_mems)
+
+            if not all_memories:
                 return ""
 
-            if not memories:
-                return ""
+            lines = []
+            seen: set[str] = set()
+            for m in all_memories:
+                content = m.get("content", "")
+                if content and content[:80] not in seen:
+                    seen.add(content[:80])
+                    lines.append(f"- {content}")
 
-            lines = [m.get("content", "") for m in memories if m.get("content")]
             if not lines:
                 return ""
 
-            if pass_num == 5:
-                header = "\n\n## Known False Positive Patterns (from SAGE)\nAvoid flagging these known FP patterns:\n"
-            else:
-                header = "\n\n## Historical Patterns (from SAGE)\n"
-            return header + "\n".join(f"- {l}" for l in lines) + "\n"
+            text = "\n\n## Vulnerability Checklist (from SAGE institutional memory)\n"
+            text += "These are known vulnerability patterns for this protocol type, drawn from "
+            text += "historical audits, exploit databases, and confirmed findings:\n\n"
+            text += "\n".join(lines) + "\n"
+
+            # Enforce budget
+            if len(text) > self._SAGE_BUDGET:
+                text = text[:self._SAGE_BUDGET] + "\n[...truncated to budget]\n"
+
+            print(f"   🧠 SAGE checklist: {len(lines)} patterns ({len(text)} chars)", flush=True)
+            return text
         except Exception as exc:
-            logger.debug("SAGE pass %d recall failed: %s", pass_num, exc)
+            logger.debug("SAGE checklist recall failed: %s", exc)
             return ""
+
+    def _recall_sage_exploit_patterns(self, archetype: ArchetypeResult) -> str:
+        """Recall exploit patterns + historical exploits from SAGE for Pass 5.
+
+        This is the PRIMARY source for Pass 5 exploit context, replacing
+        the static ``exploit_kb.format_for_prompt()`` when SAGE is available.
+        Falls back to static patterns if SAGE returns nothing.
+        """
+        try:
+            from core.sage_client import SageClient
+            client = SageClient.get_instance()
+            if not client.health_check():
+                return ""
+
+            arch_name = archetype.primary.value
+            all_memories: list[dict] = []
+
+            # Exploit patterns
+            exploit_mems = client.recall(
+                query=f"{arch_name} attack exploit mechanism flash loan manipulation",
+                domain="exploit-patterns",
+                top_k=self._SAGE_TOP_K,
+            )
+            all_memories.extend(exploit_mems)
+
+            # Historical real-world exploits
+            hist_mems = client.recall(
+                query=f"historical exploit attack {arch_name} critical vulnerability",
+                domain="historical-exploits",
+                top_k=self._SAGE_TOP_K,
+            )
+            all_memories.extend(hist_mems)
+
+            # Token quirks if relevant
+            quirk_mems = client.recall(
+                query="token quirk fee transfer rebasing callback",
+                domain="token-quirks",
+                top_k=5,
+            )
+            all_memories.extend(quirk_mems)
+
+            # False positive patterns (so LLM knows what NOT to flag)
+            fp_mems = client.recall(
+                query=f"false positive {arch_name} rejected not exploitable",
+                domain="false-positives",
+                top_k=self._SAGE_TOP_K,
+            )
+
+            if not all_memories and not fp_mems:
+                return ""
+
+            sections: list[str] = []
+
+            # Exploit patterns section
+            exploit_lines = []
+            seen: set[str] = set()
+            for m in all_memories:
+                content = m.get("content", "")
+                if content and content[:80] not in seen:
+                    seen.add(content[:80])
+                    exploit_lines.append(f"- {content}")
+            if exploit_lines:
+                sections.append(
+                    "### Known Exploit Patterns & Historical Precedents (from SAGE)\n"
+                    + "\n".join(exploit_lines)
+                )
+
+            # FP patterns section
+            if fp_mems:
+                fp_lines = [f"- {m.get('content', '')}" for m in fp_mems if m.get("content")]
+                if fp_lines:
+                    sections.append(
+                        "### Known False Positive Patterns (from SAGE)\n"
+                        "Avoid flagging these — they have been rejected in prior audits:\n"
+                        + "\n".join(fp_lines)
+                    )
+
+            if not sections:
+                return ""
+
+            text = "\n\n" + "\n\n".join(sections) + "\n"
+
+            if len(text) > self._SAGE_BUDGET:
+                text = text[:self._SAGE_BUDGET] + "\n[...truncated to budget]\n"
+
+            total = len(all_memories) + len(fp_mems)
+            print(f"   🧠 SAGE exploits: {total} memories ({len(text)} chars)", flush=True)
+            return text
+        except Exception as exc:
+            logger.debug("SAGE exploit pattern recall failed: %s", exc)
+            return ""
+
+    def _recall_sage_for_pass(self, archetype: ArchetypeResult, pass_num: int) -> str:
+        """Recall SAGE memories specific to a pipeline pass.
+
+        Note: Pass 3 and 5 now use dedicated methods (_recall_sage_checklist
+        and _recall_sage_exploit_patterns). This method handles supplementary
+        recall for edge cases.
+        """
+        # Pass 3 and 5 primary recall is handled by dedicated methods now
+        # This remains for any additional pass-specific context
+        return ""
 
     def _store_audit_learnings(
         self,
@@ -1286,14 +1428,27 @@ class DeepAnalysisEngine:
             print("⚠️  Pass 2 failed, continuing with reduced context", flush=True)
             pass2_text = "{}"
 
-        # Get archetype-specific checklist and exploit patterns
-        checklist_items = get_checklists_for_result(archetype)
-        checklist_text = format_checklist_for_prompt(checklist_items)
+        # SAGE as primary knowledge source for checklists and exploit patterns.
+        # Static knowledge base is the fallback when SAGE is unavailable.
+        sage_checklist = self._recall_sage_checklist(archetype)
+        if sage_checklist:
+            checklist_text = sage_checklist
+            print("   🧠 Using SAGE institutional memory for vulnerability checklist", flush=True)
+        else:
+            checklist_items = get_checklists_for_result(archetype)
+            checklist_text = format_checklist_for_prompt(checklist_items)
+            print("   📋 Using static checklist (SAGE unavailable)", flush=True)
 
-        exploit_patterns = self.exploit_kb.get_for_archetypes(
-            [archetype.primary] + archetype.secondary
-        )
-        exploit_text = self.exploit_kb.format_for_prompt(exploit_patterns, max_patterns=20)
+        sage_exploit_text = self._recall_sage_exploit_patterns(archetype)
+        if sage_exploit_text:
+            exploit_text = sage_exploit_text
+            print("   🧠 Using SAGE institutional memory for exploit patterns", flush=True)
+        else:
+            exploit_patterns = self.exploit_kb.get_for_archetypes(
+                [archetype.primary] + archetype.secondary
+            )
+            exploit_text = self.exploit_kb.format_for_prompt(exploit_patterns, max_patterns=20)
+            print("   📋 Using static exploit KB (SAGE unavailable)", flush=True)
 
         # --- Pass 3: Invariant Violation Analysis ---
         pass3_model = _get_model_for_pass(3)
@@ -1306,10 +1461,6 @@ class DeepAnalysisEngine:
             truncated_content, pass1_text, pass2_text, checklist_text,
             file_context=file_context, related_context=related_ctx_p3,
         )
-        # Inject SAGE institutional context into Pass 3
-        sage_pass3 = self._recall_sage_for_pass(archetype, pass_num=3)
-        if sage_pass3:
-            pass3_prompt_text += sage_pass3
         pass3_findings = await self._run_finding_pass(
             "Pass 3: Invariant Violations",
             pass3_prompt_text,
@@ -1400,10 +1551,7 @@ class DeepAnalysisEngine:
         calibration_note = self._build_severity_calibration_note()
         if calibration_note:
             pass5_prompt += calibration_note
-        # SAGE: inject known false positive patterns into Pass 5
-        sage_pass5 = self._recall_sage_for_pass(archetype, pass_num=5)
-        if sage_pass5:
-            pass5_prompt += sage_pass5
+        # SAGE FP patterns are now included in exploit_text via _recall_sage_exploit_patterns
         pass5_findings = await self._run_finding_pass(
             "Pass 5: Adversarial Modeling",
             pass5_prompt,

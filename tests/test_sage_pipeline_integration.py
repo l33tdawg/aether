@@ -86,51 +86,66 @@ class TestRecallSageForPass(unittest.TestCase):
         return engine
 
     @patch("core.sage_client.SageClient.get_instance")
-    def test_pass3_returns_historical_patterns(self, mock_get_instance):
+    def test_sage_checklist_returns_patterns(self, mock_get_instance):
+        """SAGE is now primary brain: _recall_sage_checklist provides Pass 3 context."""
         mock_client = MagicMock()
+        mock_client.health_check.return_value = True
         mock_client.recall.return_value = [
             {"content": "Invariant: total supply == sum of balances"},
+            {"content": "First depositor inflation in vault contracts"},
         ]
         mock_get_instance.return_value = mock_client
 
         engine = self._make_engine()
         archetype = ArchetypeResult(primary=ProtocolArchetype.VAULT_ERC4626, confidence=0.9)
-        ctx = engine._recall_sage_for_pass(archetype, pass_num=3)
+        ctx = engine._recall_sage_checklist(archetype)
 
-        self.assertIn("Historical Patterns", ctx)
+        self.assertIn("Vulnerability Checklist", ctx)
         self.assertIn("total supply", ctx)
+        self.assertIn("SAGE institutional memory", ctx)
 
     @patch("core.sage_client.SageClient.get_instance")
-    def test_pass5_returns_fp_patterns(self, mock_get_instance):
+    def test_sage_exploit_patterns_returns_context(self, mock_get_instance):
+        """SAGE is now primary brain: _recall_sage_exploit_patterns provides Pass 5 context."""
         mock_client = MagicMock()
-        mock_client.recall.return_value = [
-            {"content": "FP: gas optimization flagged as vulnerability"},
+        mock_client.health_check.return_value = True
+        # First call: exploit patterns, second: historical, third: quirks, fourth: FP
+        mock_client.recall.side_effect = [
+            [{"content": "Reentrancy attack via external call"}],
+            [{"content": "DAO hack 2016 reentrancy"}],
+            [{"content": "Fee on transfer token quirk"}],
+            [{"content": "FP: gas optimization not exploitable"}],
         ]
         mock_get_instance.return_value = mock_client
 
         engine = self._make_engine()
         archetype = ArchetypeResult(primary=ProtocolArchetype.DEX_AMM, confidence=0.8)
-        ctx = engine._recall_sage_for_pass(archetype, pass_num=5)
+        ctx = engine._recall_sage_exploit_patterns(archetype)
 
+        self.assertIn("Exploit Patterns", ctx)
+        self.assertIn("Reentrancy", ctx)
         self.assertIn("False Positive Patterns", ctx)
-        self.assertIn("gas optimization", ctx)
 
     @patch("core.sage_client.SageClient.get_instance")
-    def test_unsupported_pass_returns_empty(self, mock_get_instance):
+    def test_sage_checklist_empty_when_sage_down(self, mock_get_instance):
+        mock_client = MagicMock()
+        mock_client.health_check.return_value = False
+        mock_get_instance.return_value = mock_client
+
         engine = self._make_engine()
         archetype = ArchetypeResult(primary=ProtocolArchetype.TOKEN, confidence=0.5)
-        ctx = engine._recall_sage_for_pass(archetype, pass_num=2)
+        ctx = engine._recall_sage_checklist(archetype)
         self.assertEqual(ctx, "")
 
     @patch("core.sage_client.SageClient.get_instance")
-    def test_exception_returns_empty(self, mock_get_instance):
+    def test_sage_exploit_patterns_exception_returns_empty(self, mock_get_instance):
         mock_client = MagicMock()
-        mock_client.recall.side_effect = Exception("timeout")
+        mock_client.health_check.side_effect = Exception("timeout")
         mock_get_instance.return_value = mock_client
 
         engine = self._make_engine()
         archetype = ArchetypeResult(primary=ProtocolArchetype.GOVERNANCE, confidence=0.7)
-        ctx = engine._recall_sage_for_pass(archetype, pass_num=3)
+        ctx = engine._recall_sage_exploit_patterns(archetype)
         self.assertEqual(ctx, "")
 
 
