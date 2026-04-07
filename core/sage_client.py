@@ -140,8 +140,11 @@ class SageClient:
             if sdk is None:
                 return False
             result = sdk.health()
-            # v5.x returns {"sage": "running"}, v4.x may differ
-            return bool(result and (result.get("sage") == "running" or "chain" in result))
+            return bool(result and (
+                result.get("sage") == "running"
+                or result.get("status") == "healthy"
+                or "chain" in result
+            ))
         except Exception as exc:
             logger.debug("SAGE health check failed: %s", exc)
             return False
@@ -201,34 +204,49 @@ class SageClient:
         domain: str = "general",
         top_k: int = 5,
     ) -> List[Dict[str, Any]]:
-        """Retrieve relevant memories from SAGE. Returns list of memory dicts."""
+        """Retrieve relevant memories from SAGE.
+
+        Uses ``list_memories`` filtered by domain and then does client-side
+        keyword relevance ranking. This works reliably across all SAGE
+        embedding modes (hash, ollama, cloud).
+        """
         try:
             sdk = self._ensure_sdk()
             if sdk is None:
                 return []
 
-            # Generate embedding for the query via SAGE's built-in embedder
-            try:
-                embedding = sdk.embed(query)
-            except Exception:
-                # Fallback: use hash-based pseudo-embedding (matches SAGE's hash mode)
-                embedding = self._hash_embedding(query)
-
-            result = sdk.query(
-                embedding=embedding,
-                domain_tag=domain,
-                top_k=top_k,
-                status_filter="committed",
+            # Fetch committed memories from the domain
+            result = sdk.list_memories(
+                domain=domain,
+                status="committed",
+                limit=min(top_k * 4, 50),  # Fetch extra for ranking
             )
 
+            raw_memories = getattr(result, "memories", [])
+            if not raw_memories:
+                return []
+
+            # Client-side keyword relevance ranking
+            query_words = set(query.lower().split())
+            scored = []
+            for mem in raw_memories:
+                content = getattr(mem, "content", "")
+                content_lower = content.lower()
+                # Score by keyword overlap
+                score = sum(1 for w in query_words if w in content_lower)
+                if score > 0:
+                    scored.append((score, mem))
+
+            # Sort by relevance, return top_k
+            scored.sort(key=lambda x: -x[0])
             memories = []
-            for mem in getattr(result, "memories", []):
+            for _, mem in scored[:top_k]:
                 memories.append({
                     "content": getattr(mem, "content", ""),
-                    "confidence": getattr(mem, "confidence", 0.0),
+                    "confidence": getattr(mem, "confidence_score", 0.0),
                     "domain": getattr(mem, "domain_tag", domain),
                     "memory_id": getattr(mem, "memory_id", ""),
-                    "tags": getattr(mem, "tags", []),
+                    "tags": [],
                 })
             return memories
         except Exception as exc:

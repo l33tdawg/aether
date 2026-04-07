@@ -146,20 +146,18 @@ class TestSageClientRecall(unittest.TestCase):
 
     def test_recall_returns_memories(self):
         mock_mem = MagicMock()
-        mock_mem.content = "finding A"
-        mock_mem.confidence = 0.9
+        mock_mem.content = "reentrancy finding A with external call"
+        mock_mem.confidence_score = 0.9
         mock_mem.domain_tag = "test"
         mock_mem.memory_id = "mem1"
-        mock_mem.tags = []
 
         mock_result = MagicMock()
         mock_result.memories = [mock_mem]
-        self.mock_sdk.query.return_value = mock_result
-        self.mock_sdk.embed.return_value = [0.1] * 768
+        self.mock_sdk.list_memories.return_value = mock_result
 
-        result = self.client.recall("test query", domain="test")
+        result = self.client.recall("reentrancy external call", domain="test")
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["content"], "finding A")
+        self.assertEqual(result[0]["content"], "reentrancy finding A with external call")
 
     def test_recall_no_sdk(self):
         self.client._sdk_client = None
@@ -167,23 +165,31 @@ class TestSageClientRecall(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_recall_failure(self):
-        self.mock_sdk.embed.side_effect = Exception("timeout")
-        # Should fall back to hash embedding, then query
-        self.mock_sdk.query.side_effect = Exception("failed")
+        self.mock_sdk.list_memories.side_effect = Exception("failed")
         result = self.client.recall("q")
         self.assertEqual(result, [])
 
-    def test_recall_uses_embed(self):
-        mock_result = MagicMock()
-        mock_result.memories = []
-        self.mock_sdk.query.return_value = mock_result
-        self.mock_sdk.embed.return_value = [0.5] * 768
+    def test_recall_filters_by_keyword(self):
+        """Only memories matching query keywords should be returned."""
+        mem1 = MagicMock()
+        mem1.content = "reentrancy vulnerability in withdraw"
+        mem1.confidence_score = 0.9
+        mem1.domain_tag = "test"
+        mem1.memory_id = "m1"
 
-        self.client.recall("q", top_k=10)
-        self.mock_sdk.embed.assert_called_once_with("q")
-        self.mock_sdk.query.assert_called_once()
-        call_kwargs = self.mock_sdk.query.call_args[1]
-        self.assertEqual(call_kwargs["top_k"], 10)
+        mem2 = MagicMock()
+        mem2.content = "oracle price manipulation"
+        mem2.confidence_score = 0.8
+        mem2.domain_tag = "test"
+        mem2.memory_id = "m2"
+
+        mock_result = MagicMock()
+        mock_result.memories = [mem1, mem2]
+        self.mock_sdk.list_memories.return_value = mock_result
+
+        result = self.client.recall("reentrancy withdraw", domain="test", top_k=5)
+        self.assertEqual(len(result), 1)
+        self.assertIn("reentrancy", result[0]["content"])
 
 
 class TestSageClientReflect(unittest.TestCase):
