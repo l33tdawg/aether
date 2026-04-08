@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _SEED_DELAY = 0.7  # seconds between remember calls (~85 req/min)
 
 _SEED_DIR = Path(__file__).resolve().parent.parent / "data" / "sage_seeds"
-_SEED_VERSION = "1.0.0"
+_SEED_VERSION = "2.0.0"
 
 
 class SageSeeder:
@@ -55,6 +55,7 @@ class SageSeeder:
         counts["archetypes"] = self.seed_archetypes()
         counts["token_quirks"] = self.seed_token_quirks()
         counts["historical_exploits"] = self.seed_historical_exploits()
+        counts["research_2024_2026"] = self.seed_research()
 
         # Mark version
         try:
@@ -106,6 +107,35 @@ class SageSeeder:
     def seed_historical_exploits(self) -> int:
         """Seed curated historical exploit summaries."""
         return self._seed_fixture("historical_exploits.json", "historical-exploits", "fact", 0.98)
+
+    def seed_research(self) -> int:
+        """Seed 2024-2026 research findings (exploits, FP patterns, methodology)."""
+        entries = self._load_fixture("research_2024_2026.json")
+        count = 0
+        for entry in entries:
+            content = entry.get("content", "")
+            domain = entry.get("domain", "exploit-patterns")
+            mem_type = entry.get("type", "observation")
+            confidence = entry.get("confidence", 0.90)
+            tags = entry.get("tags", [])
+            if not content:
+                continue
+            try:
+                self._client.remember(
+                    content=content,
+                    domain=domain,
+                    memory_type=mem_type,
+                    confidence=confidence,
+                    tags=tags,
+                )
+                count += 1
+                if self._delay > 0:
+                    time.sleep(self._delay)
+            except Exception as exc:
+                logger.debug("Failed to seed research entry: %s", exc)
+                if "429" in str(exc) or "rate limit" in str(exc).lower():
+                    time.sleep(5)
+        return count
 
     # ------------------------------------------------------------------
     # Fixture generation (dev-time tool)
