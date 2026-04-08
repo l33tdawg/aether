@@ -140,6 +140,7 @@ class LLMFalsePositiveFilter:
                     continue
 
                 sent_to_llm += 1
+                print(f"   🔎 LLM validating ({sent_to_llm}): {vuln.get('vulnerability_type', 'unknown')} at line {vuln.get('line_number', vuln.get('line', '?'))}", flush=True)
 
                 # Always pass FULL contract code to validation, not snippet
                 vuln_contract_name = vuln.get('contract_name', contract_name)
@@ -320,9 +321,13 @@ class LLMFalsePositiveFilter:
             )
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"maxOutputTokens": 4000, "temperature": 0.1},
+                "generationConfig": {
+                    "maxOutputTokens": 2000,
+                    "temperature": 0.1,
+                    "thinkingConfig": {"thinkingBudget": 0},  # Disable thinking for fast validation
+                },
             }
-            resp = await asyncio.to_thread(req.post, url, json=payload, timeout=45)
+            resp = await asyncio.to_thread(req.post, url, json=payload, timeout=(10, 45))
             resp.raise_for_status()
             data = resp.json()
             candidates = data.get("candidates", [])
@@ -375,9 +380,16 @@ class LLMFalsePositiveFilter:
         # Extract relevant code around the vulnerability
         line_number = vulnerability.get('line_number', 0)
 
-        # ALWAYS use full contract code for validation - no more 10-line limitation!
-        # This allows the LLM to see imports, parent classes, and design comments
-        context_lines = contract_code
+        # Use contract code capped at 30K chars for validation — the LLM needs
+        # enough context to see imports, modifiers, and related functions, but
+        # 118K+ char multi-file sources cause timeouts and unnecessary cost.
+        # The code snippet + surrounding context + function context provide
+        # the detailed view; the full code provides the broader picture.
+        _MAX_VALIDATION_CODE = 30_000
+        if len(contract_code) > _MAX_VALIDATION_CODE:
+            context_lines = contract_code[:_MAX_VALIDATION_CODE] + "\n\n// [truncated for validation — full code exceeds 30K chars]"
+        else:
+            context_lines = contract_code
         
         # Detect oracle type if contract uses oracles
         oracle_type = self._detect_oracle_type(contract_code)
