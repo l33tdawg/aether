@@ -276,13 +276,10 @@ class LLMFalsePositiveFilter:
         try:
             logger.debug(f"Validating with context: code={len(context.get('contract_code',''))} chars, imports={len(context.get('imports', []) or [])}")
 
-            response = await asyncio.wait_for(
-                self.llm_analyzer._call_llm(
-                    validation_prompt,
-                    model=validation_model  # Use configured validation model (OpenAI or Gemini)
-                ),
-                timeout=60,  # 60s max per validation call
-            )
+            # Use a direct API call with 45s HTTP timeout instead of _call_llm
+            # (which has 120s timeout + 3 fallback models = can hang 360s+).
+            # asyncio.wait_for can't cancel asyncio.to_thread threads.
+            response = await self._fast_llm_call(validation_prompt, validation_model)
 
             result = self._parse_validation_response(response)
             logger.debug(f"Validation result: is_fp={result.is_false_positive}, confidence={result.confidence}")
@@ -305,10 +302,72 @@ class LLMFalsePositiveFilter:
                 reasoning=f"Validation failed: {str(e)}"
             )
     
+    async def _fast_llm_call(self, prompt: str, model: str) -> Optional[str]:
+        """Single LLM call with 45s HTTP timeout — no fallbacks.
+
+        Unlike ``_call_llm`` (120s timeout, 3 fallback models = up to 360s),
+        this makes one attempt with a tight timeout. Designed for per-finding
+        validation where speed matters more than exhaustive retry.
+        """
+        is_gemini = model.startswith("gemini-")
+        is_anthropic = model.startswith("claude-")
+
+        if is_gemini and self.llm_analyzer.gemini_api_key:
+            import requests as req
+            url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={self.llm_analyzer.gemini_api_key}"
+            )
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"maxOutputTokens": 4000, "temperature": 0.1},
+            }
+            resp = await asyncio.to_thread(req.post, url, json=payload, timeout=45)
+            resp.raise_for_status()
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    return parts[0].get("text", "")
+            return None
+
+        elif is_anthropic and self.llm_analyzer.anthropic_api_key:
+            import anthropic
+            client = anthropic.Anthropic(
+                api_key=self.llm_analyzer.anthropic_api_key, timeout=45.0
+            )
+            resp = await asyncio.to_thread(
+                client.messages.create,
+                model=model, max_tokens=4000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.content[0].text if resp.content else None
+
+        elif self.llm_analyzer.api_key:
+            from openai import OpenAI
+            client = OpenAI(api_key=self.llm_analyzer.api_key, timeout=45.0)
+            params: dict = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "You are an expert smart contract security auditor."},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            if model.startswith("gpt-5"):
+                params["max_completion_tokens"] = 4000
+            else:
+                params["max_tokens"] = 4000
+                params["temperature"] = 0.1
+            resp = await asyncio.to_thread(client.chat.completions.create, **params)
+            return resp.choices[0].message.content
+
+        return None
+
     def _prepare_validation_context(
-        self, 
-        vulnerability: Dict[str, Any], 
-        contract_code: str, 
+        self,
+        vulnerability: Dict[str, Any],
+        contract_code: str,
         contract_name: str
     ) -> Dict[str, Any]:
         """Prepare context for vulnerability validation."""

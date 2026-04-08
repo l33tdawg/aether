@@ -55,6 +55,7 @@ async def test_llm_false_positive_filter_parses_validation(monkeypatch):
         return '```json\n{\n  "is_false_positive": false,\n  "confidence": 0.88,\n  "reasoning": "looks real"\n}\n```'
 
     monkeypatch.setattr(analyzer, "_call_llm", fake_call_llm)
+    monkeypatch.setattr(fp, "_fast_llm_call", fake_call_llm)
 
     vulns = [{
         'vulnerability_type': 'access_control',
