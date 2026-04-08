@@ -245,7 +245,7 @@ class TestEnhancedLLMAnalyzerInit(unittest.TestCase):
         """Context limits dict contains expected models."""
         analyzer = _make_llm_analyzer(openai_key="sk-test")
         self.assertIn("gpt-5-chat-latest", analyzer.model_context_limits)
-        self.assertIn("gemini-2.5-flash", analyzer.model_context_limits)
+        self.assertIn("gemini-3-flash-preview", analyzer.model_context_limits)
         self.assertIn("claude-opus-4-6", analyzer.model_context_limits)
 
 

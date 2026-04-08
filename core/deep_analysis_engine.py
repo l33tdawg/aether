@@ -59,7 +59,7 @@ def _get_cheap_model() -> str:
         pass
     # Fallback order: Gemini Flash (cheap + large context) > GPT-4o-mini > GPT-5-mini
     if os.getenv('GEMINI_API_KEY'):
-        return 'gemini-2.5-flash'
+        return 'gemini-3-flash-preview'
     return 'gpt-4.1-mini-2025-04-14'
 
 
@@ -104,7 +104,7 @@ def _get_model_for_pass(pass_number: int) -> str:
     if pass_number <= 2:
         # Cheap/fast model for understanding passes
         if has_gemini:
-            return 'gemini-2.5-flash'
+            return 'gemini-3-flash-preview'
         return _get_cheap_model()
 
     if pass_number == 3:
