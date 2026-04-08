@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Aether v6.0 - Advanced smart contract security analysis framework with collaborative multi-agent LLM pipeline, SAGE institutional memory, Solidity AST parsing, taint analysis, 180+ detectors, and automated PoC generation for Web3 auditors and bug bounty hunters.">
+    <meta name="description" content="Aether v6.0 - Collaborative AI agent pipeline for smart contract security with SAGE institutional memory, 228 pre-trained patterns, 180+ detectors, and automated PoC generation for Web3 auditors and bug bounty hunters.">
     <meta name="keywords" content="smart contract security, blockchain audit, Web3 security, Solidity vulnerabilities, bug bounty tools, DeFi security, smart contract analysis, PoC generation, Foundry testing, EVM security">
     <meta name="author" content="Dhillon Andrew Kannabhiran">
     <meta name="robots" content="index, follow">
     <meta property="og:title" content="Aether - Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories">
-    <meta property="og:description" content="Professional-grade smart contract security analysis framework with 6-pass deep analysis LLM pipeline, Solidity AST parsing, taint analysis, 160+ detectors, and automated PoC generation for Web3 auditors and bug bounty hunters.">
+    <meta property="og:description" content="Collaborative AI agent pipeline for smart contract security with SAGE institutional memory, 5 specialized agents, 228 pre-trained patterns, 180+ detectors, and automated PoC generation.">
     <meta property="og:image" content="https://l33tdawg.github.io/aether/assets/og-image.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -18,18 +18,50 @@
     <meta property="og:site_name" content="Aether">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Aether - Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories">
-    <meta name="twitter:description" content="Professional-grade smart contract security analysis framework with 6-pass deep analysis LLM pipeline, Solidity AST parsing, taint analysis, 160+ detectors, and automated PoC generation for Web3 auditors and bug bounty hunters.">
+    <meta name="twitter:description" content="Collaborative AI agent pipeline for smart contract security with SAGE institutional memory, 5 specialized agents, 228 pre-trained patterns, 180+ detectors, and automated PoC generation.">
     <meta name="twitter:image" content="https://l33tdawg.github.io/aether/assets/og-image.png">
     <meta name="twitter:image:alt" content="Aether - Smart Contract Security Analysis Framework">
     <meta name="twitter:creator" content="@l33tdawg">
 
-    <title>Aether - Adaptive Exploit & Threat Hunting Engine for EVM-based Repositories</title>
+    <title>Aether v6.0 - Collaborative AI Agents for Smart Contract Security</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
-        * {
+        /* ========================================
+           RESET & VARIABLES
+           ======================================== */
+        *, *::before, *::after {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+        }
+
+        :root {
+            --bg-deep: #0b0f1a;
+            --bg-surface: #111827;
+            --bg-card: #1a2235;
+            --bg-card-hover: #1f2a40;
+            --bg-elevated: #243049;
+            --indigo: #4f46e5;
+            --indigo-light: #6366f1;
+            --indigo-glow: rgba(79, 70, 229, 0.35);
+            --cyan: #06b6d4;
+            --cyan-light: #22d3ee;
+            --cyan-glow: rgba(6, 182, 212, 0.3);
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --text-bright: #f1f5f9;
+            --border: rgba(99, 102, 241, 0.15);
+            --border-bright: rgba(99, 102, 241, 0.3);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --font-body: 'DM Sans', system-ui, -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
         }
 
         html {
@@ -37,327 +69,388 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            font-family: var(--font-body);
             line-height: 1.6;
-            color: #1a1a1a;
-            background-color: #ffffff;
+            color: var(--text-primary);
+            background-color: var(--bg-deep);
             overflow-x: hidden;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
         }
 
         ::selection {
-            background-color: #4f46e5;
+            background-color: var(--indigo);
             color: #ffffff;
         }
 
         ::-webkit-scrollbar {
-            width: 10px;
+            width: 8px;
         }
 
         ::-webkit-scrollbar-track {
-            background: #f1f1f1;
+            background: var(--bg-deep);
         }
 
         ::-webkit-scrollbar-thumb {
-            background: linear-gradient(135deg, #4f46e5, #7c3aed);
-            border-radius: 5px;
+            background: var(--bg-elevated);
+            border-radius: 4px;
         }
 
         ::-webkit-scrollbar-thumb:hover {
-            background: linear-gradient(135deg, #4338ca, #6d28d9);
+            background: var(--indigo);
+        }
+
+        img {
+            max-width: 100%;
+        }
+
+        a {
+            color: var(--cyan);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        a:hover {
+            color: var(--cyan-light);
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 0 24px;
-            position: relative;
-            z-index: 10;
         }
 
-        /* Blockchain Background Animation */
-        .blockchain-bg {
+        /* ========================================
+           ANIMATED BACKGROUND
+           ======================================== */
+        .bg-grid {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            inset: 0;
             pointer-events: none;
-            z-index: 1;
-            opacity: 0.6;
+            z-index: 0;
+            overflow: hidden;
         }
 
-        .network-canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-
-        .floating-hexagon {
-            position: absolute;
-            width: 60px;
-            height: 60px;
-            opacity: 0.1;
-            animation: float 20s infinite ease-in-out;
-        }
-
-        .floating-hexagon::before {
+        .bg-grid::before {
             content: '';
             position: absolute;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(135deg, #4f46e5, #7c3aed);
-            clip-path: polygon(30% 0%, 70% 0%, 100% 50%, 70% 100%, 30% 100%, 0% 50%);
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(99, 102, 241, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(99, 102, 241, 0.04) 1px, transparent 1px);
+            background-size: 64px 64px;
+            mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 30%, transparent 80%);
+            -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 30%, transparent 80%);
         }
 
-        @keyframes float {
-            0%, 100% {
-                transform: translateY(0) rotate(0deg);
-            }
-            25% {
-                transform: translateY(-30px) rotate(90deg);
-            }
-            50% {
-                transform: translateY(0) rotate(180deg);
-            }
-            75% {
-                transform: translateY(30px) rotate(270deg);
-            }
-        }
-
-        /* Parallax Layers */
-        .parallax-layer {
+        .bg-orb {
             position: absolute;
-            width: 100%;
-            height: 100%;
-            top: 0;
-            left: 0;
+            border-radius: 50%;
+            filter: blur(100px);
+            animation: orbDrift 25s ease-in-out infinite;
         }
 
-        .grid-pattern {
+        .bg-orb--indigo {
+            width: 600px;
+            height: 600px;
+            background: var(--indigo-glow);
+            top: -10%;
+            left: -5%;
+            opacity: 0.4;
+        }
+
+        .bg-orb--cyan {
+            width: 500px;
+            height: 500px;
+            background: var(--cyan-glow);
+            bottom: 10%;
+            right: -8%;
+            opacity: 0.25;
+            animation-delay: -12s;
+            animation-direction: reverse;
+        }
+
+        @keyframes orbDrift {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -40px) scale(1.08); }
+            66% { transform: translate(-20px, 25px) scale(0.95); }
+        }
+
+        /* Floating geometric shapes */
+        .geo-shape {
             position: absolute;
+            opacity: 0.06;
+            pointer-events: none;
+        }
+
+        .geo-shape--diamond {
+            width: 40px;
+            height: 40px;
+            border: 2px solid var(--indigo-light);
+            transform: rotate(45deg);
+            top: 18%;
+            left: 12%;
+            animation: geoFloat 18s ease-in-out infinite;
+        }
+
+        .geo-shape--ring {
+            width: 80px;
+            height: 80px;
+            border: 2px solid var(--cyan);
+            border-radius: 50%;
+            top: 35%;
+            right: 8%;
+            animation: geoFloat 22s ease-in-out infinite reverse;
+        }
+
+        .geo-shape--hex {
+            width: 50px;
+            height: 50px;
+            background: var(--indigo-light);
+            clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+            bottom: 25%;
+            left: 6%;
+            animation: geoFloat 20s ease-in-out infinite;
+            animation-delay: -5s;
+        }
+
+        .geo-shape--cross {
+            width: 30px;
+            height: 30px;
+            top: 60%;
+            right: 15%;
+            animation: geoFloat 16s ease-in-out infinite;
+            animation-delay: -8s;
+        }
+
+        .geo-shape--cross::before,
+        .geo-shape--cross::after {
+            content: '';
+            position: absolute;
+            background: var(--cyan);
+        }
+
+        .geo-shape--cross::before {
             width: 100%;
+            height: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .geo-shape--cross::after {
+            width: 2px;
             height: 100%;
-            background-image: 
-                linear-gradient(rgba(79, 70, 229, 0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(79, 70, 229, 0.03) 1px, transparent 1px);
-            background-size: 50px 50px;
-            animation: gridMove 20s linear infinite;
+            left: 50%;
+            transform: translateX(-50%);
         }
 
-        @keyframes gridMove {
-            0% {
-                transform: translateY(0);
-            }
-            100% {
-                transform: translateY(50px);
-            }
+        @keyframes geoFloat {
+            0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.06; }
+            50% { transform: translateY(-30px) rotate(180deg); opacity: 0.12; }
         }
 
-        /* Scroll Reveal Animations */
+        /* ========================================
+           SCROLL REVEAL
+           ======================================== */
         .reveal {
             opacity: 0;
-            transform: translateY(50px);
-            transition: all 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+            transform: translateY(40px);
+            transition: opacity 0.7s cubic-bezier(0.22, 0.61, 0.36, 1),
+                        transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1);
         }
 
-        .reveal.active {
+        .reveal.visible {
             opacity: 1;
             transform: translateY(0);
         }
 
-        .reveal-delay-1 {
-            transition-delay: 0.1s;
-        }
+        .reveal-d1 { transition-delay: 0.1s; }
+        .reveal-d2 { transition-delay: 0.2s; }
+        .reveal-d3 { transition-delay: 0.3s; }
+        .reveal-d4 { transition-delay: 0.4s; }
+        .reveal-d5 { transition-delay: 0.5s; }
 
-        .reveal-delay-2 {
-            transition-delay: 0.2s;
-        }
-
-        .reveal-delay-3 {
-            transition-delay: 0.3s;
-        }
-
-        .reveal-delay-4 {
-            transition-delay: 0.4s;
-        }
-
-        .reveal-delay-5 {
-            transition-delay: 0.5s;
-        }
-
-        .reveal-delay-6 {
-            transition-delay: 0.6s;
-        }
-
-        /* Header */
+        /* ========================================
+           HEADER
+           ======================================== */
         header {
-            background: rgba(255, 255, 255, 0.85);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: rgba(11, 15, 26, 0.6);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            border-bottom: 1px solid rgba(229, 229, 229, 0.5);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-            transition: all 0.3s ease;
+            border-bottom: 1px solid transparent;
+            transition: background 0.3s, border-color 0.3s;
         }
 
         header.scrolled {
-            background: rgba(255, 255, 255, 0.95);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            background: rgba(11, 15, 26, 0.92);
+            border-bottom-color: var(--border);
         }
 
-        .header-content {
+        .header-inner {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 20px 0;
+            padding: 18px 0;
         }
 
         .logo {
-            font-size: 28px;
-            font-weight: 700;
-            color: #1a1a1a;
-            text-decoration: none;
-            transition: transform 0.3s ease;
-        }
-
-        .logo:hover {
-            transform: translateX(5px);
-        }
-
-        .logo::before {
-            content: "Ξ";
-            color: #4f46e5;
-            margin-right: 8px;
-            display: inline-block;
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% {
-                opacity: 1;
-                transform: scale(1);
-            }
-            50% {
-                opacity: 0.8;
-                transform: scale(1.05);
-            }
-        }
-
-        nav ul {
             display: flex;
-            list-style: none;
-            gap: 32px;
-        }
-
-        nav a {
-            color: #666;
+            align-items: center;
+            gap: 10px;
             text-decoration: none;
-            font-weight: 500;
-            transition: color 0.2s ease;
+            color: var(--text-bright);
+            font-weight: 700;
+            font-size: 22px;
+            letter-spacing: -0.02em;
         }
 
-        nav a:hover {
-            color: #4f46e5;
-        }
-
-        .cta-button {
-            background: linear-gradient(135deg, #4f46e5, #7c3aed);
-            color: white;
-            padding: 12px 24px;
+        .logo-mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--indigo), var(--cyan));
             border-radius: 8px;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 18px;
+            color: white;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 32px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
             text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
+            letter-spacing: 0.01em;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-bright);
+        }
+
+        .btn-nav {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 9px 20px;
+            background: var(--indigo);
+            color: white;
+            border-radius: 8px;
+            font-size: 14px;
             font-weight: 600;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 10px rgba(79, 70, 229, 0.3);
-            position: relative;
-            overflow: hidden;
+            text-decoration: none;
+            transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
         }
 
-        .cta-button::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-            transition: left 0.5s ease;
+        .btn-nav:hover {
+            background: var(--indigo-light);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px var(--indigo-glow);
         }
 
-        .cta-button:hover::before {
-            left: 100%;
+        .mobile-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px;
         }
 
-        .cta-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(79, 70, 229, 0.5);
-        }
-
-        /* Hero Section */
+        /* ========================================
+           HERO
+           ======================================== */
         .hero {
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-            padding: 120px 0 100px;
-            text-align: center;
             position: relative;
-            overflow: hidden;
+            z-index: 1;
+            padding: 160px 0 100px;
+            text-align: center;
         }
 
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(79, 70, 229, 0.08) 0%, transparent 70%);
-            animation: heroGlow 15s ease-in-out infinite;
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            background: rgba(79, 70, 229, 0.12);
+            border: 1px solid rgba(79, 70, 229, 0.25);
+            border-radius: 100px;
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--indigo-light);
+            margin-bottom: 32px;
+            animation: fadeInDown 0.8s ease-out both;
         }
 
-        @keyframes heroGlow {
-            0%, 100% {
-                transform: translate(0, 0) scale(1);
-            }
-            50% {
-                transform: translate(-5%, -5%) scale(1.1);
-            }
+        .hero-badge-dot {
+            width: 7px;
+            height: 7px;
+            background: var(--cyan);
+            border-radius: 50%;
+            animation: blink 2s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .hero h1 {
-            font-size: 56px;
+            font-size: clamp(36px, 5.5vw, 64px);
             font-weight: 800;
+            line-height: 1.1;
+            letter-spacing: -0.03em;
             margin-bottom: 24px;
-            color: #1a1a1a;
-            background: linear-gradient(135deg, #1a1a1a 0%, #4f46e5 100%);
+            animation: fadeInUp 0.9s ease-out 0.15s both;
+        }
+
+        .hero h1 .gradient-text {
+            background: linear-gradient(135deg, var(--indigo-light) 0%, var(--cyan) 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            animation: fadeInUp 1s ease-out;
         }
 
         @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
-        .hero p {
-            font-size: 20px;
-            color: #666;
-            margin-bottom: 40px;
-            max-width: 700px;
-            margin-left: auto;
-            margin-right: auto;
-            animation: fadeInUp 1s ease-out 0.2s both;
+        .hero-sub {
+            font-size: clamp(16px, 2vw, 20px);
+            color: var(--text-secondary);
+            max-width: 680px;
+            margin: 0 auto 44px;
+            line-height: 1.7;
+            animation: fadeInUp 0.9s ease-out 0.3s both;
+        }
+
+        .hero-sub strong {
+            color: var(--text-primary);
+            font-weight: 600;
         }
 
         .hero-buttons {
@@ -365,1132 +458,1475 @@
             gap: 16px;
             justify-content: center;
             flex-wrap: wrap;
-            animation: fadeInUp 1s ease-out 0.4s both;
+            animation: fadeInUp 0.9s ease-out 0.45s both;
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 32px;
+            background: linear-gradient(135deg, var(--indigo), #6d5ce7);
             color: white;
-            padding: 16px 32px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
+            border-radius: 10px;
             font-size: 16px;
-            transition: all 0.3s ease;
+            font-weight: 600;
+            text-decoration: none;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 20px var(--indigo-glow);
             position: relative;
             overflow: hidden;
-            box-shadow: 0 4px 15px rgba(79, 70, 229, 0.3);
         }
 
-        .btn-primary::before {
+        .btn-primary::after {
             content: '';
             position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-            transition: left 0.5s ease;
+            inset: 0;
+            background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.1) 50%, transparent 60%);
+            transform: translateX(-100%);
+            transition: transform 0.6s;
         }
 
-        .btn-primary:hover::before {
-            left: 100%;
+        .btn-primary:hover::after {
+            transform: translateX(100%);
         }
 
         .btn-primary:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 25px rgba(79, 70, 229, 0.4);
-        }
-
-        .btn-secondary {
-            background-color: transparent;
-            color: #4f46e5;
-            padding: 16px 32px;
-            border: 2px solid #4f46e5;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 16px;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .btn-secondary::before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 0;
-            height: 0;
-            border-radius: 50%;
-            background: #4f46e5;
-            transform: translate(-50%, -50%);
-            transition: width 0.5s ease, height 0.5s ease;
-            z-index: -1;
-        }
-
-        .btn-secondary:hover::before {
-            width: 300px;
-            height: 300px;
-        }
-
-        .btn-secondary:hover {
+            box-shadow: 0 8px 30px var(--indigo-glow);
             color: white;
+        }
+
+        .btn-outline {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 32px;
+            background: transparent;
+            color: var(--text-primary);
+            border: 1.5px solid var(--border-bright);
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.25s;
+        }
+
+        .btn-outline:hover {
+            border-color: var(--cyan);
+            color: var(--cyan-light);
+            background: rgba(6, 182, 212, 0.06);
             transform: translateY(-2px);
         }
 
-        /* Features Section */
-        .features {
-            background: linear-gradient(180deg, #fafafa 0%, #ffffff 100%);
-            padding: 100px 0;
+        /* ========================================
+           STATS BAR
+           ======================================== */
+        .stats-bar {
             position: relative;
-            overflow: hidden;
+            z-index: 1;
+            padding: 0 0 80px;
         }
 
-        .features::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            right: -10%;
-            width: 500px;
-            height: 500px;
-            background: radial-gradient(circle, rgba(124, 58, 237, 0.1) 0%, transparent 70%);
-            border-radius: 50%;
-            animation: float 25s ease-in-out infinite;
-        }
-
-        .features h2 {
-            text-align: center;
-            font-size: 42px;
-            font-weight: 800;
-            margin-bottom: 16px;
-            color: #1a1a1a;
-            position: relative;
-        }
-
-        .features > p {
-            text-align: center;
-            font-size: 18px;
-            color: #666;
-            margin-bottom: 64px;
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .features-subtitle {
-            text-align: center;
-            font-size: 24px;
-            font-weight: 600;
-            color: #4f46e5;
-            margin-bottom: 20px;
-            letter-spacing: -0.025em;
-            text-transform: uppercase;
-            font-size: 14px;
-            letter-spacing: 2px;
-        }
-
-        .features-description {
-            text-align: center;
-            font-size: 18px;
-            color: #64748b;
-            margin-bottom: 64px;
-            max-width: 750px;
-            margin-left: auto;
-            margin-right: auto;
-            line-height: 1.8;
-        }
-
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 32px;
-        }
-
-        .feature-card {
-            background: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            padding: 40px;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            transition: all 0.4s cubic-bezier(0.22, 0.61, 0.36, 1);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .feature-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, #4f46e5, #7c3aed);
-            transform: scaleX(0);
-            transform-origin: left;
-            transition: transform 0.4s ease;
-        }
-
-        .feature-card:hover::before {
-            transform: scaleX(1);
-        }
-
-        .feature-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 20px 60px rgba(79, 70, 229, 0.15);
-            background: rgba(255, 255, 255, 0.95);
-            border-color: rgba(79, 70, 229, 0.2);
-        }
-
-        .feature-card h3 {
-            font-size: 22px;
-            font-weight: 700;
-            margin-bottom: 16px;
-            color: #1a1a1a;
-            transition: color 0.3s ease;
-        }
-
-        .feature-card:hover h3 {
-            color: #4f46e5;
-        }
-
-        .feature-card p {
-            color: #64748b;
-            line-height: 1.8;
-        }
-
-        .feature-icon {
-            width: 64px;
-            height: 64px;
-            background: linear-gradient(135deg, #eef2ff, #e0e7ff);
-            border-radius: 12px;
+        .stats-inner {
             display: flex;
-            align-items: center;
             justify-content: center;
-            margin-bottom: 24px;
-            position: relative;
-            color: #4f46e5;
-            font-weight: 600;
-            transition: all 0.4s ease;
-            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.1);
-        }
-
-        .feature-card:hover .feature-icon {
-            transform: scale(1.1) rotate(5deg);
-            box-shadow: 0 8px 24px rgba(79, 70, 229, 0.2);
-        }
-
-        .feature-icon::before {
-            content: '';
-            width: 28px;
-            height: 28px;
-            background-color: currentColor;
-            transition: transform 0.4s ease;
-        }
-
-        .feature-card:hover .feature-icon::before {
-            transform: scale(1.1);
-        }
-
-        .feature-icon.search::before {
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cpath d='m21 21-4.35-4.35'%3E%3C/path%3E%3C/svg%3E") no-repeat center;
-            mask-size: contain;
-        }
-
-        .feature-icon.ai::before {
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2L2 7l10 5 10-5-10-5z'/%3E%3Cpath d='M2 17l10 5 10-5'/%3E%3Cpath d='M2 12l10 5 10-5'/%3E%3C/svg%3E") no-repeat center;
-            mask-size: contain;
-        }
-
-        .feature-icon.poc::before {
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z'/%3E%3Ccircle cx='12' cy='13' r='3'/%3E%3C/svg%3E") no-repeat center;
-            mask-size: contain;
-        }
-
-        .feature-icon.foundry::before {
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 3v18h18'/%3E%3Cpath d='M18.7 8l-5.1 5.2-2.8-2.7L7 14.3'/%3E%3C/svg%3E") no-repeat center;
-            mask-size: contain;
-        }
-
-        .feature-icon.github::before {
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4'/%3E%3Cpath d='M9 18c-4.51 2-5-2-7-2'/%3E%3C/svg%3E") no-repeat center;
-            mask-size: contain;
-        }
-
-        .feature-icon.report::before {
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/%3E%3Cpolyline points='14,2 14,8 20,8'/%3E%3Cline x1='16' y1='13' x2='8' y2='13'/%3E%3Cline x1='16' y1='17' x2='8' y2='17'/%3E%3Cpolyline points='10,9 9,9 8,9'/%3E%3C/svg%3E") no-repeat center;
-            mask-size: contain;
-        }
-
-        /* Code Section */
-        .code-section {
-            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-            padding: 100px 0;
-            position: relative;
+            flex-wrap: wrap;
+            gap: 0;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
             overflow: hidden;
         }
 
-        .code-section::before {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: -10%;
-            width: 500px;
-            height: 500px;
-            background: radial-gradient(circle, rgba(79, 70, 229, 0.08) 0%, transparent 70%);
-            border-radius: 50%;
-            animation: float 20s ease-in-out infinite reverse;
-        }
-
-        .code-section h2 {
+        .stat-item {
+            flex: 1 1 180px;
+            padding: 28px 24px;
             text-align: center;
-            font-size: 42px;
-            font-weight: 800;
-            margin-bottom: 16px;
-            color: #1a1a1a;
-        }
-
-        .code-section > p {
-            text-align: center;
-            font-size: 18px;
-            color: #666;
-            margin-bottom: 64px;
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .code-subtitle {
-            text-align: center;
-            font-size: 14px;
-            font-weight: 600;
-            color: #4f46e5;
-            margin-bottom: 20px;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-        }
-
-        .code-description {
-            text-align: center;
-            font-size: 18px;
-            color: #64748b;
-            margin-bottom: 64px;
-            max-width: 800px;
-            margin-left: auto;
-            margin-right: auto;
-            line-height: 1.8;
-        }
-
-        .code-block {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            color: #e2e8f0;
-            padding: 48px;
-            border-radius: 16px;
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 14px;
-            line-height: 1.8;
-            overflow-x: auto;
-            margin-bottom: 40px;
-            border: 1px solid rgba(79, 70, 229, 0.2);
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
             position: relative;
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
 
-        .code-block:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.2);
-        }
-
-        .code-block::before {
+        .stat-item:not(:last-child)::after {
             content: '';
             position: absolute;
-            top: 20px;
-            left: 20px;
-            width: 12px;
-            height: 12px;
-            background-color: #ef4444;
-            border-radius: 50%;
-            box-shadow: 20px 0 0 #f59e0b, 40px 0 0 #10b981;
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% {
-                opacity: 1;
-            }
-            50% {
-                opacity: 0.6;
-            }
-        }
-
-        .code-block .code-header {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            color: #64748b;
-            font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            padding: 4px 12px;
-            background: rgba(100, 116, 139, 0.1);
-            border-radius: 4px;
-        }
-
-        .code-block .comment {
-            color: #6b7280;
-        }
-
-        .code-block .keyword {
-            color: #c792ea;
-        }
-
-        .code-block .string {
-            color: #c3e88d;
-        }
-
-        .code-block .number {
-            color: #f78c6c;
-        }
-
-        /* Workflow Section */
-        .workflow {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            padding: 120px 0;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .workflow::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
             right: 0;
-            bottom: 0;
-            background: 
-                radial-gradient(circle at 20% 30%, rgba(79, 70, 229, 0.15) 0%, transparent 50%),
-                radial-gradient(circle at 80% 70%, rgba(124, 58, 237, 0.15) 0%, transparent 50%);
-            pointer-events: none;
+            top: 20%;
+            height: 60%;
+            width: 1px;
+            background: var(--border);
         }
 
-        .workflow::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-image: 
-                linear-gradient(rgba(79, 70, 229, 0.05) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(79, 70, 229, 0.05) 1px, transparent 1px);
-            background-size: 60px 60px;
-            pointer-events: none;
-            opacity: 0.5;
-        }
-
-        .workflow h2 {
-            text-align: center;
-            font-size: 48px;
-            font-weight: 800;
-            margin-bottom: 20px;
-            color: #ffffff;
-            position: relative;
-            z-index: 2;
-        }
-
-        .workflow h2::after {
-            content: '';
-            position: absolute;
-            bottom: -12px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100px;
-            height: 4px;
-            background: linear-gradient(90deg, #4f46e5, #7c3aed, #4f46e5);
-            border-radius: 2px;
-            box-shadow: 0 0 20px rgba(79, 70, 229, 0.6);
-        }
-
-        .workflow-subtitle {
-            text-align: center;
-            font-size: 14px;
-            font-weight: 700;
-            color: #a78bfa;
-            margin-bottom: 32px;
-            text-transform: uppercase;
-            letter-spacing: 3px;
-            position: relative;
-            z-index: 2;
-        }
-
-        .workflow > p {
-            text-align: center;
-            font-size: 20px;
-            color: #cbd5e1;
-            margin-bottom: 80px;
-            max-width: 850px;
-            margin-left: auto;
-            margin-right: auto;
-            line-height: 1.8;
-            font-weight: 400;
-            padding: 0 20px;
-            position: relative;
-            z-index: 2;
-        }
-
-        .workflow-steps {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 28px;
-            position: relative;
-            z-index: 2;
-        }
-
-        .workflow-step {
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            padding: 40px 28px;
-            border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            text-align: center;
-            position: relative;
-            transition: all 0.5s cubic-bezier(0.22, 0.61, 0.36, 1);
-            overflow: hidden;
-        }
-
-        .workflow-step::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(135deg, rgba(79, 70, 229, 0.1), rgba(124, 58, 237, 0.1));
-            opacity: 0;
-            transition: opacity 0.5s ease;
-        }
-
-        .workflow-step:hover::before {
-            opacity: 1;
-        }
-
-        .workflow-step:hover {
-            transform: translateY(-12px) scale(1.02);
-            box-shadow: 0 25px 60px rgba(79, 70, 229, 0.4);
-            border-color: rgba(79, 70, 229, 0.5);
-            background: rgba(255, 255, 255, 0.08);
-        }
-
-        .workflow-step-number {
-            width: 72px;
-            height: 72px;
-            background: linear-gradient(135deg, #4f46e5, #7c3aed);
-            color: white;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 800;
+        .stat-number {
+            font-family: var(--font-mono);
             font-size: 28px;
-            margin: 0 auto 28px;
-            box-shadow: 0 10px 30px rgba(79, 70, 229, 0.5);
+            font-weight: 700;
+            color: var(--text-bright);
+            letter-spacing: -0.02em;
+        }
+
+        .stat-number .accent {
+            color: var(--cyan);
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        /* ========================================
+           SECTION COMMON
+           ======================================== */
+        .section {
             position: relative;
             z-index: 1;
-            transition: all 0.5s ease;
+            padding: 100px 0;
         }
 
-        .workflow-step:hover .workflow-step-number {
-            transform: scale(1.15) rotate(360deg);
-            box-shadow: 0 15px 40px rgba(79, 70, 229, 0.7);
-        }
-
-        .workflow-step h3 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 20px;
-            color: #ffffff;
-            line-height: 1.3;
-            position: relative;
-            z-index: 1;
-            transition: all 0.3s ease;
-        }
-
-        .workflow-step:hover h3 {
-            color: #a78bfa;
-        }
-
-        .workflow-step p {
-            color: #cbd5e1;
-            line-height: 1.8;
-            font-size: 15px;
-            margin-bottom: 0;
-            position: relative;
-            z-index: 1;
-        }
-
-        .workflow-step p strong {
-            color: #a78bfa;
-            font-weight: 700;
-        }
-
-
-        /* CTA Section */
-        .cta-section {
-            background-color: #ffffff;
-            padding: 80px 0;
-            text-align: center;
-        }
-
-        .cta-section h2 {
-            font-size: 36px;
-            font-weight: 700;
+        .section-label {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--cyan);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
             margin-bottom: 16px;
-            color: #1a1a1a;
         }
 
-        .cta-section p {
+        .section-title {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            line-height: 1.15;
+            margin-bottom: 20px;
+            color: var(--text-bright);
+        }
+
+        .section-desc {
             font-size: 18px;
-            color: #666;
-            margin-bottom: 40px;
-            max-width: 500px;
+            color: var(--text-secondary);
+            max-width: 640px;
+            line-height: 1.7;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 64px;
+        }
+
+        .section-header .section-desc {
             margin-left: auto;
             margin-right: auto;
         }
 
-        /* Footer */
-        footer {
-            background-color: #1f2937;
-            color: #d1d5db;
-            padding: 40px 0;
+        /* ========================================
+           PIPELINE — CENTERPIECE
+           ======================================== */
+        .pipeline {
+            padding: 100px 0 120px;
+            background: linear-gradient(180deg, var(--bg-deep) 0%, rgba(17, 24, 39, 0.8) 50%, var(--bg-deep) 100%);
         }
 
-        .footer-content {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 32px;
+        /* SAGE brain */
+        .sage-brain {
+            position: relative;
+            background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), rgba(79, 70, 229, 0.08));
+            border: 1px solid rgba(6, 182, 212, 0.25);
+            border-radius: 16px;
+            padding: 28px 36px;
+            text-align: center;
+            margin-bottom: 60px;
+            overflow: hidden;
         }
 
-        .footer-section h4 {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 16px;
-            color: #ffffff;
+        .sage-brain::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(ellipse at 50% 0%, rgba(6, 182, 212, 0.1), transparent 70%);
+            pointer-events: none;
         }
 
-        .footer-section ul {
-            list-style: none;
-        }
-
-        .footer-section li {
+        .sage-icon {
+            font-size: 28px;
             margin-bottom: 8px;
         }
 
-        .footer-section a {
-            color: #d1d5db;
-            text-decoration: none;
-            transition: color 0.2s ease;
+        .sage-brain h3 {
+            font-family: var(--font-mono);
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--cyan-light);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 6px;
         }
 
-        .footer-section a:hover {
-            color: #ffffff;
+        .sage-brain p {
+            font-size: 14px;
+            color: var(--text-secondary);
         }
 
-        /* Responsive Design */
-        @media (max-width: 1024px) {
-            .workflow-steps {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 20px;
+        .sage-brain p strong {
+            color: var(--cyan);
+            font-weight: 600;
+        }
+
+        /* Connector lines from SAGE to agents */
+        .pipeline-connectors {
+            display: flex;
+            justify-content: space-around;
+            padding: 0 40px;
+            margin-bottom: -8px;
+            position: relative;
+            height: 40px;
+        }
+
+        .connector-line {
+            width: 1px;
+            height: 100%;
+            background: repeating-linear-gradient(
+                to bottom,
+                var(--cyan) 0px,
+                var(--cyan) 4px,
+                transparent 4px,
+                transparent 10px
+            );
+            opacity: 0.4;
+            position: relative;
+        }
+
+        .connector-line::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid var(--cyan);
+            opacity: 0.5;
+        }
+
+        /* Agent cards row */
+        .agents-row {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            position: relative;
+        }
+
+        /* Horizontal flow arrows between cards */
+        .agents-row::before {
+            display: none; /* handled by per-card arrows */
+        }
+
+        .agent-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 24px 20px;
+            position: relative;
+            transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+            overflow: hidden;
+        }
+
+        .agent-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--indigo), var(--cyan));
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .agent-card:hover {
+            border-color: var(--border-bright);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .agent-card:hover::before {
+            opacity: 1;
+        }
+
+        .agent-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, var(--indigo), var(--cyan));
+            color: white;
+            font-family: var(--font-mono);
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 14px;
+        }
+
+        .agent-name {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-bright);
+            margin-bottom: 4px;
+            letter-spacing: -0.01em;
+        }
+
+        .agent-model {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            padding: 3px 8px;
+            background: rgba(100, 116, 139, 0.12);
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .agent-detail {
+            font-size: 12px;
+            line-height: 1.7;
+            margin-bottom: 8px;
+        }
+
+        .agent-detail-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 3px;
+        }
+
+        .agent-detail-reads {
+            color: var(--cyan);
+        }
+
+        .agent-detail-stores {
+            color: var(--indigo-light);
+        }
+
+        /* Flow arrows between agents */
+        .agent-arrow {
+            display: none;
+        }
+
+        .flow-arrows {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 0 calc(10% + 20px);
+            margin: -6px 0;
+            height: 24px;
+        }
+
+        .flow-arrow {
+            color: var(--indigo-light);
+            font-size: 18px;
+            opacity: 0.5;
+            animation: arrowPulse 2s ease-in-out infinite;
+        }
+
+        .flow-arrow:nth-child(2) { animation-delay: 0.3s; }
+        .flow-arrow:nth-child(3) { animation-delay: 0.6s; }
+        .flow-arrow:nth-child(4) { animation-delay: 0.9s; }
+
+        @keyframes arrowPulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.8; }
+        }
+
+        /* Mobile pipeline layout */
+        @media (max-width: 900px) {
+            .agents-row {
+                grid-template-columns: 1fr;
+                max-width: 420px;
+                margin: 0 auto;
             }
 
-            .workflow-step {
-                padding: 28px 20px;
+            .pipeline-connectors {
+                display: none;
             }
+
+            .flow-arrows {
+                display: none;
+            }
+
+            .agent-card {
+                position: relative;
+            }
+
+            .agent-card:not(:last-child)::after {
+                content: '\2193';
+                position: absolute;
+                bottom: -22px;
+                left: 50%;
+                transform: translateX(-50%);
+                color: var(--indigo-light);
+                font-size: 20px;
+                opacity: 0.5;
+                z-index: 2;
+            }
+
+            .agents-row {
+                gap: 32px;
+            }
+        }
+
+        /* ========================================
+           DISMISSALS — BEFORE / AFTER
+           ======================================== */
+        .dismissals {
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .dismissals-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+            margin-top: 48px;
+        }
+
+        .dismissal-card {
+            border-radius: 14px;
+            padding: 36px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .dismissal-card--before {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.06), rgba(239, 68, 68, 0.02));
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .dismissal-card--after {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.06), rgba(16, 185, 129, 0.02));
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .dismissal-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 5px 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .dismissal-tag--before {
+            color: var(--danger);
+            background: rgba(239, 68, 68, 0.12);
+        }
+
+        .dismissal-tag--after {
+            color: var(--success);
+            background: rgba(16, 185, 129, 0.12);
+        }
+
+        .dismissal-card h4 {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-bright);
+            margin-bottom: 16px;
+            letter-spacing: -0.01em;
+        }
+
+        .dismissal-card p {
+            font-size: 15px;
+            color: var(--text-secondary);
+            line-height: 1.8;
+        }
+
+        .dismissal-card code {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .dismissal-stat {
+            margin-top: 20px;
+            font-family: var(--font-mono);
+            font-size: 32px;
+            font-weight: 700;
+        }
+
+        .dismissal-stat--bad {
+            color: var(--danger);
+        }
+
+        .dismissal-stat--good {
+            color: var(--success);
+        }
+
+        .dismissal-stat-label {
+            font-family: var(--font-body);
+            font-size: 14px;
+            color: var(--text-muted);
+            font-weight: 400;
         }
 
         @media (max-width: 768px) {
-            .workflow-steps {
+            .dismissals-grid {
                 grid-template-columns: 1fr;
-                gap: 24px;
             }
-            .header-content {
-                flex-direction: column;
-                gap: 16px;
-            }
+        }
 
-            nav ul {
-                gap: 16px;
-                flex-wrap: wrap;
-                justify-content: center;
-            }
+        /* ========================================
+           FEATURES GRID
+           ======================================== */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
 
-            .hero h1 {
-                font-size: 40px;
-            }
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 32px 28px;
+            transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+            position: relative;
+        }
 
-            .hero-buttons {
-                flex-direction: column;
-                align-items: center;
-            }
+        .feature-card:hover {
+            border-color: var(--border-bright);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+        }
 
+        .feature-icon {
+            font-size: 28px;
+            margin-bottom: 18px;
+            display: block;
+            width: 52px;
+            height: 52px;
+            line-height: 52px;
+            text-align: center;
+            background: rgba(79, 70, 229, 0.1);
+            border-radius: 12px;
+        }
+
+        .feature-card h3 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-bright);
+            margin-bottom: 10px;
+            letter-spacing: -0.01em;
+        }
+
+        .feature-card p {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        .feature-card a {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        @media (max-width: 900px) {
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
             .features-grid {
                 grid-template-columns: 1fr;
             }
+        }
 
-            .workflow-steps {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 20px;
-            }
+        /* ========================================
+           QUICK START
+           ======================================== */
+        .quickstart-block {
+            max-width: 680px;
+            margin: 0 auto;
+        }
 
-            .workflow-step {
-                padding: 28px 20px;
-            }
+        .code-window {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+        }
 
-            .footer-content {
+        .code-titlebar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 20px;
+            background: rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .code-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .code-dot--red { background: #ff5f57; }
+        .code-dot--yellow { background: #febc2e; }
+        .code-dot--green { background: #28c840; }
+
+        .code-titlebar-text {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-left: 8px;
+        }
+
+        .code-body {
+            padding: 28px 28px;
+            font-family: var(--font-mono);
+            font-size: 14px;
+            line-height: 2;
+            overflow-x: auto;
+        }
+
+        .code-body pre {
+            margin: 0;
+            white-space: pre;
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+        }
+
+        .code-comment {
+            color: #6e7681;
+        }
+
+        .code-cmd {
+            color: var(--cyan-light);
+        }
+
+        .code-flag {
+            color: var(--indigo-light);
+        }
+
+        .code-prompt {
+            color: var(--success);
+            user-select: none;
+        }
+
+        /* ========================================
+           FEEDBACK LOOP
+           ======================================== */
+        .loop-visual {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0;
+            flex-wrap: wrap;
+            margin-top: 48px;
+        }
+
+        .loop-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 20px 16px;
+            min-width: 120px;
+        }
+
+        .loop-node-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+        }
+
+        .loop-node-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .loop-node-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            text-align: center;
+            max-width: 120px;
+        }
+
+        .loop-arrow {
+            color: var(--indigo-light);
+            font-size: 24px;
+            opacity: 0.5;
+            padding: 0 4px;
+        }
+
+        /* Circular return arrow */
+        .loop-return {
+            width: 100%;
+            text-align: center;
+            padding: 16px 0 0;
+            position: relative;
+        }
+
+        .loop-return-line {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+            padding: 10px 24px;
+            border: 1px dashed var(--border-bright);
+            border-radius: 100px;
+        }
+
+        .loop-outcomes {
+            display: flex;
+            gap: 32px;
+            justify-content: center;
+            margin-top: 28px;
+            flex-wrap: wrap;
+        }
+
+        .loop-outcome {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+
+        .loop-outcome-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .loop-outcome-dot--confirmed { background: var(--success); }
+        .loop-outcome-dot--fp { background: var(--warning); }
+
+        .loop-outcome-text {
+            color: var(--text-secondary);
+        }
+
+        .loop-outcome-text strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* ========================================
+           CTA
+           ======================================== */
+        .cta {
+            text-align: center;
+            padding: 120px 0;
+            position: relative;
+            z-index: 1;
+        }
+
+        .cta-glow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 400px;
+            background: radial-gradient(ellipse, rgba(79, 70, 229, 0.15), transparent 70%);
+            pointer-events: none;
+        }
+
+        .cta h2 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            margin-bottom: 20px;
+            color: var(--text-bright);
+            position: relative;
+        }
+
+        .cta p {
+            font-size: 18px;
+            color: var(--text-secondary);
+            margin-bottom: 36px;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+            position: relative;
+        }
+
+        .cta .btn-primary {
+            position: relative;
+        }
+
+        /* ========================================
+           FOOTER
+           ======================================== */
+        footer {
+            position: relative;
+            z-index: 1;
+            border-top: 1px solid var(--border);
+            padding: 60px 0 40px;
+            background: rgba(11, 15, 26, 0.8);
+        }
+
+        .footer-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 48px;
+            margin-bottom: 48px;
+        }
+
+        .footer-brand p {
+            font-size: 14px;
+            color: var(--text-muted);
+            line-height: 1.8;
+            margin-top: 12px;
+            max-width: 340px;
+        }
+
+        .footer-col h4 {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 16px;
+        }
+
+        .footer-col ul {
+            list-style: none;
+        }
+
+        .footer-col li {
+            margin-bottom: 10px;
+        }
+
+        .footer-col a {
+            font-size: 14px;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .footer-col a:hover {
+            color: var(--cyan);
+        }
+
+        .footer-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .footer-bottom p {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .footer-sage {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+            padding: 5px 14px;
+            border: 1px solid var(--border);
+            border-radius: 100px;
+        }
+
+        @media (max-width: 768px) {
+            .footer-grid {
                 grid-template-columns: 1fr;
+                gap: 32px;
+            }
+
+            .footer-bottom {
+                flex-direction: column;
                 text-align: center;
+            }
+        }
+
+        /* ========================================
+           MOBILE NAV
+           ======================================== */
+        @media (max-width: 768px) {
+            .mobile-toggle {
+                display: block;
+            }
+
+            .nav-links {
+                display: none;
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                flex-direction: column;
+                background: rgba(11, 15, 26, 0.97);
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                border-bottom: 1px solid var(--border);
+                padding: 24px;
+                gap: 16px;
+            }
+
+            .nav-links.open {
+                display: flex;
+            }
+
+            .hero {
+                padding: 130px 0 60px;
+            }
+
+            .stat-item:not(:last-child)::after {
+                display: none;
+            }
+
+            .stats-inner {
+                flex-direction: column;
+            }
+
+            .stat-item {
+                padding: 16px 24px;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .stat-item:last-child {
+                border-bottom: none;
+            }
+
+            .section {
+                padding: 64px 0;
+            }
+
+            .pipeline {
+                padding: 64px 0 80px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="blockchain-bg">
-        <canvas id="networkCanvas" class="network-canvas"></canvas>
-        <div class="grid-pattern"></div>
+
+<!-- Animated background -->
+<div class="bg-grid" aria-hidden="true">
+    <div class="bg-orb bg-orb--indigo"></div>
+    <div class="bg-orb bg-orb--cyan"></div>
+    <div class="geo-shape geo-shape--diamond"></div>
+    <div class="geo-shape geo-shape--ring"></div>
+    <div class="geo-shape geo-shape--hex"></div>
+    <div class="geo-shape geo-shape--cross"></div>
+</div>
+
+<!-- Header -->
+<header id="header">
+    <div class="container">
+        <div class="header-inner">
+            <a href="#" class="logo">
+                <span class="logo-mark">&Xi;</span>
+                Aether
+            </a>
+            <button class="mobile-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+            <ul class="nav-links">
+                <li><a href="#pipeline">Pipeline</a></li>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#quickstart">Quick Start</a></li>
+                <li><a href="https://github.com/l33tdawg/sage" target="_blank" rel="noopener">SAGE</a></li>
+                <li><a href="https://github.com/l33tdawg/aether" target="_blank" rel="noopener" class="btn-nav">GitHub</a></li>
+            </ul>
+        </div>
     </div>
+</header>
 
-    <header id="mainHeader">
-        <div class="container">
-            <div class="header-content">
-                <a href="#home" class="logo">Aether</a>
-                <nav>
-                    <ul>
-                        <li><a href="#features">Features</a></li>
-                        <li><a href="#workflow">How It Works</a></li>
-                    </ul>
-                </nav>
-                <a href="https://github.com/l33tdawg/aether" class="cta-button">View on GitHub</a>
+<!-- Hero -->
+<section class="hero">
+    <div class="container">
+        <div class="hero-badge">
+            <span class="hero-badge-dot"></span>
+            v6.0 &mdash; Collaborative Agent Pipeline
+        </div>
+        <h1>
+            <span class="gradient-text">Collaborative AI Agents</span><br>
+            for Smart Contract Security
+        </h1>
+        <p class="hero-sub">
+            <strong>5 specialized agents</strong> share findings, dismissals, and protections through
+            <strong>SAGE institutional memory</strong> &mdash; armed with <strong>228 pre-trained patterns</strong>
+            from real exploits and false positives.
+        </p>
+        <div class="hero-buttons">
+            <a href="https://github.com/l33tdawg/aether" class="btn-primary" target="_blank" rel="noopener">
+                Get Started &rarr;
+            </a>
+            <a href="#pipeline" class="btn-outline">
+                How It Works &darr;
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Stats Bar -->
+<section class="stats-bar">
+    <div class="container">
+        <div class="stats-inner reveal">
+            <div class="stat-item">
+                <div class="stat-number"><span class="accent">5</span></div>
+                <div class="stat-label">AI Agents</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number"><span class="accent">228</span></div>
+                <div class="stat-label">Pre-trained Memories</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">180<span class="accent">+</span></div>
+                <div class="stat-label">Detectors</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">2,218</div>
+                <div class="stat-label">Tests</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number"><span class="accent">9</span></div>
+                <div class="stat-label">Chains Supported</div>
             </div>
         </div>
-    </header>
+    </div>
+</section>
 
-    <main>
-        <section id="home" class="hero">
-            <div class="container">
-                <h1>Collaborative AI Agents for Smart Contract Security</h1>
-                <p><strong>Aether v6.0</strong> — Five AI agents collaborate through shared <a href="https://github.com/l33tdawg/sage" style="color: #818cf8; text-decoration: underline;">SAGE</a> institutional memory to find vulnerabilities that independent tools miss. Each agent builds on what others found AND dismissed, eliminating duplicate findings and focusing on what matters. Ships with 228 pre-trained exploit patterns from real-world hacks. Every audit makes it smarter.</p>
-                <div class="hero-buttons">
-                    <a href="#installation" class="btn-primary">Get Started</a>
-                    <a href="#features" class="btn-secondary">Learn More</a>
+<!-- Pipeline Diagram — Centerpiece -->
+<section class="pipeline section" id="pipeline">
+    <div class="container">
+        <div class="section-header reveal">
+            <div class="section-label">The Pipeline</div>
+            <h2 class="section-title">5 Agents. Shared Memory. Zero Duplicates.</h2>
+            <p class="section-desc">
+                Each agent reads from and writes to SAGE &mdash; building a shared understanding
+                of the contract&rsquo;s security landscape, pass by pass.
+            </p>
+        </div>
+
+        <!-- SAGE Brain -->
+        <div class="sage-brain reveal">
+            <div class="sage-icon">&#129504;</div>
+            <h3>SAGE Institutional Memory</h3>
+            <p><strong>228 memories</strong> &middot; exploit patterns &middot; false positive signatures &middot; severity calibrations &middot; protocol-specific knowledge</p>
+        </div>
+
+        <!-- Connector lines -->
+        <div class="pipeline-connectors reveal">
+            <div class="connector-line"></div>
+            <div class="connector-line"></div>
+            <div class="connector-line"></div>
+            <div class="connector-line"></div>
+            <div class="connector-line"></div>
+        </div>
+
+        <!-- Agent cards -->
+        <div class="agents-row">
+            <!-- Agent 1 -->
+            <div class="agent-card reveal reveal-d1">
+                <div class="agent-number">1</div>
+                <div class="agent-name">Protocol Understanding</div>
+                <div class="agent-model">Gemini 2.5 Flash</div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Reads from SAGE</span>
+                    <span class="agent-detail-reads">Protocol archetypes, known patterns</span>
+                </div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Stores to SAGE</span>
+                    <span class="agent-detail-stores">Archetype classification, key mechanisms</span>
                 </div>
             </div>
-        </section>
 
-        <section id="features" class="features">
-            <div class="container">
-                <h2>Next-Generation Security Analysis</h2>
-                <p class="features-subtitle">Collaborative AI Agents with Institutional Memory</p>
-                <p class="features-description">Five AI agents share knowledge through <a href="https://github.com/l33tdawg/sage" style="color: #4f46e5;">SAGE</a> institutional memory — findings, dismissals, and verified protections flow between agents so nothing is missed and nothing is flagged twice. Ships with 228 pre-trained exploit patterns from The DAO to Bybit, updated through April 2026.</p>
-
-                <div class="features-grid">
-                    <div class="feature-card reveal">
-                        <div class="feature-icon ai"></div>
-                        <h3>Collaborative Agent Pipeline</h3>
-                        <p>Five specialized AI agents (Protocol Understanding, Attack Surface, Invariant Violations, Cross-Function, Adversarial Modeling) share structured session memory. Each agent builds on what others found AND dismissed — eliminating duplicate findings and focusing on unmitigated attack paths.</p>
-                    </div>
-
-                    <div class="feature-card reveal reveal-delay-1">
-                        <div class="feature-icon search"></div>
-                        <h3>SAGE Institutional Memory</h3>
-                        <p>Persistent knowledge powered by <a href="https://github.com/l33tdawg/sage" style="color: #4f46e5;">SAGE</a> BFT consensus. 228 pre-trained memories from real-world exploits (DAO, Wormhole, Euler, Ronin, Bybit + 2024-2026 patterns). Every audit stores confirmed findings and false positive patterns — each audit is smarter than the last.</p>
-                    </div>
-
-                    <div class="feature-card reveal reveal-delay-2">
-                        <div class="feature-icon poc"></div>
-                        <h3>AI-Enhanced PoC Generation</h3>
-                        <p>Solidity AST-based contract analysis with AI-powered exploit generation, mock contract library (ERC20, Oracle, WETH, FlashLoan), intelligent setUp() generation, iterative compilation fixes, and production-ready Foundry tests optimized for high-value bug bounty submissions.</p>
-                    </div>
-
-                    <div class="feature-card reveal reveal-delay-3">
-                        <div class="feature-icon foundry"></div>
-                        <h3>180+ Detectors + Taint Analysis</h3>
-                        <p>Pattern-based detectors, Solidity AST parsing, source-to-sink taint tracking (8 sources, 12 sinks), control flow graphs, cross-contract analysis, and token quirks database covering 12 non-standard ERC-20 behaviors that cause real exploits.</p>
-                    </div>
-
-                    <div class="feature-card reveal reveal-delay-4">
-                        <div class="feature-icon github"></div>
-                        <h3>Multi-Chain Contract Fetching</h3>
-                        <p>Fetch verified contracts from Ethereum, Base, Arbitrum, Optimism, Polygon, BSC, Avalanche, Fantom, and Monad via unified Etherscan V2 API. Auto-detect network from address. GitHub repository analysis with scope management and persistent audit trails.</p>
-                    </div>
-
-                    <div class="feature-card reveal reveal-delay-5">
-                        <div class="feature-icon report"></div>
-                        <h3>Smart False Positive Filtering</h3>
-                        <p>Multi-stage validation pipeline: SAGE known FP patterns, governance control detection, taint-aware validation, access control chain checks, LLM-based validation with thinking disabled for speed. False positives caught by one audit never appear again.</p>
-                    </div>
+            <!-- Agent 2 -->
+            <div class="agent-card reveal reveal-d2">
+                <div class="agent-number">2</div>
+                <div class="agent-name">Attack Surface Mapping</div>
+                <div class="agent-model">Gemini 2.5 Flash</div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Reads from SAGE</span>
+                    <span class="agent-detail-reads">Exploit knowledge base, attack vectors</span>
+                </div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Stores to SAGE</span>
+                    <span class="agent-detail-stores">Entry points, trust boundaries, risk areas</span>
                 </div>
             </div>
-        </section>
 
-        <section class="code-section">
-            <div class="container">
-                <h2>How It Works</h2>
-                <p class="code-subtitle">Collaborative Agent Pipeline with SAGE Memory</p>
-                <p class="code-description">Five specialized AI agents collaborate through shared SAGE institutional memory. Each agent stores what it found, what it dismissed, and what protections it verified — so later agents build on that intelligence instead of starting from scratch.</p>
-
-                <div class="code-block reveal">
-                    <div class="code-header">Collaborative Pipeline</div>
-<span class="comment"># Start SAGE institutional memory</span>
-<span class="keyword">docker</span> compose up -d             <span class="comment"># SAGE + Ollama (one-time setup)</span>
-
-<span class="comment"># Launch Aether</span>
-<span class="keyword">python</span> aether.py                  <span class="comment"># 228 memories auto-seeded on first run</span>
-
-<span class="comment"># The 5-agent pipeline:</span>
-<span class="comment">#   Agent 1: Protocol Understanding    (Gemini 3 Flash)</span>
-<span class="comment">#   Agent 2: Attack Surface Mapping    (Gemini 3 Flash)</span>
-<span class="comment">#   Agent 3: Invariant Violations      (GPT-4.1) + SAGE checklist</span>
-<span class="comment">#   Agent 4: Cross-Function Analysis   (GPT-4.1) + SAGE patterns</span>
-<span class="comment">#   Agent 5: Adversarial Modeling      (GPT-4.1) + SAGE exploits</span>
-<span class="comment">#</span>
-<span class="comment">#   Each agent reads: prior findings + dismissals + protections</span>
-<span class="comment">#   Each agent stores: new findings + dismissals + verifications</span>
-<span class="comment">#   Result: no duplicates, no re-flagging dismissed concerns</span>
-
-<span class="comment"># Feedback loop: outcomes feed back into SAGE</span>
-<span class="comment">#   Confirmed bug  →  stored as fact (0.90+ confidence)</span>
-<span class="comment">#   False positive  →  stored so it's never flagged again</span>
+            <!-- Agent 3 -->
+            <div class="agent-card reveal reveal-d3">
+                <div class="agent-number">3</div>
+                <div class="agent-name">Invariant Analysis</div>
+                <div class="agent-model">GPT-4.1</div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Reads from SAGE</span>
+                    <span class="agent-detail-reads">Agent 1-2 context, FP patterns</span>
+                </div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Stores to SAGE</span>
+                    <span class="agent-detail-stores">Findings, dismissals, protections</span>
                 </div>
             </div>
-        </section>
 
-        <section id="workflow" class="workflow">
-            <div class="container">
-                <h2>Complete Security Workflow</h2>
-                <p class="workflow-subtitle">From Repository to Revenue: The Complete Pipeline</p>
-                <p>Frictionless security analysis pipeline that eliminates manual setup and configuration. Simply provide a repository URL and Aether handles everything—from intelligent contract discovery and scope management to comprehensive vulnerability analysis and automated exploit generation.</p>
-
-                <div class="workflow-steps">
-                    <div class="workflow-step reveal">
-                        <div class="workflow-step-number">1</div>
-                        <h3>Repository Intake</h3>
-                        <p><strong>One URL, Zero Setup.</strong> Provide any GitHub repository URL—Aether automatically clones, discovers contracts, and configures the analysis environment.</p>
-                    </div>
-
-                    <div class="workflow-step reveal reveal-delay-1">
-                        <div class="workflow-step-number">2</div>
-                        <h3>Deep Analysis</h3>
-                        <p><strong>6-Pass LLM Pipeline.</strong> AST parsing, taint analysis, 160+ detectors, and a structured multi-pass LLM pipeline run as background jobs with live output streaming—start multiple audits concurrently and track them all from the htop-style jobs table.</p>
-                    </div>
-
-                    <div class="workflow-step reveal reveal-delay-2">
-                        <div class="workflow-step-number">3</div>
-                        <h3>Intelligent Reporting</h3>
-                        <p><strong>Bounty-Ready Output.</strong> Severity calibration aligned to bug bounty payout tiers, AI-classified findings with risk assessments and remediation guidance—professional reports without the manual effort.</p>
-                    </div>
-
-                    <div class="workflow-step reveal reveal-delay-3">
-                        <div class="workflow-step-number">4</div>
-                        <h3>PoC Generation</h3>
-                        <p><strong>Battle-Tested Exploits.</strong> Automated Foundry test generation with mock contract library, intelligent setUp() generation, and AI-powered exploit creation—production-ready proofs-of-concept without coding.</p>
-                    </div>
+            <!-- Agent 4 -->
+            <div class="agent-card reveal reveal-d4">
+                <div class="agent-number">4</div>
+                <div class="agent-name">Cross-Function</div>
+                <div class="agent-model">GPT-4.1</div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Reads from SAGE</span>
+                    <span class="agent-detail-reads">All prior findings + dismissals</span>
+                </div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Stores to SAGE</span>
+                    <span class="agent-detail-stores">Cross-function findings, dismissals</span>
                 </div>
             </div>
-        </section>
 
-        <section id="installation" class="cta-section">
-            <div class="container">
-                <h2>Accelerate Your Bug Bounty Workflow</h2>
-                <div class="hero-buttons">
-                    <a href="https://github.com/l33tdawg/aether" class="btn-primary">Get Started</a>
+            <!-- Agent 5 -->
+            <div class="agent-card reveal reveal-d5">
+                <div class="agent-number">5</div>
+                <div class="agent-name">Adversarial Modeling</div>
+                <div class="agent-model">GPT-4.1</div>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Reads from SAGE</span>
+                    <span class="agent-detail-reads">Full pipeline state, severity calibration</span>
                 </div>
-            </div>
-        </section>
-    </main>
-
-    <footer>
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-section">
-                    <h4>Aether</h4>
-                    <p>Professional smart contract security analysis and PoC generation framework for Web3 auditors and bug bounty hunters.</p>
-                </div>
-
-                <div class="footer-section">
-                    <h4>Core Features</h4>
-                    <ul>
-                        <li><a href="#features">6-Pass Deep Analysis</a></li>
-                        <li><a href="#features">AST & Taint Analysis</a></li>
-                        <li><a href="#features">Automated PoC Generation</a></li>
-                        <li><a href="#features">160+ Static Detectors</a></li>
-                    </ul>
-                </div>
-
-                <div class="footer-section">
-                    <h4>Resources</h4>
-                    <ul>
-                        <li><a href="https://github.com/l33tdawg/aether">GitHub Repository</a></li>
-                        <li><a href="#installation">Installation Guide</a></li>
-                        <li><a href="#workflow">How It Works</a></li>
-                    </ul>
-                </div>
-
-                <div class="footer-section">
-                    <h4>Author</h4>
-                    <p>Dhillon Andrew Kannabhiran</p>
-                    <p>VP, Global Strategy & Growth, Verichains</p>
-                    <p><a href="https://twitter.com/l33tdawg">@l33tdawg</a></p>
+                <div class="agent-detail">
+                    <span class="agent-detail-label">Stores to SAGE</span>
+                    <span class="agent-detail-stores">Challenges, confirmations, final verdicts</span>
                 </div>
             </div>
         </div>
-    </footer>
 
-    <script>
-        // Blockchain network animation
-        const canvas = document.getElementById('networkCanvas');
-        const ctx = canvas.getContext('2d');
-        
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        <!-- Flow direction arrows (desktop) -->
+        <div class="flow-arrows reveal">
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-arrow">&rarr;</span>
+        </div>
+    </div>
+</section>
 
-        let mouse = {
-            x: null,
-            y: null,
-            radius: 150
-        };
+<!-- Dismissals — Before / After -->
+<section class="section dismissals" id="dismissals">
+    <div class="container">
+        <div class="section-header reveal">
+            <div class="section-label">Key Innovation</div>
+            <h2 class="section-title">Shared Dismissals Kill Duplicate Findings</h2>
+            <p class="section-desc">
+                When one agent dismisses a concern with evidence, every subsequent agent knows.
+                No more re-flagging the same non-issue across passes.
+            </p>
+        </div>
 
-        window.addEventListener('mousemove', (e) => {
-            mouse.x = e.x;
-            mouse.y = e.y;
+        <div class="dismissals-grid">
+            <div class="dismissal-card dismissal-card--before reveal">
+                <div class="dismissal-tag dismissal-tag--before">&#10005; Before &mdash; v5.0</div>
+                <h4>Agents Work in Isolation</h4>
+                <p>
+                    Pass 3 analyzes reentrancy, decides it&rsquo;s protected by a <code>nonReentrant</code> modifier, and dismisses it.
+                    Pass 5 has no memory of this &mdash; re-flags the same reentrancy concern. Pass 4 does too.
+                </p>
+                <div class="dismissal-stat dismissal-stat--bad">
+                    ~40% <span class="dismissal-stat-label">duplicate findings</span>
+                </div>
+            </div>
+
+            <div class="dismissal-card dismissal-card--after reveal reveal-d2">
+                <div class="dismissal-tag dismissal-tag--after">&#10003; After &mdash; v6.0</div>
+                <h4>Agents Share Everything</h4>
+                <p>
+                    Pass 3 stores a dismissal to SAGE: <code>"reentrancy: protected by nonReentrant on L142"</code>.
+                    Pass 5 reads it &mdash; skips reentrancy entirely, focuses on novel attack vectors instead.
+                </p>
+                <div class="dismissal-stat dismissal-stat--good">
+                    0 <span class="dismissal-stat-label">duplicate findings</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Features Grid -->
+<section class="section" id="features">
+    <div class="container">
+        <div class="section-header reveal">
+            <div class="section-label">Capabilities</div>
+            <h2 class="section-title">Everything You Need to Find Real Bugs</h2>
+        </div>
+
+        <div class="features-grid">
+            <div class="feature-card reveal reveal-d1">
+                <div class="feature-icon">&#9881;</div>
+                <h3>Collaborative Agent Pipeline</h3>
+                <p>5 agents share findings, dismissals, and protections through SAGE. Each agent builds on the last &mdash; no wasted work, no blind spots.</p>
+            </div>
+
+            <div class="feature-card reveal reveal-d2">
+                <div class="feature-icon">&#129504;</div>
+                <h3>SAGE Institutional Memory</h3>
+                <p>228 pre-trained memories from real exploits. Learns from every audit &mdash; confirmed findings become facts, false positives never recur.
+                    <br><a href="https://github.com/l33tdawg/sage" target="_blank" rel="noopener">View SAGE &rarr;</a>
+                </p>
+            </div>
+
+            <div class="feature-card reveal reveal-d3">
+                <div class="feature-icon">&#128269;</div>
+                <h3>180+ Detectors + Taint Analysis</h3>
+                <p>Solidity AST parsing, control flow graphs, 8-source taint propagation, token quirks detection, and cross-contract relationship analysis.</p>
+            </div>
+
+            <div class="feature-card reveal reveal-d1">
+                <div class="feature-icon">&#9889;</div>
+                <h3>AI-Enhanced PoC Generation</h3>
+                <p>Generates Foundry test suites with mock contracts, iterative compilation feedback, and auto-execution. Bug bounty-ready exploit proofs.</p>
+            </div>
+
+            <div class="feature-card reveal reveal-d2">
+                <div class="feature-icon">&#128279;</div>
+                <h3>Multi-Chain Support</h3>
+                <p>Ethereum, Base, Arbitrum, Optimism, Polygon, BSC, Avalanche, Monad, and more. Fetches verified contracts from block explorers, forks for PoC validation.</p>
+            </div>
+
+            <div class="feature-card reveal reveal-d3">
+                <div class="feature-icon">&#128737;</div>
+                <h3>Smart False Positive Filtering</h3>
+                <p>SAGE FP patterns, governance-aware validation, taint-based filtering, deployment analysis, and multi-stage LLM validation eliminate noise.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Quick Start -->
+<section class="section" id="quickstart" style="background: var(--bg-surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+    <div class="container">
+        <div class="section-header reveal">
+            <div class="section-label">Get Running</div>
+            <h2 class="section-title">Two Commands. That&rsquo;s It.</h2>
+            <p class="section-desc">
+                SAGE runs as a local Docker service. Aether connects automatically.
+            </p>
+        </div>
+
+        <div class="quickstart-block reveal">
+            <div class="code-window">
+                <div class="code-titlebar">
+                    <div class="code-dot code-dot--red"></div>
+                    <div class="code-dot code-dot--yellow"></div>
+                    <div class="code-dot code-dot--green"></div>
+                    <span class="code-titlebar-text">terminal</span>
+                </div>
+                <div class="code-body">
+<pre><span class="code-comment"># Clone and set up</span>
+<span class="code-prompt">$ </span><span class="code-cmd">git clone</span> <span class="code-flag">https://github.com/l33tdawg/aether</span>
+<span class="code-prompt">$ </span><span class="code-cmd">cd</span> aether <span class="code-flag">&&</span> <span class="code-cmd">python</span> setup.py
+
+<span class="code-comment"># Start SAGE institutional memory</span>
+<span class="code-prompt">$ </span><span class="code-cmd">docker compose</span> <span class="code-flag">up -d</span>
+
+<span class="code-comment"># Launch Aether</span>
+<span class="code-prompt">$ </span><span class="code-cmd">python</span> aether.py</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Feedback Loop -->
+<section class="section" id="feedback">
+    <div class="container">
+        <div class="section-header reveal">
+            <div class="section-label">Continuous Learning</div>
+            <h2 class="section-title">Every Audit Makes the Next One Better</h2>
+            <p class="section-desc">
+                SAGE stores outcomes from every audit. Confirmed findings become institutional knowledge.
+                False positives are tagged so they&rsquo;re never flagged again.
+            </p>
+        </div>
+
+        <div class="loop-visual reveal">
+            <div class="loop-node">
+                <div class="loop-node-icon">&#128196;</div>
+                <div class="loop-node-label">Audit</div>
+                <div class="loop-node-sub">Contract analyzed</div>
+            </div>
+            <div class="loop-arrow">&rarr;</div>
+            <div class="loop-node">
+                <div class="loop-node-icon">&#128270;</div>
+                <div class="loop-node-label">Findings</div>
+                <div class="loop-node-sub">Vulns detected</div>
+            </div>
+            <div class="loop-arrow">&rarr;</div>
+            <div class="loop-node">
+                <div class="loop-node-icon">&#9989;</div>
+                <div class="loop-node-label">Outcomes</div>
+                <div class="loop-node-sub">Confirmed or FP</div>
+            </div>
+            <div class="loop-arrow">&rarr;</div>
+            <div class="loop-node">
+                <div class="loop-node-icon">&#129504;</div>
+                <div class="loop-node-label">SAGE</div>
+                <div class="loop-node-sub">Memory updated</div>
+            </div>
+            <div class="loop-arrow">&rarr;</div>
+            <div class="loop-node">
+                <div class="loop-node-icon">&#128640;</div>
+                <div class="loop-node-label">Next Audit</div>
+                <div class="loop-node-sub">Smarter, faster</div>
+            </div>
+        </div>
+
+        <div class="loop-return reveal">
+            <div class="loop-return-line">
+                &#8634; Feedback flows back into SAGE for every subsequent audit
+            </div>
+        </div>
+
+        <div class="loop-outcomes reveal">
+            <div class="loop-outcome">
+                <div class="loop-outcome-dot loop-outcome-dot--confirmed"></div>
+                <div class="loop-outcome-text"><strong>Confirmed</strong> &mdash; stored as institutional fact</div>
+            </div>
+            <div class="loop-outcome">
+                <div class="loop-outcome-dot loop-outcome-dot--fp"></div>
+                <div class="loop-outcome-text"><strong>False Positive</strong> &mdash; pattern stored, never flagged again</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+    <div class="container">
+        <div class="cta-glow" aria-hidden="true"></div>
+        <h2 class="reveal">Start Finding Real Vulnerabilities</h2>
+        <p class="reveal reveal-d1">
+            Open source. No vendor lock-in. Bring your own API keys.
+        </p>
+        <a href="https://github.com/l33tdawg/aether" class="btn-primary reveal reveal-d2" target="_blank" rel="noopener">
+            View on GitHub &rarr;
+        </a>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer>
+    <div class="container">
+        <div class="footer-grid">
+            <div class="footer-brand">
+                <a href="#" class="logo">
+                    <span class="logo-mark">&Xi;</span>
+                    Aether
+                </a>
+                <p>
+                    Adaptive Exploit &amp; Threat Hunting Engine for EVM-based Repositories.
+                    Collaborative AI agents powered by SAGE institutional memory.
+                </p>
+            </div>
+            <div class="footer-col">
+                <h4>Project</h4>
+                <ul>
+                    <li><a href="https://github.com/l33tdawg/aether" target="_blank" rel="noopener">GitHub</a></li>
+                    <li><a href="https://github.com/l33tdawg/sage" target="_blank" rel="noopener">SAGE</a></li>
+                    <li><a href="https://github.com/l33tdawg/aether#installation" target="_blank" rel="noopener">Installation</a></li>
+                </ul>
+            </div>
+            <div class="footer-col">
+                <h4>Resources</h4>
+                <ul>
+                    <li><a href="#pipeline">Pipeline</a></li>
+                    <li><a href="#features">Features</a></li>
+                    <li><a href="#quickstart">Quick Start</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>Built by <strong>Dhillon Andrew Kannabhiran</strong></p>
+            <div class="footer-sage">
+                &#129504; Powered by SAGE institutional memory
+            </div>
+        </div>
+    </div>
+</footer>
+
+<script>
+    // Scroll reveal
+    const revealEls = document.querySelectorAll('.reveal');
+    const revealObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+            }
         });
+    }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
 
-        window.addEventListener('mouseout', () => {
-            mouse.x = null;
-            mouse.y = null;
-        });
+    revealEls.forEach(el => revealObserver.observe(el));
 
-        class Node {
-            constructor() {
-                this.x = Math.random() * canvas.width;
-                this.y = Math.random() * canvas.height;
-                this.vx = (Math.random() - 0.5) * 0.5;
-                this.vy = (Math.random() - 0.5) * 0.5;
-                this.radius = 2;
-                this.baseRadius = 2;
-            }
-
-            update() {
-                this.x += this.vx;
-                this.y += this.vy;
-
-                if (this.x < 0 || this.x > canvas.width) this.vx *= -1;
-                if (this.y < 0 || this.y > canvas.height) this.vy *= -1;
-
-                // Mouse interaction
-                if (mouse.x && mouse.y) {
-                    const dx = mouse.x - this.x;
-                    const dy = mouse.y - this.y;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-                    
-                    if (distance < mouse.radius) {
-                        this.radius = this.baseRadius + (1 - distance / mouse.radius) * 3;
-                        
-                        // Slight attraction to mouse
-                        const force = (mouse.radius - distance) / mouse.radius;
-                        const angle = Math.atan2(dy, dx);
-                        this.vx += Math.cos(angle) * force * 0.03;
-                        this.vy += Math.sin(angle) * force * 0.03;
-                    } else {
-                        this.radius = this.baseRadius;
-                    }
-                }
-                
-                // Damping
-                this.vx *= 0.99;
-                this.vy *= 0.99;
-            }
-
-            draw() {
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(79, 70, 229, 0.6)';
-                ctx.fill();
-                
-                // Add glow effect
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = 'rgba(79, 70, 229, 0.5)';
-                ctx.fill();
-                ctx.shadowBlur = 0;
-            }
+    // Header scroll state
+    const header = document.getElementById('header');
+    let lastScroll = 0;
+    window.addEventListener('scroll', () => {
+        const scrollY = window.scrollY;
+        if (scrollY > 60) {
+            header.classList.add('scrolled');
+        } else {
+            header.classList.remove('scrolled');
         }
+        lastScroll = scrollY;
+    }, { passive: true });
 
-        const nodes = [];
-        const nodeCount = 60;
+    // Close mobile nav on link click
+    document.querySelectorAll('.nav-links a').forEach(link => {
+        link.addEventListener('click', () => {
+            document.querySelector('.nav-links').classList.remove('open');
+        });
+    });
 
-        for (let i = 0; i < nodeCount; i++) {
-            nodes.push(new Node());
-        }
-
-        function connectNodes() {
-            const maxDistance = 150;
-            
-            for (let i = 0; i < nodes.length; i++) {
-                for (let j = i + 1; j < nodes.length; j++) {
-                    const dx = nodes[i].x - nodes[j].x;
-                    const dy = nodes[i].y - nodes[j].y;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-
-                    if (distance < maxDistance) {
-                        ctx.beginPath();
-                        ctx.moveTo(nodes[i].x, nodes[i].y);
-                        ctx.lineTo(nodes[j].x, nodes[j].y);
-                        const opacity = (1 - distance / maxDistance) * 0.25;
-                        ctx.strokeStyle = `rgba(79, 70, 229, ${opacity})`;
-                        ctx.lineWidth = 1;
-                        ctx.stroke();
-                    }
-                }
-                
-                // Connect to mouse
-                if (mouse.x && mouse.y) {
-                    const dx = mouse.x - nodes[i].x;
-                    const dy = mouse.y - nodes[i].y;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-                    
-                    if (distance < mouse.radius) {
-                ctx.beginPath();
-                        ctx.moveTo(nodes[i].x, nodes[i].y);
-                        ctx.lineTo(mouse.x, mouse.y);
-                        const opacity = (1 - distance / mouse.radius) * 0.3;
-                        ctx.strokeStyle = `rgba(124, 58, 237, ${opacity})`;
-                        ctx.lineWidth = 2;
-                        ctx.stroke();
-                    }
-                }
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            const href = this.getAttribute('href');
+            if (href === '#') return;
+            e.preventDefault();
+            const target = document.querySelector(href);
+            if (target) {
+                const offset = 80;
+                const pos = target.getBoundingClientRect().top + window.scrollY - offset;
+                window.scrollTo({ top: pos, behavior: 'smooth' });
             }
-        }
-
-        // Resize canvas on window resize
-        window.addEventListener('resize', () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
         });
-
-        // Scroll reveal animation
-        const observerOptions = {
-            threshold: 0.1,
-            rootMargin: '0px 0px -100px 0px'
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.classList.add('active');
-                }
-            });
-        }, observerOptions);
-
-        document.querySelectorAll('.reveal').forEach(el => {
-            observer.observe(el);
-        });
-
-        // Header scroll effect
-        const header = document.getElementById('mainHeader');
-        let lastScroll = 0;
-
-        window.addEventListener('scroll', () => {
-            const currentScroll = window.pageYOffset;
-            
-            if (currentScroll > 50) {
-                header.classList.add('scrolled');
-            } else {
-                header.classList.remove('scrolled');
-            }
-            
-            lastScroll = currentScroll;
-        });
-
-        // Parallax effect for background elements
-        window.addEventListener('scroll', () => {
-            const scrolled = window.pageYOffset;
-            const parallaxElements = document.querySelectorAll('.blockchain-bg');
-            
-            parallaxElements.forEach(el => {
-                const speed = 0.5;
-                el.style.transform = `translateY(${scrolled * speed}px)`;
-            });
-        });
-
-        // Smooth scroll for navigation links
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
-                }
-            });
-        });
-
-        // Page load animation
-        window.addEventListener('load', () => {
-            document.body.style.opacity = '0';
-            document.body.style.transition = 'opacity 0.5s ease';
-            
-            requestAnimationFrame(() => {
-                document.body.style.opacity = '1';
-            });
-        });
-
-        // Performance optimization - reduce canvas rendering on slow devices
-        let lastFrameTime = Date.now();
-        const targetFPS = 60;
-        const frameInterval = 1000 / targetFPS;
-
-        function optimizedAnimate() {
-            const now = Date.now();
-            const elapsed = now - lastFrameTime;
-
-            if (elapsed > frameInterval) {
-                lastFrameTime = now - (elapsed % frameInterval);
-                
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                
-                nodes.forEach(node => {
-                    node.update();
-                    node.draw();
-                });
-                
-                connectNodes();
-            }
-            
-            requestAnimationFrame(optimizedAnimate);
-        }
-
-        // Replace the original animate call
-        optimizedAnimate();
-
-        // Add subtle particle effects on scroll
-        let scrollTimeout;
-        window.addEventListener('scroll', () => {
-            clearTimeout(scrollTimeout);
-            canvas.style.opacity = '0.4';
-            
-            scrollTimeout = setTimeout(() => {
-                canvas.style.opacity = '0.6';
-            }, 150);
-        });
-
-        canvas.style.transition = 'opacity 0.3s ease';
-    </script>
+    });
+</script>
 </body>
 </html>
