@@ -281,7 +281,8 @@ For EVERY external and public function, analyze and return a JSON object:
 
 def _build_pass3_prompt(contract_content: str, pass1_result: str, pass2_result: str,
                         checklist_text: str, file_context: str = "",
-                        related_context: str = "") -> str:
+                        related_context: str = "",
+                        session_context: str = "") -> str:
     """Pass 3: Invariant Violation Analysis."""
     file_context_section = ""
     if file_context:
@@ -291,6 +292,10 @@ def _build_pass3_prompt(contract_content: str, pass1_result: str, pass2_result: 
     if related_context:
         related_section = f"\n{related_context}\n"
 
+    session_section = ""
+    if session_context:
+        session_section = f"\n{session_context}\n"
+
     return f"""You are an elite smart contract security auditor. Your mission: systematically check every protocol invariant against every code path.
 {file_context_section}
 ## Protocol Understanding
@@ -298,7 +303,7 @@ def _build_pass3_prompt(contract_content: str, pass1_result: str, pass2_result: 
 
 ## Attack Surface
 {pass2_result}
-{related_section}
+{related_section}{session_section}
 {checklist_text}
 
 ## Contract Code
@@ -397,16 +402,36 @@ Additionally, check this universal DeFi invariant:
       "impact": "financial/functional impact",
       "proof_sketch": "brief proof of exploitability"
     }}
+  ],
+  "dismissals": [
+    {{
+      "concern": "brief description of investigated concern",
+      "vuln_type": "vulnerability type investigated",
+      "affected_functions": ["func1"],
+      "reason": "why this is NOT a vulnerability",
+      "protections_found": ["modifier or check that prevents exploit"],
+      "confidence_in_dismissal": 0.0-1.0
+    }}
+  ],
+  "protections_verified": [
+    {{
+      "type": "access_control|reentrancy_guard|input_validation|overflow_check",
+      "mechanism": "onlyOwner on setFee",
+      "functions": ["setFee"],
+      "bypassed": false
+    }}
   ]
 }}
 
 Return ONLY findings that represent real vulnerabilities. Do NOT report informational items or best practice suggestions.
+Include dismissals for investigated-but-safe concerns and protections_verified for all security mechanisms found.
 """
 
 
 def _build_pass3_5_prompt(contract_content: str, pass1_result: str, pass2_result: str,
                           pass3_findings: str, cross_contract_context: str,
-                          related_context: str = "") -> str:
+                          related_context: str = "",
+                          session_context: str = "") -> str:
     """Pass 3.5: Cross-Contract Vulnerability Analysis.
 
     Targets vulnerabilities that span multiple contracts: trust boundary
@@ -425,6 +450,10 @@ def _build_pass3_5_prompt(contract_content: str, pass1_result: str, pass2_result
     if related_context:
         related_section = f"\n{related_context}\n"
 
+    session_section = ""
+    if session_context:
+        session_section = f"\n{session_context}\n"
+
     return f"""You are an elite smart contract security auditor specializing in **cross-contract vulnerabilities** — bugs that only manifest when analyzing how multiple contracts interact.
 
 ## Protocol Understanding
@@ -433,7 +462,7 @@ def _build_pass3_5_prompt(contract_content: str, pass1_result: str, pass2_result
 ## Attack Surface
 {pass2_result}
 
-{previous_findings_section}## Cross-Contract Relationship Map
+{previous_findings_section}{session_section}## Cross-Contract Relationship Map
 {cross_contract_context}
 {related_section}
 
@@ -571,15 +600,35 @@ Only include a finding in your JSON output if you can answer ALL five questions 
       "impact": "financial/functional impact",
       "prerequisites": "what conditions must be true"
     }}
+  ],
+  "dismissals": [
+    {{
+      "concern": "investigated cross-contract concern",
+      "vuln_type": "cross_contract_reentrancy|trust_boundary_violation|etc",
+      "affected_functions": ["ContractA.funcX"],
+      "reason": "why this is NOT a vulnerability",
+      "protections_found": ["protection that prevents exploit"],
+      "confidence_in_dismissal": 0.0-1.0
+    }}
+  ],
+  "protections_verified": [
+    {{
+      "type": "trust_boundary|reentrancy_guard|interface_check",
+      "mechanism": "description of protection",
+      "functions": ["funcX"],
+      "bypassed": false
+    }}
   ]
 }}
 
 Return ONLY findings that represent real cross-contract vulnerabilities. Do NOT report single-contract issues (those are covered by other passes).
+Include dismissals for investigated-but-safe concerns and protections_verified for all cross-contract security mechanisms found.
 """
 
 
 def _build_pass4_prompt(contract_content: str, pass1_result: str, pass2_result: str,
-                        pass3_findings: str = "", cross_contract_context: str = "") -> str:
+                        pass3_findings: str = "", cross_contract_context: str = "",
+                        session_context: str = "") -> str:
     """Pass 4: Cross-Function Interaction Analysis."""
     previous_findings_section = ""
     if pass3_findings:
@@ -599,6 +648,24 @@ NOTE: Use this cross-contract context to identify cross-function interactions th
 
 """
 
+    session_section = ""
+    if session_context:
+        session_section = f"\n{session_context}\n"
+
+    challenge_instruction = ""
+    if session_context:
+        challenge_instruction = """
+
+## Challenge Protocol (IMPORTANT)
+If you DISAGREE with a prior dismissal from the session intelligence above, you MUST:
+1. State which dismissal you challenge (reference its concern text)
+2. Provide NEW evidence not considered in the prior pass
+3. Explain why the prior reasoning was incorrect
+Include challenges in the "challenges" array of your output.
+
+If you AGREE with a prior finding, include its ID in the "confirmations" array — this boosts confidence.
+"""
+
     return f"""You are an elite smart contract security auditor analyzing cross-function interactions.
 
 ## Protocol Understanding
@@ -607,7 +674,7 @@ NOTE: Use this cross-contract context to identify cross-function interactions th
 ## Attack Surface & State Dependencies
 {pass2_result}
 
-{previous_findings_section}{cross_contract_section}## Contract Code
+{previous_findings_section}{session_section}{cross_contract_section}{challenge_instruction}## Contract Code
 ```solidity
 {contract_content}
 ```
@@ -698,15 +765,60 @@ Only include a finding in your JSON output if you can answer ALL five questions 
       "impact": "financial/functional impact",
       "prerequisites": "what conditions must be true"
     }}
-  ]
+  ],
+  "dismissals": [
+    {{
+      "concern": "investigated cross-function concern",
+      "vuln_type": "reentrancy|flash_loan_attack|state_inconsistency",
+      "affected_functions": ["func1", "func2"],
+      "reason": "why this is NOT exploitable",
+      "protections_found": ["protection mechanism"],
+      "confidence_in_dismissal": 0.0-1.0
+    }}
+  ],
+  "protections_verified": [
+    {{
+      "type": "reentrancy_guard|access_control|state_lock",
+      "mechanism": "description of protection",
+      "functions": ["func1"],
+      "bypassed": false
+    }}
+  ],
+  "challenges": [
+    {{
+      "target_concern": "the dismissed concern text being challenged",
+      "new_evidence": "what new evidence contradicts the prior dismissal",
+      "proposed_change": "re-flag as finding|upgrade severity|etc"
+    }}
+  ],
+  "confirmations": ["list of prior finding titles/IDs that this pass confirms"]
 }}
 """
 
 
 def _build_pass5_prompt(contract_content: str, pass1_result: str, pass2_result: str,
                         pass3_findings: str, pass4_findings: str,
-                        exploit_patterns: str) -> str:
+                        exploit_patterns: str,
+                        session_context: str = "") -> str:
     """Pass 5: Adversarial Modeling."""
+    session_section = ""
+    if session_context:
+        session_section = f"\n{session_context}\n"
+
+    challenge_instruction = ""
+    if session_context:
+        challenge_instruction = """
+
+## Challenge Protocol (IMPORTANT)
+If you DISAGREE with a prior dismissal from the session intelligence above, you MUST:
+1. State which dismissal you challenge (reference its concern text)
+2. Provide NEW evidence not considered in the prior pass
+3. Explain why the prior reasoning was incorrect
+Include challenges in the "challenges" array of your output.
+
+If you AGREE with a prior finding, include its ID in the "confirmations" array — this boosts confidence.
+"""
+
     return f"""You are a **black-hat attacker** with unlimited resources. Your goal is to extract maximum value from this protocol.
 
 You have:
@@ -726,6 +838,7 @@ You have:
 {pass3_findings}
 
 {pass4_findings}
+{session_section}{challenge_instruction}
 
 ## Known Exploit Patterns (Real-World Precedents)
 {exploit_patterns}
@@ -813,7 +926,33 @@ Only include a finding in your JSON output if you can answer ALL five questions 
       "impact": "maximum financial impact",
       "edge_case_category": "first_operation|last_operation|zero_value|max_value|self_referential|same_block|callback|empty_input (only for edge-case findings)"
     }}
-  ]
+  ],
+  "dismissals": [
+    {{
+      "concern": "investigated attack vector",
+      "vuln_type": "attack model type",
+      "affected_functions": ["func1"],
+      "reason": "why this attack is NOT feasible",
+      "protections_found": ["protection mechanism"],
+      "confidence_in_dismissal": 0.0-1.0
+    }}
+  ],
+  "protections_verified": [
+    {{
+      "type": "access_control|reentrancy_guard|input_validation|slippage_check",
+      "mechanism": "description of protection",
+      "functions": ["func1"],
+      "bypassed": false
+    }}
+  ],
+  "challenges": [
+    {{
+      "target_concern": "the dismissed concern text being challenged",
+      "new_evidence": "what new evidence contradicts the prior dismissal",
+      "proposed_change": "re-flag as finding|upgrade severity|etc"
+    }}
+  ],
+  "confirmations": ["list of prior finding titles/IDs that this pass confirms"]
 }}
 """
 
@@ -1258,6 +1397,347 @@ class DeepAnalysisEngine:
         except Exception as exc:
             logger.debug("SAGE store_audit_learnings failed: %s", exc)
 
+    # ------------------------------------------------------------------
+    # v6.0 Collaborative Pipeline — SAGE Session Memory
+    # ------------------------------------------------------------------
+
+    def _store_pass_session(
+        self, pass_name: str, raw_response: str, findings: List[Dict[str, Any]]
+    ) -> None:
+        """Parse findings/dismissals/protections from LLM response and store in SAGE session.
+
+        Called after each finding-producing pass (3, 3.5, 4, 5) to build up
+        shared session state that subsequent passes can reference.
+        """
+        if not hasattr(self, '_session_domain') or not self._session_domain:
+            return
+        if not hasattr(self, '_sage_client') or self._sage_client is None:
+            return
+
+        try:
+            # Try direct JSON parse first to preserve all keys (dismissals,
+            # protections_verified, challenges, confirmations). parse_llm_json
+            # uses extract_json_from_response which may strip non-standard keys.
+            parsed = {}
+            if raw_response:
+                try:
+                    parsed = json.loads(raw_response)
+                except (json.JSONDecodeError, TypeError):
+                    # LLM may have wrapped in markdown — try stripping
+                    stripped = raw_response.strip()
+                    if stripped.startswith("```"):
+                        lines = stripped.split("\n")
+                        # Remove first and last ``` lines
+                        inner = "\n".join(
+                            l for l in lines[1:]
+                            if not l.strip().startswith("```")
+                        )
+                        try:
+                            parsed = json.loads(inner)
+                        except (json.JSONDecodeError, TypeError):
+                            parsed = {}
+            if not isinstance(parsed, dict):
+                parsed = {}
+
+            # Extract dismissals and protections from LLM response
+            dismissals = parsed.get("dismissals", [])
+            protections = parsed.get("protections_verified", [])
+            challenges = parsed.get("challenges", [])
+            confirmations = parsed.get("confirmations", [])
+
+            # Build session record as a single JSON blob
+            session_record = {
+                "pass": pass_name,
+                "findings": [],
+                "dismissals": [],
+                "protections": [],
+                "challenges": challenges if isinstance(challenges, list) else [],
+                "confirmations": confirmations if isinstance(confirmations, list) else [],
+            }
+
+            # Extract finding records with IDs
+            for i, f in enumerate(findings):
+                finding_id = f"{pass_name.replace(' ', '').replace(':', '-')}-{i+1:03d}"
+                session_record["findings"].append({
+                    "record_type": "finding",
+                    "pass": pass_name,
+                    "finding_id": finding_id,
+                    "vuln_type": f.get("type", f.get("vulnerability_type", "unknown")),
+                    "severity": f.get("severity", "medium"),
+                    "confidence": f.get("confidence", 0.5),
+                    "affected_functions": f.get("affected_functions", []),
+                    "title": f.get("title", ""),
+                    "summary": f.get("description", "")[:300],
+                })
+
+            # Extract dismissal records
+            if isinstance(dismissals, list):
+                for i, d in enumerate(dismissals):
+                    if isinstance(d, dict):
+                        session_record["dismissals"].append({
+                            "record_type": "dismissal",
+                            "pass": pass_name,
+                            "dismissed_concern": d.get("concern", ""),
+                            "vuln_type": d.get("vuln_type", ""),
+                            "reason": d.get("reason", ""),
+                            "protections_found": d.get("protections_found", []),
+                            "confidence_in_dismissal": float(d.get("confidence_in_dismissal", 0.8)),
+                            "affected_functions": d.get("affected_functions", []),
+                        })
+
+            # Extract protection records
+            if isinstance(protections, list):
+                for p in protections:
+                    if isinstance(p, dict):
+                        session_record["protections"].append({
+                            "record_type": "protection",
+                            "pass": pass_name,
+                            "protection_type": p.get("type", ""),
+                            "mechanism": p.get("mechanism", ""),
+                            "scope": p.get("functions", []),
+                            "bypassed": bool(p.get("bypassed", False)),
+                        })
+
+            content = json.dumps(session_record)
+            self._sage_client.remember_session(content, self._session_domain)
+            n_f = len(session_record["findings"])
+            n_d = len(session_record["dismissals"])
+            n_p = len(session_record["protections"])
+            logger.info(
+                "SAGE session stored for %s: %d findings, %d dismissals, %d protections",
+                pass_name, n_f, n_d, n_p,
+            )
+            print(
+                f"   SAGE session: stored {n_f} findings, {n_d} dismissals, "
+                f"{n_p} protections for {pass_name}",
+                flush=True,
+            )
+        except Exception as exc:
+            logger.error("SAGE session store failed for %s: %s", pass_name, exc)
+            print(f"   SAGE session store FAILED for {pass_name}: {exc}", flush=True)
+
+    def _build_session_context(self, for_pass: str) -> str:
+        """Recall all session records from SAGE and format as Prior Pass Intelligence.
+
+        Returns a structured section that tells the LLM about confirmed findings,
+        dismissed concerns, and verified protections from earlier passes.
+        """
+        if not hasattr(self, '_session_domain') or not self._session_domain:
+            return ""
+        if not hasattr(self, '_sage_client') or self._sage_client is None:
+            return ""
+
+        try:
+            raw_memories = self._sage_client.recall_session(self._session_domain)
+            if not raw_memories:
+                return ""
+
+            # Parse all session records
+            all_findings = []
+            all_dismissals = []
+            all_protections = []
+            all_challenges = []
+            all_confirmations = []
+
+            for mem in raw_memories:
+                content = mem.get("content", "")
+                if not content:
+                    continue
+                try:
+                    record = json.loads(content)
+                    if not isinstance(record, dict):
+                        continue
+                    all_findings.extend(record.get("findings", []))
+                    all_dismissals.extend(record.get("dismissals", []))
+                    all_protections.extend(record.get("protections", []))
+                    all_challenges.extend(record.get("challenges", []))
+                    all_confirmations.extend(record.get("confirmations", []))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+            if not (all_findings or all_dismissals or all_protections):
+                return ""
+
+            lines = [
+                "## Prior Pass Intelligence (SAGE Session)",
+                "",
+            ]
+
+            # Confirmed findings section
+            if all_findings:
+                lines.append("### Confirmed Findings")
+                # Track which findings have been confirmed by later passes
+                confirmed_titles = set()
+                for c in all_confirmations:
+                    if isinstance(c, str):
+                        confirmed_titles.add(c.lower())
+                for f in all_findings:
+                    sev = f.get("severity", "?").upper()
+                    fid = f.get("finding_id", "?")
+                    title = f.get("title", f.get("summary", "unknown")[:60])
+                    funcs = ", ".join(f.get("affected_functions", []))
+                    conf = f.get("confidence", 0.5)
+                    # Check if confirmed by later pass
+                    is_confirmed = title.lower() in confirmed_titles
+                    confirm_tag = " [CROSS-CONFIRMED]" if is_confirmed else ""
+                    lines.append(
+                        f"- [{fid}] [{sev}] {title} ({funcs}) "
+                        f"conf={conf:.0%}{confirm_tag} "
+                        f"-- DO NOT re-report, build on it"
+                    )
+                lines.append("")
+
+            # Dismissed concerns section
+            if all_dismissals:
+                # Filter out challenged dismissals
+                challenged_concerns = set()
+                for ch in all_challenges:
+                    if isinstance(ch, dict):
+                        challenged_concerns.add(ch.get("target_concern", "").lower())
+
+                active_dismissals = []
+                overridden_dismissals = []
+                for d in all_dismissals:
+                    concern = d.get("dismissed_concern", "")
+                    if concern.lower() in challenged_concerns:
+                        overridden_dismissals.append(d)
+                    else:
+                        active_dismissals.append(d)
+
+                if active_dismissals:
+                    lines.append("### Dismissed Concerns")
+                    for d in active_dismissals:
+                        concern = d.get("dismissed_concern", "unknown")
+                        reason = d.get("reason", "")
+                        conf = d.get("confidence_in_dismissal", 0.8)
+                        pass_from = d.get("pass", "unknown")
+                        funcs = ", ".join(d.get("affected_functions", []))
+                        lines.append(
+                            f"- [{pass_from}-DISMISSED] {concern} ({funcs})"
+                        )
+                        lines.append(
+                            f"  Reason: {reason} (confidence: {conf:.0%})"
+                        )
+                        lines.append(
+                            "  DO NOT re-flag unless you have NEW contradicting evidence"
+                        )
+                    lines.append("")
+
+                if overridden_dismissals:
+                    lines.append("### Challenged Dismissals (OVERRIDDEN)")
+                    for d in overridden_dismissals:
+                        concern = d.get("dismissed_concern", "unknown")
+                        lines.append(
+                            f"- {concern} -- previously dismissed, now challenged"
+                        )
+                    lines.append("")
+
+            # Verified protections section
+            if all_protections:
+                lines.append("### Verified Protections")
+                for p in all_protections:
+                    mechanism = p.get("mechanism", "unknown")
+                    scope = ", ".join(p.get("scope", []))
+                    bypassed = p.get("bypassed", False)
+                    status = "BYPASSED" if bypassed else "HOLDS"
+                    lines.append(f"- {mechanism} ({scope}) -- {status}")
+                lines.append("")
+
+            context = "\n".join(lines)
+            # Enforce budget
+            max_chars = 40_000
+            if len(context) > max_chars:
+                context = context[:max_chars] + "\n[...truncated to session budget]\n"
+
+            logger.info(
+                "SAGE session context for %s: %d findings, %d dismissals, %d protections (%d chars)",
+                for_pass, len(all_findings), len(all_dismissals),
+                len(all_protections), len(context),
+            )
+            return context
+        except Exception as exc:
+            logger.error("SAGE session context build failed for %s: %s", for_pass, exc)
+            print(f"   SAGE session context FAILED for {for_pass}: {exc}", flush=True)
+            return ""
+
+    def _resolve_challenges(self, all_findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Process challenges from later passes that override earlier dismissals.
+
+        When a later pass challenges a dismissal with new evidence, the dismissed
+        concern may need to be re-flagged or have its severity/confidence adjusted.
+        Also applies confidence boosts when findings are confirmed by later passes.
+
+        Returns the updated findings list.
+        """
+        if not hasattr(self, '_session_domain') or not self._session_domain:
+            return all_findings
+        if not hasattr(self, '_sage_client') or self._sage_client is None:
+            return all_findings
+
+        try:
+            raw_memories = self._sage_client.recall_session(self._session_domain)
+            if not raw_memories:
+                return all_findings
+
+            all_challenges = []
+            all_confirmations = []
+            all_session_findings = []
+
+            for mem in raw_memories:
+                content = mem.get("content", "")
+                if not content:
+                    continue
+                try:
+                    record = json.loads(content)
+                    if not isinstance(record, dict):
+                        continue
+                    all_challenges.extend(record.get("challenges", []))
+                    all_confirmations.extend(record.get("confirmations", []))
+                    all_session_findings.extend(record.get("findings", []))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+            # Apply confirmation boosts
+            confirmed_titles = set()
+            for c in all_confirmations:
+                if isinstance(c, str):
+                    confirmed_titles.add(c.lower().strip())
+
+            for finding in all_findings:
+                title = finding.get("title", "").lower().strip()
+                if title and title in confirmed_titles:
+                    old_conf = finding.get("confidence", 0.5)
+                    # Boost by 15%, capped at 1.0
+                    new_conf = min(1.0, old_conf * 1.15)
+                    finding["confidence"] = new_conf
+                    finding["cross_confirmed"] = True
+                    logger.info(
+                        "Confidence boosted for '%s': %.2f -> %.2f (cross-confirmed)",
+                        finding.get("title", "?"), old_conf, new_conf,
+                    )
+
+            # Process challenges: find dismissed concerns that should be re-flagged
+            if all_challenges:
+                for challenge in all_challenges:
+                    if not isinstance(challenge, dict):
+                        continue
+                    target = challenge.get("target_concern", "")
+                    new_evidence = challenge.get("new_evidence", "")
+                    proposed = challenge.get("proposed_change", "")
+                    if target and new_evidence:
+                        logger.info(
+                            "Challenge processed: '%s' -> %s (new evidence: %s)",
+                            target, proposed, new_evidence[:100],
+                        )
+                        # The challenge itself creates a finding in the pass that raised it,
+                        # so no need to fabricate a new finding here. The main effect is
+                        # that the dismissal is marked as overridden in session context.
+
+            return all_findings
+        except Exception as exc:
+            logger.error("Challenge resolution failed: %s", exc)
+            return all_findings
+
     def _build_severity_calibration_note(self) -> str:
         """Build a calibration note for the LLM if certain severities have high rejection.
 
@@ -1334,6 +1814,33 @@ class DeepAnalysisEngine:
 
         result = DeepAnalysisResult(archetype=archetype)
         content_key = _content_hash(combined_content)
+
+        # v6.0: SAGE is REQUIRED — fail fast if not available
+        self._session_domain = ""
+        self._sage_client = None
+        try:
+            from core.sage_client import SageClient
+            sage = SageClient.get_instance()
+            if not sage.health_check():
+                raise RuntimeError(
+                    "SAGE institutional memory is required. Run: docker compose up -d"
+                )
+            self._sage_client = sage
+            self._session_domain = f"audit-session-{content_key}"
+            print(f"   SAGE session: {self._session_domain}", flush=True)
+            logger.info("SAGE session domain: %s", self._session_domain)
+        except ImportError:
+            raise RuntimeError(
+                "SAGE institutional memory is required but sage-agent-sdk is not installed. "
+                "Install with: pip install sage-agent-sdk"
+            )
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"SAGE institutional memory is required but failed to connect: {exc}. "
+                "Run: docker compose up -d"
+            ) from exc
 
         # SAGE institutional memory — recall historical audit knowledge
         sage_context = self._build_sage_context(archetype)
@@ -1513,12 +2020,15 @@ class DeepAnalysisEngine:
             truncated_content, pass1_text, pass2_text, checklist_text,
             file_context=file_context, related_context=related_ctx_p3,
         )
-        pass3_findings = await self._run_finding_pass(
+        pass3_findings, pass3_raw = await self._run_finding_pass_v6(
             "Pass 3: Invariant Violations",
             pass3_prompt_text,
             pass3_model,
             result,
         )
+
+        # v6.0: Store Pass 3 session data in SAGE
+        self._store_pass_session("pass3", pass3_raw, pass3_findings)
 
         # Format Pass 3 findings summary for subsequent passes
         p3_summary = self._summarize_findings(pass3_findings, "Invariant Analysis")
@@ -1540,16 +2050,21 @@ class DeepAnalysisEngine:
                     related_ctx_p35 = _build_related_context_section(
                         related_sources, related_budgets.get(3.5, 0), full_source=True
                     )
-                    pass3_5_findings = await self._run_finding_pass(
+                    # v6.0: Build session context from Pass 3
+                    session_ctx_p35 = self._build_session_context("pass3.5")
+                    pass3_5_findings, pass3_5_raw = await self._run_finding_pass_v6(
                         "Pass 3.5: Cross-Contract Vulnerabilities",
                         _build_pass3_5_prompt(
                             truncated_content, pass1_text, pass2_text,
                             p3_summary, cc_context_text,
                             related_context=related_ctx_p35,
+                            session_context=session_ctx_p35,
                         ),
                         pass3_5_model,
                         result,
                     )
+                    # v6.0: Store Pass 3.5 session data
+                    self._store_pass_session("pass3.5", pass3_5_raw, pass3_5_findings)
                     if pass3_5_findings:
                         p3_5_summary = self._summarize_findings(
                             pass3_5_findings, "Cross-Contract Analysis"
@@ -1571,21 +2086,27 @@ class DeepAnalysisEngine:
         related_ctx_p4 = _build_related_context_section(
             related_sources, related_budgets.get(4, 0), full_source=True
         )
+        # v6.0: Build session context from Pass 3 / 3.5
+        session_ctx_p4 = self._build_session_context("pass4")
         pass4_prompt = _build_pass4_prompt(truncated_content, pass1_text, pass2_text,
                                            pass3_findings=p3_summary,
-                                           cross_contract_context=cc_context_text)
+                                           cross_contract_context=cc_context_text,
+                                           session_context=session_ctx_p4)
         if related_ctx_p4:
             pass4_prompt += f"\n{related_ctx_p4}"
         # SAGE: inject cross-function patterns from institutional memory
         sage_pass4 = self._recall_sage_cross_function_patterns(archetype)
         if sage_pass4:
             pass4_prompt += sage_pass4
-        pass4_findings = await self._run_finding_pass(
+        pass4_findings, pass4_raw = await self._run_finding_pass_v6(
             "Pass 4: Cross-Function Interactions",
             pass4_prompt,
             pass4_model,
             result,
         )
+
+        # v6.0: Store Pass 4 session data
+        self._store_pass_session("pass4", pass4_raw, pass4_findings)
 
         p4_summary = self._summarize_findings(pass4_findings, "Cross-Function Analysis")
 
@@ -1593,9 +2114,12 @@ class DeepAnalysisEngine:
         pass5_model = _get_model_for_pass(5)
         logger.info(f"Pass 5: Using {pass5_model} (provider rotation)")
         print(f"   \U0001f4e1 Pass 5: {pass5_model}", flush=True)
+        # v6.0: Build session context from Pass 3 / 3.5 / 4
+        session_ctx_p5 = self._build_session_context("pass5")
         pass5_prompt = _build_pass5_prompt(
             truncated_content, pass1_text, pass2_text,
             p3_summary, p4_summary, exploit_text,
+            session_context=session_ctx_p5,
         )
         # Append one-liner related contract reference for Pass 5
         related_ref_p5 = _build_related_context_section(
@@ -1608,16 +2132,22 @@ class DeepAnalysisEngine:
         if calibration_note:
             pass5_prompt += calibration_note
         # SAGE FP patterns are now included in exploit_text via _recall_sage_exploit_patterns
-        pass5_findings = await self._run_finding_pass(
+        pass5_findings, pass5_raw = await self._run_finding_pass_v6(
             "Pass 5: Adversarial Modeling",
             pass5_prompt,
             pass5_model,
             result,
         )
 
+        # v6.0: Store Pass 5 session data
+        self._store_pass_session("pass5", pass5_raw, pass5_findings)
+
+        # v6.0: Resolve challenges and apply confirmation boosts
+        result.all_findings = self._resolve_challenges(result.all_findings)
+
         result.total_duration = time.time() - start_time
         total_findings = len(result.all_findings)
-        print(f"✅ Deep analysis complete: {total_findings} findings in {result.total_duration:.1f}s "
+        print(f"Deep analysis complete: {total_findings} findings in {result.total_duration:.1f}s "
               f"({len(result.pass_results)} passes)", flush=True)
 
         # SAGE: store audit learnings for future recall
@@ -1710,6 +2240,30 @@ class DeepAnalysisEngine:
             logger.info(f"{name}: 0 findings extracted from {len(response)} char response (starts: {snippet}...)")
             print(f"   ⚠️  {name}: 0 findings extracted from LLM response", flush=True)
         return findings
+
+    async def _run_finding_pass_v6(
+        self, name: str, prompt: str, model: str, result: DeepAnalysisResult,
+    ) -> tuple:
+        """v6.0: Run a finding-producing pass and return (findings, raw_response).
+
+        Same as _run_finding_pass but also returns the raw LLM response text
+        so the caller can pass it to _store_pass_session for SAGE collaborative memory.
+        """
+        response = await self._run_pass(name, prompt, model)
+        if not response:
+            return [], ""
+
+        findings = self._extract_findings(response, name)
+        # Always record the pass so pass count is accurate
+        result.pass_results.append(PassResult(name, response, findings, model))
+        if findings:
+            result.all_findings.extend(findings)
+            print(f"   {name}: {len(findings)} findings", flush=True)
+        else:
+            snippet = response[:200].replace('\n', ' ')
+            logger.info(f"{name}: 0 findings extracted from {len(response)} char response (starts: {snippet}...)")
+            print(f"   {name}: 0 findings extracted from LLM response", flush=True)
+        return findings, response
 
     def _extract_findings(self, response: str, pass_name: str) -> List[Dict[str, Any]]:
         """Extract findings from an LLM response, handling various JSON formats."""

@@ -280,6 +280,81 @@ class SageClient:
             return {}
 
     # ------------------------------------------------------------------
+    # Session Memory (v6.0 Collaborative Pipeline)
+    # ------------------------------------------------------------------
+
+    def remember_session(self, content: str, session_domain: str) -> Dict[str, Any]:
+        """Store a session record in SAGE for the collaborative audit pipeline.
+
+        Convenience wrapper that uses memory_type='observation' and high
+        confidence for intra-session records (findings, dismissals, protections).
+
+        Args:
+            content: JSON-encoded session record
+            session_domain: Domain identifier, typically 'audit-session-{content_hash}'
+
+        Returns:
+            SAGE response dict, or {} on failure.
+
+        Raises:
+            RuntimeError: If SAGE is not available (v6.0: SAGE is required).
+        """
+        return self.remember(
+            content=content,
+            domain=session_domain,
+            memory_type="observation",
+            confidence=0.90,
+            tags=["session-record"],
+        )
+
+    def recall_session(self, session_domain: str) -> List[Dict[str, Any]]:
+        """Recall all session records for a collaborative audit pipeline session.
+
+        Fetches all committed memories in the given session domain, returning
+        them in full without keyword ranking (all records are relevant).
+
+        Args:
+            session_domain: Domain identifier, typically 'audit-session-{content_hash}'
+
+        Returns:
+            List of memory dicts with 'content', 'confidence', 'memory_id' keys.
+
+        Raises:
+            RuntimeError: If SAGE is not available (v6.0: SAGE is required).
+        """
+        try:
+            sdk = self._ensure_sdk()
+            if sdk is None:
+                raise RuntimeError(
+                    "SAGE institutional memory is required. Run: docker compose up -d"
+                )
+
+            result = sdk.list_memories(
+                domain=session_domain,
+                status="committed",
+                limit=100,  # Session records are bounded by pass count
+            )
+
+            raw_memories = getattr(result, "memories", [])
+            memories = []
+            for mem in raw_memories:
+                memories.append({
+                    "content": getattr(mem, "content", ""),
+                    "confidence": getattr(mem, "confidence_score", 0.0),
+                    "domain": getattr(mem, "domain_tag", session_domain),
+                    "memory_id": getattr(mem, "memory_id", ""),
+                })
+            return memories
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            logger.warning("SAGE recall_session failed: %s", exc)
+            raise RuntimeError(
+                f"SAGE session recall failed: {exc}. "
+                "SAGE institutional memory is required. Run: docker compose up -d"
+            ) from exc
+
+    # ------------------------------------------------------------------
     # Convenience helpers
     # ------------------------------------------------------------------
 
