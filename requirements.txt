@@ -39,6 +39,9 @@ anthropic>=0.40.0
 httpx>=0.27.2
 tiktoken>=0.5.0
 
+# SAGE institutional memory
+sage-agent-sdk>=5.0.11
+
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0

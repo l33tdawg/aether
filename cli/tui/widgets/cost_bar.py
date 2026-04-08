@@ -1,13 +1,12 @@
 """
-Cost bar widget for the Aether v3.0 Textual TUI dashboard.
+Cost bar widget for the Aether v5.0 Textual TUI dashboard.
 
 Displays a single-line summary of session LLM costs broken down by provider,
-plus SAGE institutional memory connection status.
+plus SAGE institutional memory status with memory count and domain info.
 """
 
 from __future__ import annotations
 
-from rich.text import Text
 from textual.widgets import Static
 
 from core.llm_usage_tracker import LLMUsageTracker
@@ -29,7 +28,7 @@ class CostBar(Static):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._sage_status: str | None = None  # Cache to avoid hitting SAGE every second
+        self._sage_status: str | None = None
         self._sage_check_counter: int = 0
 
     def on_mount(self) -> None:
@@ -57,7 +56,6 @@ class CostBar(Static):
                 parts.append(f"[bold]{name}:[/bold] ${cost:.2f} ({calls})")
                 shown.add(key)
 
-        # Any providers not in canonical order
         for key, prov in by_provider.items():
             if key not in shown:
                 name = _PROVIDER_NAMES.get(key, key.title())
@@ -77,14 +75,33 @@ class CostBar(Static):
 
     @staticmethod
     def _get_sage_status() -> str:
-        """Return a short SAGE status string for the cost bar."""
+        """Return SAGE status with memory count and top domains."""
         try:
             from core.sage_client import SageClient
             client = SageClient.get_instance()
-            if client.health_check():
-                status = client.get_status()
-                mem_count = status.get("total_memories", "?")
-                return f"[bold]SAGE:[/bold] [green]ON[/green] ({mem_count})"
-            return "[bold]SAGE:[/bold] [dim]OFF[/dim]"
+            if not client.health_check():
+                return "[bold]SAGE:[/bold] [dim]OFF[/dim]"
+
+            status = client.get_status()
+
+            # Extract memory stats
+            memories = status.get("memories", {})
+            if isinstance(memories, dict):
+                total = memories.get("total_memories", 0)
+                domains = memories.get("by_domain", {})
+                domain_count = len(domains) if isinstance(domains, dict) else 0
+            else:
+                total = 0
+                domain_count = 0
+
+            if total and domain_count:
+                return (
+                    f"[bold]SAGE:[/bold] [green]ON[/green] "
+                    f"{total} memories / {domain_count} domains"
+                )
+            elif total:
+                return f"[bold]SAGE:[/bold] [green]ON[/green] ({total})"
+            else:
+                return "[bold]SAGE:[/bold] [green]ON[/green] (empty)"
         except Exception:
             return "[bold]SAGE:[/bold] [dim]OFF[/dim]"

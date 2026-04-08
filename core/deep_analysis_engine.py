@@ -1155,16 +1155,65 @@ class DeepAnalysisEngine:
             logger.debug("SAGE exploit pattern recall failed: %s", exc)
             return ""
 
-    def _recall_sage_for_pass(self, archetype: ArchetypeResult, pass_num: int) -> str:
-        """Recall SAGE memories specific to a pipeline pass.
+    def _recall_sage_cross_function_patterns(self, archetype: ArchetypeResult) -> str:
+        """Recall cross-function vulnerability patterns from SAGE for Pass 4.
 
-        Note: Pass 3 and 5 now use dedicated methods (_recall_sage_checklist
-        and _recall_sage_exploit_patterns). This method handles supplementary
-        recall for edge cases.
+        Replaces hardcoded examples with institutional knowledge about
+        reentrancy chains, flash loan sequences, and state dependency bugs.
         """
-        # Pass 3 and 5 primary recall is handled by dedicated methods now
-        # This remains for any additional pass-specific context
-        return ""
+        try:
+            from core.sage_client import SageClient
+            client = SageClient.get_instance()
+            if not client.health_check():
+                return ""
+
+            arch_name = archetype.primary.value
+            all_memories: list[dict] = []
+
+            # Cross-function patterns
+            mems = client.recall(
+                query="cross-function reentrancy state dependency flash loan sequence",
+                domain="exploit-patterns",
+                top_k=self._SAGE_TOP_K,
+            )
+            all_memories.extend(mems)
+
+            # Audit methodology for cross-function analysis
+            method_mems = client.recall(
+                query="cross-function state analysis methodology",
+                domain="audit-methodology",
+                top_k=5,
+            )
+            all_memories.extend(method_mems)
+
+            if not all_memories:
+                return ""
+
+            lines = []
+            seen: set[str] = set()
+            for m in all_memories:
+                content = m.get("content", "")
+                if content and content[:80] not in seen:
+                    seen.add(content[:80])
+                    lines.append(f"- {content}")
+
+            if not lines:
+                return ""
+
+            text = (
+                "\n\n## Cross-Function Vulnerability Patterns (from SAGE institutional memory)\n"
+                "Known patterns from historical audits and exploits:\n\n"
+                + "\n".join(lines) + "\n"
+            )
+
+            if len(text) > self._SAGE_BUDGET:
+                text = text[:self._SAGE_BUDGET] + "\n[...truncated to budget]\n"
+
+            print(f"   🧠 SAGE cross-function: {len(lines)} patterns ({len(text)} chars)", flush=True)
+            return text
+        except Exception as exc:
+            logger.debug("SAGE cross-function recall failed: %s", exc)
+            return ""
 
     def _store_audit_learnings(
         self,
@@ -1391,6 +1440,9 @@ class DeepAnalysisEngine:
                                            related_context=related_ctx_p1)
         if ast_context:
             pass1_prompt += f"\n\n{ast_context}"
+        # SAGE: inject audit history for this archetype into Pass 1
+        if sage_context:
+            pass1_prompt += sage_context
         pass1_text = await self._run_pass(
             "Pass 1: Protocol Understanding",
             pass1_prompt,
@@ -1524,6 +1576,10 @@ class DeepAnalysisEngine:
                                            cross_contract_context=cc_context_text)
         if related_ctx_p4:
             pass4_prompt += f"\n{related_ctx_p4}"
+        # SAGE: inject cross-function patterns from institutional memory
+        sage_pass4 = self._recall_sage_cross_function_patterns(archetype)
+        if sage_pass4:
+            pass4_prompt += sage_pass4
         pass4_findings = await self._run_finding_pass(
             "Pass 4: Cross-Function Interactions",
             pass4_prompt,

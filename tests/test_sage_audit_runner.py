@@ -180,7 +180,7 @@ class TestCostBarSageStatus(unittest.TestCase):
     def test_sage_online_status(self, mock_get_instance):
         mock_client = MagicMock()
         mock_client.health_check.return_value = True
-        mock_client.get_status.return_value = {"total_memories": 612}
+        mock_client.get_status.return_value = {"memories": {"total_memories": 612, "by_domain": {"exploit-patterns": 75, "historical-exploits": 20}}}
         mock_get_instance.return_value = mock_client
 
         from cli.tui.widgets.cost_bar import CostBar

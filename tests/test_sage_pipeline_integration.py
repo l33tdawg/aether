@@ -149,6 +149,48 @@ class TestRecallSageForPass(unittest.TestCase):
         self.assertEqual(ctx, "")
 
 
+class TestRecallSageCrossFunctionPatterns(unittest.TestCase):
+    """Tests for _recall_sage_cross_function_patterns() (Pass 4)."""
+
+    def _make_engine(self):
+        from core.deep_analysis_engine import DeepAnalysisEngine
+        engine = DeepAnalysisEngine.__new__(DeepAnalysisEngine)
+        engine.llm = MagicMock()
+        engine._cache = {}
+        engine.archetype_detector = MagicMock()
+        engine.exploit_kb = MagicMock()
+        engine._severity_calibration = {}
+        return engine
+
+    @patch("core.sage_client.SageClient.get_instance")
+    def test_returns_cross_function_patterns(self, mock_get_instance):
+        mock_client = MagicMock()
+        mock_client.health_check.return_value = True
+        mock_client.recall.return_value = [
+            {"content": "Read-only reentrancy in Balancer pools via rate provider callback"},
+            {"content": "Cross-function state analysis methodology: trace shared variables"},
+        ]
+        mock_get_instance.return_value = mock_client
+
+        engine = self._make_engine()
+        archetype = ArchetypeResult(primary=ProtocolArchetype.DEX_AMM, confidence=0.9)
+        ctx = engine._recall_sage_cross_function_patterns(archetype)
+
+        self.assertIn("Cross-Function Vulnerability Patterns", ctx)
+        self.assertIn("reentrancy", ctx.lower())
+
+    @patch("core.sage_client.SageClient.get_instance")
+    def test_empty_when_sage_down(self, mock_get_instance):
+        mock_client = MagicMock()
+        mock_client.health_check.return_value = False
+        mock_get_instance.return_value = mock_client
+
+        engine = self._make_engine()
+        archetype = ArchetypeResult(primary=ProtocolArchetype.LENDING_POOL, confidence=0.8)
+        ctx = engine._recall_sage_cross_function_patterns(archetype)
+        self.assertEqual(ctx, "")
+
+
 class TestStoreAuditLearnings(unittest.TestCase):
     """Tests for _store_audit_learnings()."""
 
