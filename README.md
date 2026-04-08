@@ -1,8 +1,20 @@
-# Aether v5.0 — Smart Contract Security Analysis Framework
+# Aether v6.0 — Smart Contract Security Analysis Framework
 
-**Version 5.0** | [What's New in v5.0](#whats-new-in-v50) | [Changelog](#changelog)
+**Version 6.0** | [What's New in v6.0](#whats-new-in-v60) | [Changelog](#changelog)
 
-Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines Solidity AST parsing, taint analysis, control flow graph analysis, cross-contract analysis, Halmos symbolic execution, 180+ pattern-based static detectors, a structured deep analysis LLM pipeline (GPT/Gemini/Claude), 14 protocol archetypes, a 75+ exploit knowledge base, ML-calibrated detection, token quirks detection, invariant extraction, related contract context resolution, **SAGE institutional memory**, and advanced context-aware filtering into a single persistent full-screen TUI.
+Aether is a Python-based framework for analyzing Solidity smart contracts, generating vulnerability findings, producing Foundry-based proof-of-concept (PoC) tests, and validating exploits on mainnet forks. It combines Solidity AST parsing, taint analysis, control flow graph analysis, cross-contract analysis, Halmos symbolic execution, 180+ pattern-based static detectors, a **collaborative multi-agent LLM pipeline** (GPT/Gemini/Claude) with shared [SAGE](https://github.com/l33tdawg/sage) institutional memory, 14 protocol archetypes, a 75+ exploit knowledge base, ML-calibrated detection, token quirks detection, invariant extraction, related contract context resolution, and advanced context-aware filtering into a single persistent full-screen TUI.
+
+## What's New in v6.0
+
+**Collaborative Agent Pipeline** — The deep analysis pipeline transforms from 5 independent passes to 5 collaborative agents sharing structured knowledge through SAGE institutional memory:
+
+- **Shared session memory** — Each pass stores findings, dismissals, and verified protections in a per-audit SAGE session. Later passes receive "Prior Pass Intelligence" instead of flat text summaries.
+- **Dismissals as first-class records** — When Pass 3 dismisses a concern (e.g., "reentrancy protected by nonReentrant modifier"), Pass 5 won't re-flag it. This directly eliminates the #1 source of duplicate findings.
+- **Challenge mechanism** — Later passes can override prior dismissals, but must provide NEW evidence. "Pass 3 didn't see the callback path through this other function" is valid. "I disagree" is not.
+- **Cross-pass confirmation** — When multiple passes independently confirm a finding, confidence gets a 15% boost. Cross-confirmed findings are prioritized in reports.
+- **SAGE required** — Institutional memory is now required, not optional. No SAGE = no audit. Run `docker compose up -d` to start.
+
+---
 
 ## What's New in v5.0
 
