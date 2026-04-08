@@ -243,7 +243,7 @@ class AetherCLI:
             return None
 
         # Try Base first (most likely for Basescan addresses), then other L2s
-        networks_to_try = ["base", "arbitrum", "optimism", "polygon", "bsc", "avalanche"]
+        networks_to_try = ["base", "arbitrum", "optimism", "polygon", "bsc", "avalanche", "monad"]
         for network in networks_to_try:
             print(f"🔍 Trying {network}...")
             self.etherscan_fetcher.set_network(network)

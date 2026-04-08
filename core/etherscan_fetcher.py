@@ -101,7 +101,15 @@ class EtherscanFetcher:
             'api_url': 'https://api.etherscan.io/v2/api',
             'explorer_url': 'https://ftmscan.com',
             'test_address': '0x04068da6c83afcfa0e13ba15a6696662335d5b75'  # USDC on Fantom
-        }
+        },
+        'monad': {
+            'name': 'Monad',
+            'chain_id': 10143,
+            'api_url': 'https://api.monadscan.com/api',
+            'explorer_url': 'https://monadscan.com',
+            'test_address': '0x4b8057e5cdFAf53222580DFAc54f327fE11C2078',
+            'separate_api_key': True,  # Requires separate Monadscan API key
+        },
     }
 
     # Non-EVM chain support (for future expansion)
@@ -356,10 +364,15 @@ class EtherscanFetcher:
         self.console.print(f"[cyan]🔍 Fetching contract source code for {address} on {self.SUPPORTED_NETWORKS[target_network]['name']}...[/cyan]")
 
         # Set base URL for the target network
-        base_url = self.SUPPORTED_NETWORKS[target_network]['api_url']
-        chain_id = self.SUPPORTED_NETWORKS[target_network]['chain_id']
+        network_info = self.SUPPORTED_NETWORKS[target_network]
+        base_url = network_info['api_url']
+        chain_id = network_info['chain_id']
 
-        url = f"{base_url}?chainid={chain_id}&module=contract&action=getsourcecode&address={address}&apikey={self.api_key}"
+        # Networks with separate APIs (e.g. Monadscan) use V1 format (no chainid)
+        if network_info.get('separate_api_key'):
+            url = f"{base_url}?module=contract&action=getsourcecode&address={address}&apikey={self.api_key}"
+        else:
+            url = f"{base_url}?chainid={chain_id}&module=contract&action=getsourcecode&address={address}&apikey={self.api_key}"
 
         # Rate limiting
         time.sleep(self.request_delay)
@@ -881,9 +894,13 @@ solc = "{solc_version_str}"
         if not self.api_key:
             return {'error': 'Etherscan API key not configured'}
 
-        chain_id = self.SUPPORTED_NETWORKS[self.current_network]['chain_id']
-        base_url = self.SUPPORTED_NETWORKS[self.current_network]['api_url']
-        url = f"{base_url}?chainid={chain_id}&module=contract&action=getsourcecode&address={address}&apikey={self.api_key}"
+        net = self.SUPPORTED_NETWORKS[self.current_network]
+        chain_id = net['chain_id']
+        base_url = net['api_url']
+        if net.get('separate_api_key'):
+            url = f"{base_url}?module=contract&action=getsourcecode&address={address}&apikey={self.api_key}"
+        else:
+            url = f"{base_url}?chainid={chain_id}&module=contract&action=getsourcecode&address={address}&apikey={self.api_key}"
 
         try:
             response = requests.get(url, timeout=10)

@@ -311,6 +311,21 @@ class TestEtherscanFetcherNetworks(unittest.TestCase):
         self.assertIn("polygon", networks)
         self.assertIn("arbitrum", networks)
         self.assertIn("base", networks)
+        self.assertIn("monad", networks)
+
+    def test_set_network_monad(self):
+        result = self.fetcher.set_network("monad")
+        self.assertTrue(result)
+        self.assertEqual(self.fetcher.current_network, "monad")
+        self.assertIn("monadscan", self.fetcher.base_url)
+
+    def test_monad_uses_v1_api_format(self):
+        """Monad uses its own API (V1 format, no chainid param)."""
+        self.fetcher.set_network("monad")
+        net = self.fetcher.SUPPORTED_NETWORKS["monad"]
+        self.assertTrue(net.get("separate_api_key"))
+        self.assertIn("monadscan", net["api_url"])
+        self.assertNotIn("etherscan", net["api_url"])
 
     def test_get_non_evm_networks(self):
         networks = self.fetcher.get_non_evm_networks()
@@ -498,6 +513,21 @@ class TestEtherscanFetcherFetchContract(unittest.TestCase):
         called_url = mock_get.call_args[0][0]
         self.assertIn("etherscan.io", called_url)
         self.assertIn("chainid=137", called_url)
+
+    @patch('core.etherscan_fetcher.requests.get')
+    @patch('core.etherscan_fetcher.time.sleep')
+    def test_fetch_monad_uses_v1_format(self, mock_sleep, mock_get):
+        """Monad uses V1 API format (no chainid param)."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = ETHERSCAN_SUCCESS_RESPONSE
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        self.fetcher.fetch_contract_source(VALID_ADDRESS, network="monad")
+
+        called_url = mock_get.call_args[0][0]
+        self.assertIn("monadscan.com", called_url)
+        self.assertNotIn("chainid=", called_url)
 
     @patch('core.etherscan_fetcher.requests.get')
     @patch('core.etherscan_fetcher.time.sleep')
