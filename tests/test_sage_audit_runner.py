@@ -58,12 +58,15 @@ class TestValidationPipelineSageIntegration(unittest.TestCase):
 
     @patch("core.sage_feedback.SageFeedbackManager")
     def test_sage_fp_check_matches_known_pattern(self, MockFM):
-        """Known FP pattern from SAGE should filter matching findings."""
+        """A verified FP pattern from SAGE should filter matching findings."""
         mock_fm = MagicMock()
+        # Pattern was promoted via mark_fp_verified — has fp-verified tag and
+        # carries the canonical vulnerability_type token in the tag block.
         mock_fm.get_historical_fp_patterns.return_value = [
-            "False positive: gas_optimization flagged in vault_erc4626 contracts "
-            "but was not exploitable. Reason: informational finding only. "
-            "Pattern: gas usage could be reduced in loop iteration"
+            "Verified false positive pattern: gas_optimization in vault_erc4626 "
+            "contracts. Gas usage could be reduced inside loop iteration when "
+            "reading getBalance shares from storage; informational only "
+            "[tags: fp-verified, gas_optimization, vault_erc4626]"
         ]
         MockFM.return_value = mock_fm
 
@@ -73,7 +76,7 @@ class TestValidationPipelineSageIntegration(unittest.TestCase):
 
         vuln = {
             "vulnerability_type": "gas_optimization",
-            "description": "Gas usage could be reduced in the loop iteration of vault function",
+            "description": "Gas usage could be reduced inside loop iteration when reading getBalance shares from storage in vault function",
             "severity": "low",
         }
         result = pipeline._check_sage_known_fp(vuln)
@@ -81,17 +84,59 @@ class TestValidationPipelineSageIntegration(unittest.TestCase):
         self.assertTrue(result.is_false_positive)
         self.assertEqual(result.stage_name, "sage_known_false_positive")
 
+    def test_sage_fp_check_rejects_unverified_pattern(self):
+        """A pattern without the fp-verified tag must NOT trigger suppression,
+        even if a caller injects it directly into _sage_fp_patterns."""
+        pipeline = self._make_pipeline()
+        pipeline._sage_fp_patterns = [
+            "False positive: gas_optimization flagged in vault contracts but "
+            "was not exploitable. Pattern: gas usage could be reduced in loop "
+            "iteration [tags: false-positive, gas_optimization, vault_erc4626]"
+        ]
+
+        vuln = {
+            "vulnerability_type": "gas_optimization",
+            "description": "Gas usage could be reduced in the loop iteration of vault function",
+            "severity": "low",
+        }
+        result = pipeline._check_sage_known_fp(vuln)
+        self.assertIsNone(result)
+
     def test_sage_fp_check_no_match(self):
         """Non-matching vuln should not be filtered."""
         pipeline = self._make_pipeline()
         pipeline._sage_fp_patterns = [
-            "False positive: gas_optimization in some context"
+            "Verified false positive pattern: gas_optimization in some context "
+            "[tags: fp-verified, gas_optimization]"
         ]
 
         vuln = {
             "vulnerability_type": "reentrancy",
             "description": "Cross-function reentrancy in withdraw()",
             "severity": "critical",
+        }
+        result = pipeline._check_sage_known_fp(vuln)
+        self.assertIsNone(result)
+
+    def test_sage_fp_check_substring_type_does_not_match(self):
+        """Substring vuln_type matches must be rejected (e.g. a pattern tagged
+        for ``overflow`` must not silently suppress ``integer_overflow``)."""
+        pipeline = self._make_pipeline()
+        pipeline._sage_fp_patterns = [
+            "Verified false positive pattern: overflow guard pattern protects "
+            "from arithmetic issues even when SafeMath is absent because the "
+            "value is bounded by an earlier require statement in the function "
+            "[tags: fp-verified, overflow]"
+        ]
+
+        vuln = {
+            "vulnerability_type": "integer_overflow",
+            "description": (
+                "Arithmetic operation may overflow guard pattern protects from "
+                "issues even when SafeMath is absent because the value is "
+                "bounded by an earlier require statement in the function"
+            ),
+            "severity": "high",
         }
         result = pipeline._check_sage_known_fp(vuln)
         self.assertIsNone(result)

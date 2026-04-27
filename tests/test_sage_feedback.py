@@ -173,19 +173,47 @@ class TestGetHistoricalFPPatterns(unittest.TestCase):
         self.mock_client = MagicMock()
         self.fm = SageFeedbackManager(sage_client=self.mock_client)
 
-    def test_returns_content_list(self):
+    def test_returns_only_verified_patterns(self):
+        # Untagged and merely "false-positive"-tagged entries are NOT eligible
+        # for Stage -1 auto-suppression — only fp-verified ones are.
         self.mock_client.recall.return_value = [
             {"content": "FP pattern A"},
-            {"content": "FP pattern B"},
+            {"content": "FP pattern B [tags: false-positive, gas_optimization]"},
+            {"content": "FP pattern C [tags: fp-verified, reentrancy]"},
         ]
         result = self.fm.get_historical_fp_patterns("lending_pool")
-        self.assertEqual(len(result), 2)
-        self.assertIn("FP pattern A", result)
+        self.assertEqual(len(result), 1)
+        self.assertIn("FP pattern C [tags: fp-verified, reentrancy]", result)
 
     def test_empty_when_sage_down(self):
         self.mock_client.recall.side_effect = Exception("down")
         result = self.fm.get_historical_fp_patterns("lending_pool")
         self.assertEqual(result, [])
+
+    def test_unverified_recordings_do_not_poison_recall(self):
+        # Routine record_finding_outcome(rejected) writes WITHOUT fp-verified.
+        # get_historical_fp_patterns must filter those out so an untrusted
+        # writer cannot auto-suppress future findings via Stage -1.
+        self.mock_client.recall.return_value = [
+            {"content": "False positive: reentrancy in foo. Pattern: ... [tags: false-positive, reentrancy, lending_pool]"},
+        ]
+        result = self.fm.get_historical_fp_patterns("lending_pool")
+        self.assertEqual(result, [])
+
+    def test_mark_fp_verified_writes_with_tag(self):
+        self.mock_client.remember.return_value = {"status": "proposed"}
+        self.fm.mark_fp_verified(
+            pattern="rounding within 1 wei dust threshold",
+            vulnerability_type="precision_rounding",
+            archetype="vault_erc4626",
+            reason="not exploitable",
+        )
+        kwargs = self.mock_client.remember.call_args.kwargs
+        self.assertEqual(kwargs["domain"], "false-positives")
+        self.assertEqual(kwargs["memory_type"], "fact")
+        self.assertGreaterEqual(kwargs["confidence"], 0.95)
+        self.assertIn("fp-verified", kwargs["tags"])
+        self.assertIn("precision_rounding", kwargs["tags"])
 
 
 class TestGetDetectorRecommendations(unittest.TestCase):
@@ -243,9 +271,10 @@ class TestSageFeedbackIntegration(unittest.TestCase):
             {"filtered": 5, "total_raw": 6},
         )
 
-        # 3. Recall FP patterns for next audit
+        # 3. Recall FP patterns for next audit. The mocked recall return is
+        #    untagged so it's not fp-verified — Stage -1 must NOT pick it up.
         fps = fm.get_historical_fp_patterns("lending_pool")
-        self.assertEqual(len(fps), 1)
+        self.assertEqual(fps, [])
 
         # Verify total remember calls: 2 outcomes + 1 completion = 3
         self.assertEqual(mock_client.remember.call_count, 3)

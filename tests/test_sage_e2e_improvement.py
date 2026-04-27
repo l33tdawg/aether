@@ -142,8 +142,13 @@ class InMemorySageClient:
     def remember(self, content: str, domain: str = "general",
                  memory_type: str = "observation", confidence: float = 0.8,
                  tags: Optional[List[str]] = None) -> Dict:
+        # Mirror SageClient.remember: tags are baked into content as
+        # "... [tags: t1, t2, ...]" so that recall surfaces them too.
+        stored = content
+        if tags:
+            stored = f"{content} [tags: {', '.join(tags)}]"
         mem = {
-            "content": content,
+            "content": stored,
             "domain": domain,
             "type": memory_type,
             "confidence": confidence,
@@ -189,7 +194,8 @@ class TestFalsePositiveReduction(unittest.TestCase):
     """
 
     def test_fp_reduction_lending_pool(self):
-        """Second audit of lending pool should have fewer FPs than first."""
+        """Second audit of lending pool should have fewer FPs after an
+        auditor explicitly promotes a pattern via mark_fp_verified()."""
         sage = InMemorySageClient()
 
         # --- Audit 1: No SAGE context (baseline) ---
@@ -201,7 +207,7 @@ class TestFalsePositiveReduction(unittest.TestCase):
              "description": "Potential reentrancy in borrow() function through call"},
             # False positives
             {"vulnerability_type": "gas_optimization", "severity": "low",
-             "description": "Gas usage could be reduced in getBalance view function loop iteration"},
+             "description": "Gas usage could be reduced in getBalance view function loop iteration storage reading"},
             {"vulnerability_type": "centralization_risk", "severity": "medium",
              "description": "Admin can pause contract, centralization risk in lending pool protocol"},
         ]
@@ -210,7 +216,7 @@ class TestFalsePositiveReduction(unittest.TestCase):
                         if f["vulnerability_type"] in ("gas_optimization", "centralization_risk")]
         self.assertEqual(len(baseline_fps), 2, "Baseline should have 2 FPs")
 
-        # --- Record FP outcomes into SAGE ---
+        # --- Record FP outcomes into SAGE (audit history, NOT auto-suppress) ---
         from core.sage_feedback import SageFeedbackManager
         fm = SageFeedbackManager(sage_client=sage)
 
@@ -224,40 +230,47 @@ class TestFalsePositiveReduction(unittest.TestCase):
                 },
             )
 
-        # Verify SAGE now has FP memories
-        fp_memories = sage.recall("false positive", domain="false-positives")
-        self.assertGreater(len(fp_memories), 0, "SAGE should have FP memories")
+        # Routine outcomes alone must NOT poison Stage -1.
+        unverified_fps = fm.get_historical_fp_patterns("lending_pool")
+        self.assertEqual(unverified_fps, [],
+                         "Unverified FP outcomes must not be eligible for Stage -1")
+
+        # --- Auditor explicitly promotes the gas_optimization pattern ---
+        fm.mark_fp_verified(
+            pattern=(
+                "Gas usage could be reduced in getBalance view function loop "
+                "iteration storage reading"
+            ),
+            vulnerability_type="gas_optimization",
+            archetype="lending_pool",
+            reason="informational only, not exploitable",
+        )
 
         # --- Audit 2: With SAGE context ---
-        # Create validation pipeline with SAGE FP patterns
         pipeline = ValidationPipeline(
             project_path=Path("/tmp"),
             contract_code=LENDING_POOL_CONTRACT,
         )
-        # Inject SAGE FP patterns
         pipeline._sage_fp_patterns = fm.get_historical_fp_patterns("lending_pool")
-        self.assertGreater(len(pipeline._sage_fp_patterns), 0,
-                           "Should have recalled FP patterns")
+        self.assertEqual(len(pipeline._sage_fp_patterns), 1,
+                         "Only the explicitly-verified pattern should be recalled")
 
-        # Run FP check on same findings
         sage_filtered_fps = 0
         for finding in baseline_findings:
             result = pipeline._check_sage_known_fp(finding)
             if result and result.is_false_positive:
                 sage_filtered_fps += 1
 
-        # MARKED IMPROVEMENT: SAGE should filter at least 1 FP
-        self.assertGreater(sage_filtered_fps, 0,
-                           "SAGE should filter at least 1 known FP pattern")
-        self.assertGreater(sage_filtered_fps, 0,
-                           f"Expected FP reduction, got {sage_filtered_fps} filtered")
+        self.assertEqual(sage_filtered_fps, 1,
+                         "Only the verified gas_optimization pattern should suppress")
 
     def test_fp_reduction_across_archetypes(self):
-        """FP patterns learned from vault audits should help future vault audits."""
+        """A verified FP pattern recalled across audits — but only after
+        explicit promotion. Routine record_finding_outcome must not."""
         sage = InMemorySageClient()
         fm = SageFeedbackManager(sage_client=sage)
 
-        # Simulate first vault audit — record common FP
+        # Routine recording: audit history only.
         fm.record_finding_outcome(
             finding={
                 "vulnerability_type": "precision_rounding",
@@ -267,12 +280,20 @@ class TestFalsePositiveReduction(unittest.TestCase):
             outcome="rejected",
             context={"archetype": "vault_erc4626", "reason": "dust amount, not exploitable"},
         )
+        self.assertEqual(fm.get_historical_fp_patterns("vault_erc4626"), [],
+                         "Audit-history outcome must not be eligible without promotion")
 
-        # Recall should return the FP pattern
+        # Auditor promotes it.
+        fm.mark_fp_verified(
+            pattern="Rounding error within acceptable dust threshold of 1 wei",
+            vulnerability_type="precision_rounding",
+            archetype="vault_erc4626",
+            reason="dust amount, not exploitable",
+        )
         fps = fm.get_historical_fp_patterns("vault_erc4626")
-        self.assertGreater(len(fps), 0)
-        # Content should mention precision_rounding
-        self.assertTrue(any("precision_rounding" in fp.lower() for fp in fps))
+        self.assertEqual(len(fps), 1)
+        self.assertIn("precision_rounding", fps[0].lower())
+        self.assertIn("fp-verified", fps[0].lower())
 
 
 class TestDetectorAccuracyImprovement(unittest.TestCase):
@@ -429,7 +450,9 @@ class TestFullPipelineWithSage(unittest.TestCase):
     """Full pipeline integration: validation pipeline + SAGE together."""
 
     def test_validation_pipeline_with_sage_vs_without(self):
-        """Pipeline with SAGE should filter more FPs than without."""
+        """Pipeline with a verified SAGE FP pattern should filter more FPs
+        than the baseline. Patterns must be promoted via mark_fp_verified()
+        — routine record_finding_outcome must not auto-suppress."""
         # --- Without SAGE ---
         pipeline_no_sage = ValidationPipeline(
             project_path=Path("/tmp"),
@@ -439,7 +462,7 @@ class TestFullPipelineWithSage(unittest.TestCase):
 
         findings = [
             {"vulnerability_type": "gas_optimization", "severity": "low",
-             "description": "Gas usage could be reduced in getBalance view function loop iteration"},
+             "description": "Gas usage could be reduced in getBalance view function loop iteration storage reading"},
         ]
 
         no_sage_filtered = 0
@@ -448,7 +471,7 @@ class TestFullPipelineWithSage(unittest.TestCase):
             if result and result.is_false_positive:
                 no_sage_filtered += 1
 
-        # --- With SAGE (seeded with FP patterns) ---
+        # --- With SAGE: routine record only (audit history) ---
         sage = InMemorySageClient()
         fm = SageFeedbackManager(sage_client=sage)
         fm.record_finding_outcome(
@@ -458,21 +481,41 @@ class TestFullPipelineWithSage(unittest.TestCase):
             {"archetype": "lending_pool", "reason": "informational only"},
         )
 
+        pipeline_unverified = ValidationPipeline(
+            project_path=Path("/tmp"),
+            contract_code=LENDING_POOL_CONTRACT,
+        )
+        pipeline_unverified._sage_fp_patterns = fm.get_historical_fp_patterns("lending_pool")
+        unverified_filtered = sum(
+            1 for f in findings
+            if pipeline_unverified._check_sage_known_fp(f) is not None
+        )
+        self.assertEqual(unverified_filtered, no_sage_filtered,
+                         "Routine FP outcomes must not auto-suppress findings")
+
+        # --- With SAGE + explicit promotion ---
+        fm.mark_fp_verified(
+            pattern=(
+                "Gas usage could be reduced in getBalance view function loop "
+                "iteration storage reading lending pool"
+            ),
+            vulnerability_type="gas_optimization",
+            archetype="lending_pool",
+            reason="informational only",
+        )
         pipeline_with_sage = ValidationPipeline(
             project_path=Path("/tmp"),
             contract_code=LENDING_POOL_CONTRACT,
         )
         pipeline_with_sage._sage_fp_patterns = fm.get_historical_fp_patterns("lending_pool")
+        sage_filtered = sum(
+            1 for f in findings
+            if (r := pipeline_with_sage._check_sage_known_fp(f))
+            and r.is_false_positive
+        )
 
-        sage_filtered = 0
-        for f in findings:
-            result = pipeline_with_sage._check_sage_known_fp(f)
-            if result and result.is_false_positive:
-                sage_filtered += 1
-
-        # MARKED IMPROVEMENT
         self.assertGreater(sage_filtered, no_sage_filtered,
-                           "SAGE pipeline should filter more FPs than baseline")
+                           "Promoted FP pattern should filter more than baseline")
 
 
 class TestSageMemoryQuality(unittest.TestCase):

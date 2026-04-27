@@ -190,8 +190,18 @@ class SageFeedbackManager:
     # Recall helpers (for pipeline integration)
     # ------------------------------------------------------------------
 
+    # Tag that gates a FP memory for use as an auto-suppression pattern.
+    # Routine record_finding_outcome() entries do NOT get this tag — they are
+    # audit history. Only memories an auditor has explicitly promoted with
+    # mark_fp_verified() are eligible to suppress future findings at Stage -1.
+    _FP_VERIFIED_TAG = "fp-verified"
+
     def get_historical_fp_patterns(self, archetype: str) -> List[str]:
-        """Recall known false positive patterns for an archetype.
+        """Recall verified false positive patterns for an archetype.
+
+        Only returns memories tagged ``fp-verified`` — an explicit promotion
+        gate that prevents arbitrary writes to the false-positives domain
+        from auto-suppressing real findings via Stage -1.
 
         Returns:
             List of human-readable FP pattern strings.
@@ -200,11 +210,53 @@ class SageFeedbackManager:
             memories = self._client.recall(
                 query=f"false positive patterns for {archetype}",
                 domain="false-positives",
-                top_k=10,
+                top_k=20,
             )
-            return [m.get("content", "") for m in memories if m.get("content")]
         except Exception:
             return []
+
+        verified: List[str] = []
+        marker = f"[tags:"
+        for m in memories:
+            content = m.get("content", "")
+            if not content:
+                continue
+            # Tags are stored inline as "... [tags: t1, t2, ...]" by SageClient.remember.
+            idx = content.rfind(marker)
+            if idx == -1:
+                continue
+            tag_blob = content[idx:].lower()
+            if self._FP_VERIFIED_TAG in tag_blob:
+                verified.append(content)
+        return verified
+
+    def mark_fp_verified(
+        self,
+        pattern: str,
+        vulnerability_type: str,
+        archetype: str = "general",
+        reason: str = "",
+    ) -> None:
+        """Promote a false-positive pattern so Stage -1 will auto-suppress matches.
+
+        This is the explicit gate that lets a memory affect future audit
+        verdicts. Use only for patterns an auditor has manually confirmed are
+        consistently non-exploitable. Stored as a fact (not observation) so
+        the consistency validator enforces a stricter confidence floor.
+        """
+        content = (
+            f"Verified false positive pattern: {vulnerability_type} in "
+            f"{archetype} contracts. {pattern}"
+        )
+        if reason:
+            content += f" Reason: {reason}"
+        self._safe_remember(
+            content=content,
+            domain="false-positives",
+            memory_type="fact",
+            confidence=0.95,
+            tags=[self._FP_VERIFIED_TAG, vulnerability_type, archetype],
+        )
 
     def get_detector_recommendations(self, archetype: str) -> Dict[str, List[str]]:
         """Recall which detectors work well/poorly for an archetype.

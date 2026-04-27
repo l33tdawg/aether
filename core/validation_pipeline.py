@@ -1437,11 +1437,31 @@ class ValidationPipeline:
         
         return i
     
-    def _check_sage_known_fp(self, vuln: Dict) -> Optional[ValidationStage]:
-        """Check if this finding matches a known false positive pattern from SAGE.
+    # Words ignored when computing description/pattern overlap (too generic to
+    # signal a real match — three of these in common is a coincidence, not a
+    # match).
+    _SAGE_FP_STOPWORDS = frozenset({
+        "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
+        "from", "has", "have", "in", "into", "is", "it", "of", "on", "or",
+        "pattern", "patterns", "the", "this", "that", "to", "was", "were",
+        "with", "false", "positive", "vulnerability", "finding", "contract",
+        "contracts", "function", "code", "value", "values",
+    })
 
-        Lazy-loads FP patterns once per pipeline instance. Matches by
-        vulnerability type + description keywords against recalled patterns.
+    @staticmethod
+    def _sage_fp_normalize_type(vt: str) -> str:
+        """Canonicalize a vulnerability_type for exact comparison."""
+        return vt.lower().replace("-", "_").strip()
+
+    def _check_sage_known_fp(self, vuln: Dict) -> Optional[ValidationStage]:
+        """Check if this finding matches a verified false positive pattern from SAGE.
+
+        Defense-in-depth against memory poisoning of the suppression channel:
+        - Recall is gated by the ``fp-verified`` tag (see SageFeedbackManager).
+        - Vulnerability type must match a tagged token exactly (no substring).
+        - Description overlap is computed on content words (stopwords removed)
+          and requires both an absolute count AND a ratio threshold, so short
+          patterns can't sweep up loosely related findings.
         """
         try:
             if self._sage_fp_patterns is None:
@@ -1456,24 +1476,60 @@ class ValidationPipeline:
             if not self._sage_fp_patterns:
                 return None
 
-            vuln_type = vuln.get("vulnerability_type", "").lower()
+            vuln_type = self._sage_fp_normalize_type(vuln.get("vulnerability_type", ""))
+            if not vuln_type:
+                return None
             description = vuln.get("description", "").lower()
+            desc_words = {
+                w for w in re.split(r"\W+", description)
+                if len(w) >= 4 and w not in self._SAGE_FP_STOPWORDS
+            }
 
             for pattern in self._sage_fp_patterns:
                 pattern_lower = pattern.lower()
-                # Match if the vuln type appears in a known FP pattern
-                if vuln_type and vuln_type in pattern_lower:
-                    # Additional keyword overlap check to avoid false matches
-                    desc_words = set(description.split())
-                    pattern_words = set(pattern_lower.split())
-                    overlap = desc_words & pattern_words
-                    if len(overlap) >= 3:
-                        return ValidationStage(
-                            stage_name="sage_known_false_positive",
-                            is_false_positive=True,
-                            confidence=0.85,
-                            reasoning=f"Matches known SAGE false positive pattern: {pattern[:200]}",
-                        )
+
+                # Require exact vuln_type token match AND the fp-verified
+                # gate inside the tag block of the recalled memory.
+                # mark_fp_verified writes both as tags. Substring matching
+                # here is what allowed "overflow" in a pattern to swallow
+                # "integer_overflow", "stack_overflow", etc. The
+                # fp-verified check is also enforced upstream in
+                # SageFeedbackManager.get_historical_fp_patterns; we
+                # re-check here as defense-in-depth so callers that poke
+                # patterns into _sage_fp_patterns directly cannot bypass
+                # the gate.
+                tag_idx = pattern_lower.rfind("[tags:")
+                tag_blob = pattern_lower[tag_idx:] if tag_idx != -1 else ""
+                tag_tokens = {
+                    self._sage_fp_normalize_type(t)
+                    for t in re.split(r"[\s,\[\]:]+", tag_blob)
+                    if t
+                }
+                if vuln_type not in tag_tokens:
+                    continue
+                # _sage_fp_normalize_type turns "fp-verified" into
+                # "fp_verified", so we compare against the normalized form.
+                if "fp_verified" not in tag_tokens:
+                    continue
+
+                pattern_words = {
+                    w for w in re.split(r"\W+", pattern_lower)
+                    if len(w) >= 4 and w not in self._SAGE_FP_STOPWORDS
+                }
+                if not pattern_words or not desc_words:
+                    continue
+
+                overlap = desc_words & pattern_words
+                # Require a meaningful absolute overlap AND a ratio of either
+                # side ≥ 0.4 so short blurbs can't dominate.
+                shorter = min(len(desc_words), len(pattern_words))
+                if len(overlap) >= 5 and shorter > 0 and len(overlap) / shorter >= 0.4:
+                    return ValidationStage(
+                        stage_name="sage_known_false_positive",
+                        is_false_positive=True,
+                        confidence=0.80,
+                        reasoning=f"Matches verified SAGE false positive pattern: {pattern[:200]}",
+                    )
         except Exception:
             pass  # SAGE is optional
         return None
